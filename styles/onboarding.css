@@ -1,0 +1,618 @@
+/* ==========================================================================
+   ONBOARDING
+   ========================================================================== */
+
+/* --- Overlay --- */
+.onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: var(--color-bg-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Splash Screen --- */
+.onboarding-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  text-align: center;
+}
+
+.onboarding-splash-logo {
+  font-size: 48px;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: -1px;
+}
+
+.onboarding-splash-status {
+  color: var(--color-text-secondary);
+  font-size: var(--text-lg);
+}
+
+.onboarding-splash-progress {
+  width: 320px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.onboarding-splash-progress-bar {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
+  width: 0%;
+}
+
+.onboarding-splash-progress-bar.indeterminate {
+  width: 40%;
+  animation: onboarding-indeterminate 1.5s infinite ease-in-out;
+}
+
+@keyframes onboarding-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.onboarding-splash-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+}
+
+.onboarding-splash-task {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.onboarding-splash-task.complete {
+  color: var(--color-success);
+}
+
+.onboarding-splash-task .task-icon {
+  width: 16px;
+  text-align: center;
+}
+
+/* --- Wizard --- */
+.onboarding-wizard {
+  width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-panel);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+/* --- Step Indicator --- */
+.onboarding-step-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px 24px 0;
+}
+
+.onboarding-step-dot {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+/* Future steps: empty outline */
+.onboarding-step-dot.future {
+  border: 2px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text-muted);
+}
+
+/* Current step: blue filled */
+.onboarding-step-dot.active {
+  border: 2px solid var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-text);
+}
+
+/* Completed steps: grey filled */
+.onboarding-step-dot.completed {
+  border: 2px solid var(--color-text-muted);
+  background: var(--color-text-muted);
+  color: var(--color-bg-dark);
+}
+
+.onboarding-step-connector {
+  width: 24px;
+  height: 2px;
+  background: var(--color-border);
+  flex-shrink: 0;
+}
+
+.onboarding-step-connector.completed {
+  background: var(--color-text-muted);
+}
+
+/* --- Content Area --- */
+.onboarding-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.onboarding-content h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 4px;
+}
+
+.onboarding-content .onboarding-subtitle {
+  color: var(--color-text-secondary);
+  font-size: var(--text-md);
+  margin: 0 0 24px;
+  line-height: 1.5;
+}
+
+/* --- Input Fields --- */
+.onboarding-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-lg);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.onboarding-input:focus {
+  border-color: var(--color-primary);
+}
+
+.onboarding-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* --- Provider Cards --- */
+.onboarding-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.onboarding-provider-card {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 14px 16px;
+  transition: border-color 0.2s;
+}
+
+.onboarding-provider-card.configured {
+  border-color: var(--color-success);
+}
+
+.onboarding-provider-card.primary {
+  border-color: var(--color-primary);
+}
+
+.onboarding-provider-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.onboarding-provider-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.onboarding-provider-name {
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.onboarding-provider-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+}
+
+.onboarding-provider-badge.recommended {
+  background: rgba(var(--color-primary-rgb), 0.2);
+  color: var(--color-primary-light);
+}
+
+.onboarding-provider-badge.best {
+  background: rgba(var(--color-violet-rgb), 0.2);
+  color: var(--color-violet);
+}
+
+.onboarding-provider-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+}
+
+.onboarding-provider-status.connected {
+  color: var(--color-success);
+}
+
+.onboarding-provider-status.not-connected {
+  color: var(--color-text-muted);
+}
+
+.onboarding-provider-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.onboarding-provider-actions .btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.onboarding-provider-actions .btn-login {
+  background: var(--color-primary);
+  color: var(--color-text);
+}
+
+.onboarding-provider-actions .btn-login:hover {
+  background: var(--color-primary-hover);
+}
+
+.onboarding-provider-actions .btn-apikey {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.onboarding-provider-actions .btn-apikey:hover {
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
+}
+
+/* API Key expandable section */
+.onboarding-apikey-section {
+  margin-top: 10px;
+  display: none;
+}
+
+.onboarding-apikey-section.visible {
+  display: block;
+}
+
+.onboarding-apikey-row {
+  display: flex;
+  gap: 8px;
+}
+
+.onboarding-apikey-row input {
+  flex: 1;
+  padding: 7px 10px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-family: monospace;
+  outline: none;
+}
+
+.onboarding-apikey-row input:focus {
+  border-color: var(--color-primary);
+}
+
+.onboarding-apikey-row button {
+  padding: 7px 12px;
+  background: var(--color-primary);
+  color: var(--color-text);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.onboarding-apikey-link {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-primary-light);
+  text-decoration: none;
+}
+
+.onboarding-apikey-link:hover {
+  text-decoration: underline;
+}
+
+/* All-set message */
+.onboarding-allset {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: rgba(var(--color-success-rgb), 0.1);
+  border: 1px solid rgba(var(--color-success-rgb), 0.3);
+  border-radius: var(--radius-lg);
+  color: var(--color-success-light);
+  font-size: var(--text-md);
+  margin-bottom: 16px;
+}
+
+.onboarding-allset-icon {
+  font-size: 18px;
+}
+
+.onboarding-add-more {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+/* --- Account Step --- */
+.onboarding-account {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 0;
+}
+
+.onboarding-account-features {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-md);
+}
+
+.onboarding-account-features li::before {
+  content: "\2713  ";
+  color: var(--color-success);
+}
+
+.onboarding-btn-google {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 24px;
+  background: var(--color-text);
+  color: var(--color-bg-dark);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.onboarding-btn-google:hover {
+  opacity: 0.9;
+}
+
+/* --- Handoff Step --- */
+.onboarding-handoff {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 40px 0;
+  text-align: center;
+}
+
+.onboarding-handoff-icon {
+  font-size: 48px;
+}
+
+.onboarding-handoff h2 {
+  margin: 0;
+}
+
+.onboarding-handoff p {
+  color: var(--color-text-secondary);
+  font-size: var(--text-md);
+  margin: 0;
+}
+
+/* --- Actions Bar --- */
+.onboarding-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+.onboarding-actions-left {
+  display: flex;
+  gap: 8px;
+}
+
+.onboarding-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboarding-btn {
+  padding: 8px 20px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-md);
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.onboarding-btn-primary {
+  background: var(--color-primary);
+  color: var(--color-text);
+}
+
+.onboarding-btn-primary:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+}
+
+.onboarding-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.onboarding-btn-back {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.onboarding-btn-back:hover {
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
+}
+
+.onboarding-btn-skip {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.onboarding-btn-skip:hover {
+  color: var(--color-text-secondary);
+}
+
+/* --- Whisper Setup Dialog --- */
+.whisper-setup-modal {
+  width: 420px;
+  padding: 24px;
+}
+
+.whisper-setup-modal h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 8px;
+}
+
+.whisper-setup-modal p {
+  color: var(--color-text-secondary);
+  font-size: var(--text-md);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+.whisper-setup-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.whisper-setup-option {
+  padding: 12px 14px;
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-md);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s;
+}
+
+.whisper-setup-option:hover {
+  border-color: var(--color-primary);
+}
+
+.whisper-setup-option .option-label {
+  font-weight: 500;
+}
+
+.whisper-setup-option .option-desc {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.whisper-setup-dismiss {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  padding: 4px;
+}
+
+.whisper-setup-dismiss:hover {
+  color: var(--color-text-secondary);
+}
+
+.whisper-setup-progress {
+  text-align: center;
+}
+
+.whisper-setup-progress .progress-text {
+  color: var(--color-text-secondary);
+  font-size: var(--text-md);
+  margin-bottom: 12px;
+}
+
+.whisper-setup-progress .progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.whisper-setup-progress .progress-fill {
+  height: 100%;
+  background: var(--color-primary);
+  border-radius: var(--radius-sm);
+  width: 60%;
+  animation: onboarding-indeterminate 1.5s infinite ease-in-out;
+}
+
+.whisper-setup-success {
+  text-align: center;
+  color: var(--color-success);
+  font-size: var(--text-lg);
+  padding: 20px 0;
+}
