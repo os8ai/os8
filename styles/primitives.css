@@ -1,0 +1,131 @@
+/* ==========================================================================
+   PRIMITIVES
+   ========================================================================== */
+
+    /* Surface: dark background + border + rounded corners */
+    .surface {
+      background: var(--color-bg-dark);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+    }
+
+    .surface-lg {
+      background: var(--color-bg-dark);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-md);
+    }
+
+    /* Icon button: flexbox-centered clickable element */
+    .icon-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: none;
+      border-radius: var(--radius-sm);
+      color: var(--color-text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .icon-btn:hover {
+      background: var(--hover-bg);
+      color: var(--color-text-secondary);
+    }
+
+    /* Icon button size modifiers */
+    .icon-btn.xs { width: 20px; height: 20px; }
+    .icon-btn.sm { width: 22px; height: 22px; }
+    .icon-btn.md { width: 28px; height: 28px; }
+    .icon-btn.lg { width: 32px; height: 32px; }
+
+    /* Panel bar: toolbar header for panels */
+    .panel-bar {
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--hover-bg);
+    }
+
+    /* Panel select: dropdown selects in panel toolbars */
+    .panel-select {
+      background: var(--hover-bg);
+      border: 1px solid var(--hover-bg);
+      border-radius: var(--radius-sm);
+      color: var(--color-text-light);
+      font-size: var(--text-md);
+      padding: 4px 8px;
+      cursor: pointer;
+      outline: none;
+    }
+    .panel-select:hover {
+      background: var(--hover-bg);
+    }
+    .panel-select:focus {
+      border-color: var(--color-primary);
+    }
+    .panel-select option {
+      background: var(--color-bg-panel);
+      color: var(--color-text-light);
+    }
+
+/* ==========================================================================
+   BASE / RESET
+   ========================================================================== */
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, var(--color-bg-dark) 0%, var(--color-bg-panel) 100%);
+      color: var(--color-text);
+      height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+
+/* ==========================================================================
+   SCROLLBARS
+   ========================================================================== */
+
+    /* ===== Apple-style Scrollbars ===== */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+      border-radius: var(--radius-sm);
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--scrollbar-thumb-hover);
+    }
+
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+
+    /* Hide scrollbar by default, show on hover */
+    .scrollable {
+      overflow: auto;
+    }
+
+    .scrollable::-webkit-scrollbar-thumb {
+      background: transparent;
+    }
+
+    .scrollable:hover::-webkit-scrollbar-thumb {
+      background: var(--scrollbar-thumb);
+    }
+
+    .scrollable:hover::-webkit-scrollbar-thumb:hover {
+      background: var(--scrollbar-thumb-hover);
+    }

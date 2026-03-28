@@ -1,0 +1,795 @@
+/* ==========================================================================
+   LAYOUT - HEADER
+   ========================================================================== */
+
+    /* ===== Header ===== */
+    .header {
+      height: 38px;
+      background: var(--header-bg-translucent);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--hover-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px 0 80px; /* Left padding for macOS traffic light buttons */
+      -webkit-app-region: drag;
+    }
+
+    .header h1 {
+      font-size: var(--text-lg);
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      color: var(--color-text-secondary);
+      margin-left: 20px;
+      -webkit-app-region: no-drag;
+    }
+
+    .header-clock {
+      font-size: var(--text-base);
+      color: var(--color-text-muted);
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      -webkit-app-region: no-drag;
+    }
+
+    /* Call Active Banner - shown when phone call is in progress */
+    .call-active-banner {
+      height: 32px;
+      background: linear-gradient(90deg, var(--color-warning) 0%, var(--color-warning-dark) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      font-size: var(--text-md);
+      font-weight: 500;
+      color: var(--color-text);
+      text-shadow: 0 1px 2px rgba(var(--color-black-rgb), 0.2);
+    }
+
+    .call-active-icon {
+      font-size: var(--text-xl);
+    }
+
+    .call-active-text {
+      letter-spacing: 0.02em;
+    }
+
+/* ==========================================================================
+   COMPONENTS - TAB BAR
+   ========================================================================== */
+
+    /* ===== Tab Bar ===== */
+    .tab-bar {
+      display: flex;
+      height: 36px;
+      background: var(--tab-bar-bg-translucent);
+      border-bottom: 1px solid var(--hover-bg);
+      padding: 0 16px 0 8px;
+      gap: 2px;
+      align-items: flex-end;
+      -webkit-app-region: drag;
+    }
+
+    .system-clock {
+      display: none; /* Moved to header */
+    }
+
+    /* Mode Toggle (Developer/User) */
+    .mode-toggle {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      -webkit-app-region: no-drag;
+      align-self: center;
+      padding: 0 8px 0 12px;
+      border-left: 1px solid var(--hover-bg);
+      height: 24px;
+    }
+
+    .mode-toggle-btn {
+      font-size: var(--text-xs);
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      background: transparent;
+      color: var(--color-text-muted);
+    }
+
+    .mode-toggle-btn:hover {
+      color: var(--color-text-secondary);
+    }
+
+    .mode-toggle-btn.active {
+      background: rgba(var(--color-primary-rgb), 0.2);
+      color: var(--color-primary);
+    }
+
+    /* User Mode - Hide dev panels */
+    body.user-mode .workspace-panels .panel-terminal,
+    body.user-mode .workspace-panels .panel-right,
+    body.user-mode .workspace-panels .panel-divider {
+      display: none !important;
+    }
+
+    body.user-mode .workspace-panels .panel-preview {
+      flex: 1 !important;
+      width: 100% !important;
+    }
+
+    /* Assistant Layout - No terminal, 60/40 split */
+    .workspace-panels.assistant-layout .panel-preview {
+      flex: 60;
+    }
+
+    .workspace-panels.assistant-layout .panel-right {
+      flex: 40;
+    }
+
+
+
+    body.user-mode #expandPreviewBtn {
+      display: none !important;
+    }
+
+    body.user-mode .panel-preview .panel-header {
+      display: none !important;
+    }
+
+    body.user-mode .home-action-btn.new-app {
+      display: none !important;
+    }
+
+/* ==========================================================================
+   LAYOUT - SPLIT VIEW MODE (User Mode)
+   ========================================================================== */
+
+    /* ===== Split View Mode (User Mode with multiple apps) ===== */
+    .split-view-container {
+      display: none;
+      flex: 1;
+      flex-direction: row;
+      overflow: hidden;
+    }
+
+    /* Show split view container in user mode when workspace is active */
+    body.user-mode .workspace-view.active .split-view-container {
+      display: flex;
+    }
+
+    /* In user mode, hide workspace-panels and use split-view-container instead */
+    body.user-mode .workspace-view .workspace-panels {
+      display: none !important;
+    }
+
+    /* Hide workspace-bar in user mode (apps have their own headers in split view) */
+    body.user-mode .workspace-view .workspace-bar {
+      display: none !important;
+    }
+
+    .split-primary {
+      flex: 1;
+      position: relative;
+      border-right: 1px solid var(--hover-bg);
+    }
+
+    .split-secondary {
+      width: 50%;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .split-panel {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      border-bottom: 1px solid var(--hover-bg);
+    }
+
+    .split-panel:last-child {
+      border-bottom: none;
+    }
+
+    .split-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--panel-bg-translucent);
+      border-bottom: 1px solid var(--hover-bg);
+    }
+
+    .split-panel-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: var(--text-base);
+      font-weight: 500;
+      color: var(--color-text-secondary);
+    }
+
+    .split-panel-title .panel-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--text-xs);
+      font-weight: 600;
+      color: var(--color-text);
+    }
+
+    .split-panel-controls {
+      display: flex;
+      gap: 4px;
+    }
+
+    /* Size overrides for non-standard sizes */
+    .split-url-btn { width: 26px; height: 26px; }
+
+    .split-panel-btn svg {
+      width: 12px;
+      height: 12px;
+    }
+
+    .split-panel-content {
+      flex: 1;
+      position: relative;
+      background: var(--color-bg-panel);
+    }
+
+    /* Split URL bar */
+    .split-url-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      background: var(--header-bg-translucent);
+      border-bottom: 1px solid var(--hover-bg);
+    }
+
+    .split-url-container {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      background: rgba(var(--color-bg-panel-rgb), 0.8);
+      border-radius: var(--radius-sm);
+      padding: 0 10px;
+      height: 26px;
+    }
+
+    .split-url-prefix {
+      color: var(--color-text-muted);
+      font-size: var(--text-sm);
+      white-space: nowrap;
+    }
+
+    .split-url-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--color-text-light);
+      font-size: var(--text-sm);
+      padding: 0;
+      min-width: 0;
+    }
+
+    .split-url-input::placeholder {
+      color: var(--color-text-dark);
+    }
+
+    /* Primary panel content fills available space */
+    .split-primary {
+      display: flex;
+      flex-direction: column;
+    }
+
+    #splitPrimaryContent {
+      flex: 1;
+    }
+
+    /* Primary panel header (shown in user mode) - same styles as split-panel-header */
+    .split-primary-header {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      background: var(--panel-bg-translucent);
+      border-bottom: 1px solid var(--hover-bg);
+    }
+
+    body.user-mode .split-primary-header {
+      display: flex;
+    }
+
+    /* In focus mode, don't show split secondary */
+    body.user-mode.view-focus .split-secondary {
+      display: none;
+    }
+
+    body.user-mode.view-focus .split-primary {
+      border-right: none;
+    }
+
+    /* Contract button - show only in focus mode with multiple apps */
+    .split-primary-controls .contract-btn {
+      display: none;
+    }
+
+    body.user-mode.view-focus.has-multiple-apps .split-primary-controls .contract-btn {
+      display: flex;
+    }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      background: var(--hover-bg);
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+      cursor: pointer;
+      max-width: 180px;
+      min-width: 80px;
+      transition: background 0.15s;
+      -webkit-app-region: no-drag;
+      position: relative;
+    }
+
+    .tab:hover {
+      background: var(--hover-bg);
+    }
+
+    .tab.active {
+      background: var(--color-bg-dark);
+    }
+
+    .tab.active::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--color-primary);
+    }
+
+    .tab-icon {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: var(--text-base);
+      flex-shrink: 0;
+    }
+
+    .tab-icon svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .tab-title {
+      font-size: var(--text-base);
+      color: var(--color-text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+
+    .tab.active .tab-title {
+      color: var(--color-text-light);
+    }
+
+    .tab-close {
+      width: 16px;
+      height: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius-sm);
+      opacity: 0;
+      transition: opacity 0.15s, background 0.15s;
+      flex-shrink: 0;
+      color: var(--color-text-muted);
+    }
+
+    .tab:hover .tab-close {
+      opacity: 1;
+    }
+
+    .tab-close:hover {
+      background: var(--hover-bg);
+      color: var(--color-text-light);
+    }
+
+    .tab-close svg {
+      width: 10px;
+      height: 10px;
+    }
+
+    /* Tab drag and drop */
+    .tab.dragging {
+      opacity: 0.5;
+    }
+
+    .tab.drag-over-left {
+      box-shadow: -2px 0 0 0 var(--color-primary);
+    }
+
+    .tab.drag-over-right {
+      box-shadow: 2px 0 0 0 var(--color-primary);
+    }
+
+    .tab[draggable="true"] {
+      cursor: grab;
+    }
+
+    .tab[draggable="true"]:active {
+      cursor: grabbing;
+    }
+
+/* ==========================================================================
+   LAYOUT - VIEWS
+   ========================================================================== */
+
+    /* ===== Views ===== */
+    .view {
+      height: calc(100vh - 38px - 36px); /* header + tab bar */
+      display: none;
+    }
+
+    .view.active {
+      display: flex;
+    }
+
+/* ==========================================================================
+   HOME VIEW
+   ========================================================================== */
+
+    /* ===== Home View ===== */
+    .home-view {
+      flex-direction: column;
+      padding: 40px;
+      overflow-y: auto;
+      position: relative;
+    }
+
+    /* Home Background */
+    .home-background {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+    }
+
+    .home-background-gradient {
+      position: absolute;
+      inset: 0;
+    }
+
+    .home-background-image {
+      position: absolute;
+      inset: 0;
+      background-size: cover;
+      background-position: center;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+
+    .home-background-image.loaded {
+      opacity: 1;
+    }
+
+    .home-background-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(var(--color-bg-dark-rgb), 0.25);
+    }
+
+    .home-view > *:not(.home-background) {
+      position: relative;
+      z-index: 1;
+    }
+
+    /* Background Picker in Settings */
+    .background-picker {
+      margin-top: 8px;
+    }
+
+    .background-section-title {
+      font-size: var(--text-base);
+      color: var(--color-text-muted);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .background-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .background-option {
+      position: relative;
+      height: 60px;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      cursor: pointer;
+      border: 2px solid transparent;
+      transition: all 0.2s;
+    }
+
+    .background-option:hover {
+      border-color: rgba(var(--color-white-rgb), 0.3);
+    }
+
+    .background-option.selected {
+      border-color: var(--color-primary);
+    }
+
+    .background-option-preview {
+      position: absolute;
+      inset: 0;
+    }
+
+    .background-option-preview.gradient {
+      /* Gradient set via inline style */
+    }
+
+    .background-option-preview.image {
+      background-size: cover;
+      background-position: center;
+    }
+
+    .background-option-name {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 4px 6px;
+      font-size: var(--text-xs);
+      color: var(--color-text);
+      background: linear-gradient(transparent, rgba(var(--color-black-rgb), 0.7));
+      text-align: center;
+    }
+
+    .background-option-check {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      width: 18px;
+      height: 18px;
+      background: var(--color-primary);
+      border-radius: 50%;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .background-option.selected .background-option-check {
+      display: flex;
+    }
+
+/* ==========================================================================
+   WORKSPACE VIEW
+   ========================================================================== */
+
+    /* ===== Workspace View ===== */
+    .workspace-view {
+      flex-direction: column;
+      padding: 12px;
+      gap: 0;
+    }
+
+    .workspace-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: rgba(var(--color-bg-dark-rgb), 0.95);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--hover-bg);
+    }
+
+    .workspace-bar {
+      height: 44px;
+      background: var(--panel-bg-translucent);
+      border-bottom: 1px solid var(--hover-bg);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .workspace-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .close-btn {
+      border-radius: var(--radius-md);
+      color: var(--color-text-secondary);
+    }
+
+    .close-btn:hover {
+      color: var(--color-text);
+    }
+
+    .workspace-title {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .workspace-panels {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--hover-bg);
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .panel-header {
+      height: 36px;
+      background: rgba(var(--color-bg-dark-rgb), 0.6);
+      border-bottom: 1px solid var(--hover-bg);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      font-size: var(--text-base);
+      font-weight: 500;
+      color: var(--color-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .panel-content {
+      flex: 1;
+      overflow: auto;
+      background: var(--color-bg-dark);
+    }
+
+    .panel-terminal {
+      width: 30%;
+    }
+
+    .panel-preview {
+      width: 45%;
+      background: var(--color-black);
+    }
+
+    .panel-preview.expanded {
+      width: 100% !important;
+    }
+
+    .workspace-panels.preview-expanded .panel-terminal,
+    .workspace-panels.preview-expanded .panel-right,
+    .workspace-panels.preview-expanded .panel-divider {
+      display: none;
+    }
+
+    .panel-right {
+      width: 25%;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .workspace-panels.right-collapsed .panel-right,
+    .workspace-panels.right-collapsed [data-divider="2"] {
+      display: none;
+    }
+
+    .workspace-panels.right-collapsed .panel-preview {
+      flex: 1;
+      width: auto;
+    }
+
+    .right-panel-toggle {
+      width: 20px;
+      flex-shrink: 0;
+      background: rgba(var(--color-bg-dark-rgb), 0.6);
+      border-left: 1px solid var(--hover-bg);
+      color: var(--color-text-tertiary);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: color 0.15s, background 0.15s;
+    }
+
+    .right-panel-toggle:hover {
+      color: var(--color-text-primary);
+      background: rgba(var(--color-bg-panel-rgb), 0.9);
+    }
+
+    .workspace-panels.right-collapsed .right-panel-toggle {
+      display: flex;
+    }
+
+    .workspace-panels.preview-expanded .right-panel-toggle {
+      display: none;
+    }
+
+/* ==========================================================================
+   LAYOUT - PANEL DIVIDERS
+   ========================================================================== */
+
+    /* Panel Dividers */
+    .panel-divider {
+      width: 4px;
+      cursor: col-resize;
+      background: var(--hover-bg);
+      transition: background 0.15s;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .panel-divider:hover,
+    .panel-divider.dragging {
+      background: rgba(var(--color-primary-rgb), 0.5);
+    }
+
+    .panel-divider::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -4px;
+      right: -4px;
+    }
+
+    .panel-divider-h {
+      height: 4px;
+      cursor: row-resize;
+      background: var(--hover-bg);
+      transition: background 0.15s;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .panel-divider-h:hover,
+    .panel-divider-h.dragging {
+      background: rgba(var(--color-primary-rgb), 0.5);
+    }
+
+    .panel-divider-h::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -4px;
+      bottom: -4px;
+    }
+
+    /* When dragging, prevent text selection */
+    body.resizing {
+      cursor: col-resize;
+      user-select: none;
+    }
+
+    body.resizing-v {
+      cursor: row-resize;
+      user-select: none;
+    }
+

@@ -1,0 +1,831 @@
+/**
+ * Settings management for OS8
+ */
+
+import {
+  getCurrentSettingsSection, setCurrentSettingsSection,
+  getOauthPortInfo, setOauthPortInfo
+} from './state.js';
+import { loadApiKeys, initApiKeysListeners } from './api-keys.js';
+
+// Re-export for main.js
+export { loadApiKeys };
+
+
+/**
+ * Switch to a different settings section
+ */
+export async function switchSettingsSection(sectionId) {
+  setCurrentSettingsSection(sectionId);
+
+  // Update nav items
+  document.querySelectorAll('.settings-nav-item').forEach(item => {
+    item.classList.toggle('active', item.dataset.section === sectionId);
+  });
+
+  // Update sections
+  document.querySelectorAll('.settings-section').forEach(section => {
+    section.classList.toggle('active', section.id === `section-${sectionId}`);
+  });
+
+  // Reload section data when switching (handles API key changes)
+  if (sectionId === 'account') {
+    const { loadAccountSection } = await import('./account.js');
+    await loadAccountSection();
+  } else if (sectionId === 'user') {
+    await loadUserSettings();
+  } else if (sectionId === 'time') {
+    await loadTimeSettings();
+  } else if (sectionId === 'ai-models') {
+    await loadAIModelsSettings();
+  } else if (sectionId === 'capabilities') {
+    const { loadCapabilities } = await import('./capabilities.js');
+    await loadCapabilities();
+  } else if (sectionId === 'privacy') {
+    await loadPrivacySettings();
+  }
+}
+
+
+/**
+ * Load User settings
+ */
+async function loadUserSettings() {
+  try {
+    const serverPort = await window.os8.server.getPort();
+    const res = await fetch(`http://localhost:${serverPort}/api/settings/user`);
+    const data = await res.json();
+    const input = document.getElementById('userFirstNameInput');
+    if (input) input.value = data.firstName || '';
+
+    // Load user photo preview
+    const img = document.getElementById('userPhotoPreview');
+    if (img) {
+      img.src = `http://localhost:${serverPort}/api/settings/user-image?t=${Date.now()}`;
+      img.onload = () => { img.style.display = 'block'; };
+      img.onerror = () => { img.style.display = 'none'; };
+    }
+  } catch (err) {
+    console.error('Failed to load user settings:', err);
+  }
+}
+
+/**
+ * Load System settings (timezone, paths)
+ */
+async function loadTimeSettings() {
+  try {
+    const serverPort = await window.os8.server.getPort();
+    const res = await fetch(`http://localhost:${serverPort}/api/settings/time`);
+    const data = await res.json();
+    const select = document.getElementById('timezoneSelect');
+    if (select) select.value = data.timezone || 'America/New_York';
+
+    // Load paths
+    const paths = await window.os8.paths.get();
+    const installPathEl = document.getElementById('installPathDisplay');
+    const userDataPathEl = document.getElementById('userDataPathDisplay');
+    if (installPathEl) installPathEl.textContent = paths.install || '—';
+    if (userDataPathEl) userDataPathEl.textContent = paths.userData || '—';
+  } catch (err) {
+    console.error('Failed to load system settings:', err);
+  }
+}
+
+/**
+ * Load OAuth port setting
+ */
+export async function loadOAuthPortSetting() {
+  const oauthPortInput = document.getElementById('oauthPortInput');
+
+  setOauthPortInfo(await window.os8.settings.getOAuthPort());
+  oauthPortInput.value = getOauthPortInfo().current;
+  updateOAuthPortWarning();
+}
+
+/**
+ * Update OAuth port warning display
+ */
+export function updateOAuthPortWarning() {
+  const oauthPortInput = document.getElementById('oauthPortInput');
+  const oauthPortWarning = document.getElementById('oauthPortWarning');
+  const oauthRedirectUri = document.getElementById('oauthRedirectUri');
+
+  const currentPort = parseInt(oauthPortInput.value, 10);
+  const isCustom = currentPort !== getOauthPortInfo().default;
+
+  if (isCustom) {
+    oauthRedirectUri.textContent = `http://127.0.0.1:${currentPort}/oauth/callback`;
+    oauthPortWarning.style.display = 'flex';
+  } else {
+    oauthPortWarning.style.display = 'none';
+  }
+}
+
+/**
+ * Load tunnel URL setting
+ */
+export async function loadTunnelUrlSetting() {
+  const tunnelUrlInput = document.getElementById('tunnelUrlInput');
+  const tunnelUrlHint = document.getElementById('tunnelUrlHint');
+
+  // Get tunnel status and current URL
+  const status = await window.os8.tunnel.status();
+  const tunnelUrl = await window.os8.settings.getTunnelUrl();
+
+  if (tunnelUrl) {
+    tunnelUrlInput.value = tunnelUrl;
+    tunnelUrlInput.placeholder = '';
+    tunnelUrlHint.innerHTML = 'Tunnel active - voice calls work from anywhere';
+  } else if (status.ready) {
+    tunnelUrlInput.value = '';
+    tunnelUrlInput.placeholder = 'Starting tunnel...';
+    tunnelUrlHint.innerHTML = 'cloudflared installed, tunnel starting...';
+  } else {
+    tunnelUrlInput.value = '';
+    tunnelUrlInput.placeholder = 'Installing cloudflared...';
+    tunnelUrlHint.innerHTML = 'First-time setup in progress...';
+  }
+}
+
+/**
+ * Copy tunnel URL to clipboard
+ */
+export async function copyTunnelUrl() {
+  const tunnelUrlInput = document.getElementById('tunnelUrlInput');
+  const tunnelUrlCopy = document.getElementById('tunnelUrlCopy');
+  const tunnelUrlStatus = document.getElementById('tunnelUrlStatus');
+  const tunnelUrlStatusText = document.getElementById('tunnelUrlStatusText');
+
+  if (!tunnelUrlInput.value) {
+    tunnelUrlStatusText.textContent = 'No tunnel URL to copy';
+    tunnelUrlStatus.style.display = 'flex';
+    setTimeout(() => {
+      tunnelUrlStatus.style.display = 'none';
+    }, 2000);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(tunnelUrlInput.value);
+    const originalText = tunnelUrlCopy.textContent;
+    tunnelUrlCopy.textContent = 'Copied!';
+    setTimeout(() => {
+      tunnelUrlCopy.textContent = originalText;
+    }, 1500);
+  } catch (err) {
+    tunnelUrlStatusText.textContent = 'Failed to copy';
+    tunnelUrlStatus.style.display = 'flex';
+    setTimeout(() => {
+      tunnelUrlStatus.style.display = 'none';
+    }, 2000);
+  }
+}
+
+/**
+ * Save OAuth port setting
+ */
+export async function saveOAuthPort() {
+  const oauthPortInput = document.getElementById('oauthPortInput');
+  const oauthPortUnlock = document.getElementById('oauthPortUnlock');
+  const oauthPortSave = document.getElementById('oauthPortSave');
+
+  const port = parseInt(oauthPortInput.value, 10);
+  if (port < 1024 || port > 65535) {
+    alert('Port must be between 1024 and 65535');
+    return;
+  }
+
+  await window.os8.settings.setOAuthPort(port);
+  const portInfo = getOauthPortInfo();
+  portInfo.current = port;
+  portInfo.isCustom = port !== portInfo.default;
+  setOauthPortInfo(portInfo);
+
+  // Reset UI state
+  oauthPortUnlock.checked = false;
+  oauthPortInput.disabled = true;
+  oauthPortSave.disabled = true;
+
+  updateOAuthPortWarning();
+}
+
+
+/**
+ * Load voice settings
+ */
+export async function loadVoiceSettings() {
+  try {
+    const settings = await window.os8.voice.getSettings();
+
+    document.getElementById('voiceSilenceNormal').value = settings.silenceDurationNormal;
+    document.getElementById('voiceSilenceShort').value = settings.silenceDurationShort;
+    document.getElementById('voiceContextWindow').value = settings.contextWindowLength;
+    document.getElementById('voiceVadSilence').value = settings.vadSilence;
+
+    // Update display values
+    updateVoiceDisplayValues();
+  } catch (err) {
+    console.error('Failed to load voice settings:', err);
+  }
+}
+
+/**
+ * Update voice slider display values
+ */
+function updateVoiceDisplayValues() {
+  const silenceNormal = document.getElementById('voiceSilenceNormal');
+  const silenceShort = document.getElementById('voiceSilenceShort');
+  const contextWindow = document.getElementById('voiceContextWindow');
+  const vadSilence = document.getElementById('voiceVadSilence');
+
+  if (silenceNormal) {
+    document.getElementById('voiceSilenceNormalValue').textContent = `${(silenceNormal.value / 1000).toFixed(1)}s`;
+  }
+  if (silenceShort) {
+    document.getElementById('voiceSilenceShortValue').textContent = `${(silenceShort.value / 1000).toFixed(1)}s`;
+  }
+  if (contextWindow) {
+    document.getElementById('voiceContextWindowValue').textContent = `${(contextWindow.value / 1000).toFixed(0)}s`;
+  }
+  if (vadSilence) {
+    document.getElementById('voiceVadSilenceValue').textContent = `${(vadSilence.value / 1000).toFixed(1)}s`;
+  }
+}
+
+/**
+ * Save voice settings
+ */
+export async function saveVoiceSettings() {
+  const voiceSaveBtn = document.getElementById('voiceSaveBtn');
+  const voiceSaveStatus = document.getElementById('voiceSaveStatus');
+
+  voiceSaveBtn.disabled = true;
+  voiceSaveStatus.textContent = '';
+  voiceSaveStatus.className = 'voice-save-status';
+
+  try {
+    const settings = {
+      silenceDurationNormal: parseInt(document.getElementById('voiceSilenceNormal').value, 10),
+      silenceDurationShort: parseInt(document.getElementById('voiceSilenceShort').value, 10),
+      contextWindowLength: parseInt(document.getElementById('voiceContextWindow').value, 10),
+      vadSilence: parseInt(document.getElementById('voiceVadSilence').value, 10),
+    };
+
+    await window.os8.voice.updateSettings(settings);
+
+    voiceSaveStatus.textContent = 'Settings saved (restart whisper server to apply server-side changes)';
+  } catch (err) {
+    voiceSaveStatus.textContent = 'Failed to save settings';
+    voiceSaveStatus.className = 'voice-save-status error';
+  }
+
+  voiceSaveBtn.disabled = false;
+}
+
+
+/**
+ * Load Privacy settings (Claude Code telemetry toggles)
+ */
+async function loadPrivacySettings() {
+  const toggles = [
+    { id: 'privacyTelemetry', envKey: 'DISABLE_TELEMETRY' },
+    { id: 'privacyErrorReporting', envKey: 'DISABLE_ERROR_REPORTING' },
+    { id: 'privacyFeedbackSurvey', envKey: 'CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY' },
+    { id: 'privacyCodexAnalytics', envKey: 'CODEX_DISABLE_ANALYTICS' },
+    { id: 'privacyCodexFeedback', envKey: 'CODEX_DISABLE_FEEDBACK' },
+    { id: 'privacyCodexHistory', envKey: 'CODEX_DISABLE_HISTORY' },
+    { id: 'privacyGeminiTelemetry', envKey: 'GEMINI_TELEMETRY_ENABLED', invert: true },
+    { id: 'privacyGeminiPromptLogging', envKey: 'GEMINI_TELEMETRY_LOG_PROMPTS', invert: true },
+  ];
+  for (const { id, envKey, invert } of toggles) {
+    const el = document.getElementById(id);
+    if (el) {
+      const val = await window.os8.env.get(envKey);
+      if (invert) {
+        // Inverted: env var present with 'false' means toggle is ON (disabled)
+        el.checked = val && val.value === 'false';
+      } else {
+        el.checked = !!val;
+      }
+    }
+  }
+}
+
+/**
+ * Load AI Models (backend auth) settings
+ */
+export async function loadAIModelsSettings() {
+  try {
+    const serverPort = await window.os8.server.getPort();
+    // Load routing UI (provider status, preference, cascades)
+    await loadRoutingUI(serverPort);
+  } catch (err) {
+    console.error('Failed to load AI models settings:', err);
+  }
+}
+
+// Current cascade task type for tab state
+let currentCascadeTask = 'conversation';
+
+async function loadRoutingUI(serverPort) {
+  try {
+    const [statusRes, prefRes] = await Promise.all([
+      fetch(`http://localhost:${serverPort}/api/ai/account-status`),
+      fetch(`http://localhost:${serverPort}/api/ai/routing/preference`)
+    ]);
+    const statuses = await statusRes.json();
+    const { preferences } = await prefRes.json();
+
+    // Provider status table
+    const bodyEl = document.getElementById('providerStatusBody');
+    if (bodyEl) {
+      bodyEl.innerHTML = statuses.map(s => {
+        const hasLogin = !!s.has_login;
+
+        // Login column
+        let loginIcon, loginTip, loginClickable;
+        if (!hasLogin) {
+          loginIcon = '—';
+          loginTip = 'API-only (no login)';
+          loginClickable = false;
+        } else if (s.login_status === 'active') {
+          loginIcon = '🟢';
+          loginTip = 'Logged in' + (s.plan_tier ? ` (${s.plan_tier})` : '') + ' — click to re-login';
+          loginClickable = true;
+        } else if (s.login_status === 'unknown') {
+          loginIcon = '🟡';
+          loginTip = 'Not checked — click to log in';
+          loginClickable = true;
+        } else {
+          loginIcon = '🔴';
+          loginTip = (s.login_status === 'not_configured' ? 'Not logged in' : 'Login inactive') + ' — click to log in';
+          loginClickable = true;
+        }
+
+        // API column
+        const apiIcon = s.api_status === 'valid' ? '🟢'
+          : s.api_status === 'unknown' ? '🟡'
+          : '🔴';
+        const apiTip = s.api_status === 'valid' ? 'Key valid' + (s.api_balance != null ? ` ($${s.api_balance.toFixed(2)})` : '') + ' — click to manage'
+          : s.api_status === 'no_key' ? 'No key set — click to add'
+          : s.api_status === 'invalid' ? 'Key invalid — click to fix'
+          : 'Unknown — click to manage';
+
+        const loginClass = loginClickable ? 'provider-login-link' : '';
+        return `<tr>
+          <td class="provider-row-name">${s.provider_name}</td>
+          <td class="provider-row-status ${loginClass}" title="${loginTip}" data-backend="${s.container_id || ''}">${loginIcon}</td>
+          <td class="provider-row-status provider-api-link" title="${apiTip}" data-provider="${s.provider_id}">${apiIcon}</td>
+        </tr>`;
+      }).join('');
+
+      // Make login cells clickable → trigger login flow
+      bodyEl.querySelectorAll('.provider-login-link').forEach(cell => {
+        cell.style.cursor = 'pointer';
+        cell.onclick = async () => {
+          const backend = cell.dataset.backend;
+          if (!backend) return;
+          const origContent = cell.innerHTML;
+          cell.innerHTML = '⏳';
+          cell.title = 'Logging in...';
+          try {
+            const resp = await fetch(`http://localhost:${serverPort}/api/backend/login/${backend}`, { method: 'POST' });
+            if (resp.ok) {
+              cell.innerHTML = '🟢';
+              cell.title = 'Logged in — refreshing...';
+              await loadRoutingUI(serverPort);
+            } else {
+              const err = await resp.json().catch(() => ({}));
+              cell.innerHTML = '🔴';
+              cell.title = `Login failed: ${err.error || 'unknown error'}`;
+            }
+          } catch (e) {
+            cell.innerHTML = origContent;
+            cell.title = `Login error: ${e.message}`;
+          }
+        };
+      });
+
+      // Make API cells clickable → navigate to API Keys section
+      bodyEl.querySelectorAll('.provider-api-link').forEach(cell => {
+        cell.onclick = () => {
+          document.querySelectorAll('.settings-nav-item').forEach(nav => {
+            nav.classList.toggle('active', nav.dataset.section === 'apikeys');
+          });
+          document.querySelectorAll('.settings-section').forEach(sec => sec.classList.remove('active'));
+          const apiSection = document.getElementById('section-apikeys');
+          if (apiSection) apiSection.classList.add('active');
+        };
+      });
+    }
+
+    // Billing check button
+    const checkBtn = document.getElementById('billingCheckBtn');
+    if (checkBtn) {
+      checkBtn.onclick = async () => {
+        checkBtn.textContent = 'Checking...';
+        checkBtn.disabled = true;
+        try {
+          await fetch(`http://localhost:${serverPort}/api/ai/billing/check`, { method: 'POST' });
+          await loadRoutingUI(serverPort);
+        } finally {
+          checkBtn.textContent = 'Check All';
+          checkBtn.disabled = false;
+        }
+      };
+    }
+
+    // Store per-task preferences
+    const taskPreferences = preferences || {};
+
+    // Helper to update preference dropdown for current task
+    function updatePrefSelect(taskType) {
+      const select = document.getElementById('routingPreferenceSelect');
+      if (!select) return;
+      select.value = taskPreferences[taskType] || 'balanced';
+    }
+
+    // Preference dropdown — sets per-task preference
+    const prefSelect = document.getElementById('routingPreferenceSelect');
+    if (prefSelect) {
+      prefSelect.onchange = async () => {
+        const pref = prefSelect.value;
+        taskPreferences[currentCascadeTask] = pref;
+        await fetch(`http://localhost:${serverPort}/api/ai/routing/preference`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ preference: pref, taskType: currentCascadeTask })
+        });
+        await loadCascade(serverPort, currentCascadeTask);
+      };
+    }
+
+    // Set initial dropdown state
+    updatePrefSelect(currentCascadeTask);
+
+    // Cascade tabs
+    const tabsEl = document.getElementById('cascadeTabs');
+    if (tabsEl) {
+      tabsEl.querySelectorAll('.cascade-tab').forEach(tab => {
+        tab.onclick = () => {
+          tabsEl.querySelectorAll('.cascade-tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          currentCascadeTask = tab.dataset.task;
+          updatePrefSelect(currentCascadeTask);
+          loadCascade(serverPort, currentCascadeTask);
+        };
+      });
+    }
+
+    // Regenerate button
+    const regenBtn = document.getElementById('cascadeRegenerateBtn');
+    if (regenBtn) {
+      regenBtn.onclick = async () => {
+        await fetch(`http://localhost:${serverPort}/api/ai/routing/regenerate`, { method: 'POST' });
+        await loadCascade(serverPort, currentCascadeTask);
+      };
+    }
+
+    // Load constraints table
+    await loadConstraintsUI(serverPort, statuses);
+
+    // Load initial cascade
+    await loadCascade(serverPort, currentCascadeTask);
+  } catch (err) {
+    console.error('Failed to load routing UI:', err);
+  }
+}
+
+async function loadConstraintsUI(serverPort, statuses) {
+  try {
+    const res = await fetch(`http://localhost:${serverPort}/api/ai/routing/constraints`);
+    const constraints = await res.json();
+    const bodyEl = document.getElementById('apiConstraintsBody');
+    if (!bodyEl) return;
+
+    const taskTypes = [
+      { key: 'conversation', label: 'Chat' },
+      { key: 'jobs', label: 'Jobs' },
+      { key: 'planning', label: 'Planning' },
+      { key: 'coding', label: 'Coding' },
+      { key: 'summary', label: 'Summary' }
+    ];
+    const options = [
+      { value: 'both', label: 'Login & API' },
+      { value: 'api', label: 'API only' },
+      { value: 'login', label: 'Login only' }
+    ];
+
+    bodyEl.innerHTML = statuses.map(s => {
+      const cells = taskTypes.map(tt => {
+        const current = constraints[s.provider_id]?.[tt.key] || 'both';
+        const opts = options.map(o =>
+          `<option value="${o.value}"${o.value === current ? ' selected' : ''}>${o.label}</option>`
+        ).join('');
+        return `<td style="text-align:center;padding:5px 4px;"><select class="constraint-select" data-provider="${s.provider_id}" data-task="${tt.key}">${opts}</select></td>`;
+      }).join('');
+      return `<tr><td class="provider-row-name">${s.provider_name}</td>${cells}</tr>`;
+    }).join('');
+
+    bodyEl.querySelectorAll('.constraint-select').forEach(sel => {
+      sel.onchange = async () => {
+        const newConstraints = {};
+        bodyEl.querySelectorAll('.constraint-select').forEach(s => {
+          const pid = s.dataset.provider;
+          const tt = s.dataset.task;
+          if (!newConstraints[pid]) newConstraints[pid] = {};
+          newConstraints[pid][tt] = s.value;
+        });
+        await fetch(`http://localhost:${serverPort}/api/ai/routing/constraints`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ constraints: newConstraints })
+        });
+        await loadCascade(serverPort, currentCascadeTask);
+      };
+    });
+  } catch (err) {
+    console.error('Failed to load constraints UI:', err);
+  }
+}
+
+async function loadCascade(serverPort, taskType) {
+  try {
+    let res = await fetch(`http://localhost:${serverPort}/api/ai/routing/${taskType}`);
+    let cascade = await res.json();
+
+    // Auto-regenerate if cascade is empty
+    if (Array.isArray(cascade) && cascade.length === 0) {
+      await fetch(`http://localhost:${serverPort}/api/ai/routing/regenerate`, { method: 'POST' });
+      res = await fetch(`http://localhost:${serverPort}/api/ai/routing/${taskType}`);
+      cascade = await res.json();
+    }
+
+    const bodyEl = document.getElementById('cascadeBody');
+    if (!bodyEl) return;
+
+    const capCol = taskType === 'conversation' ? 'cap_chat' : `cap_${taskType}`;
+
+    bodyEl.innerHTML = cascade.map((entry, idx) => {
+      const f = entry.family;
+      const s = entry.accountStatus;
+      const capValue = f ? (f[capCol] || 0) : 0;
+      const costValue = f ? (f.cost_tier || 3) : 3;
+      // Login entries show discounted cost
+      const displayCost = entry.access_method === 'login' ? Math.ceil(costValue / 2) : costValue;
+
+      // Status dot based on access method + provider status
+      let statusIcon;
+      if (entry.access_method === 'login') {
+        statusIcon = s?.login_status === 'active' ? '🟢' : s?.login_status === 'unknown' ? '🟡' : '🔴';
+      } else {
+        statusIcon = s?.api_status === 'valid' ? '🟢' : s?.api_status === 'unknown' ? '🟡' : '🔴';
+      }
+
+      const capDots = Array.from({ length: 5 }, (_, i) =>
+        `<span class="cap-dot${i < capValue ? ' filled' : ''}"></span>`
+      ).join('');
+      const costDots = Array.from({ length: 5 }, (_, i) =>
+        `<span class="cost-dot${i < displayCost ? ' filled' : ''}"></span>`
+      ).join('');
+
+      const name = f ? f.display_name : entry.family_id;
+      const methodLabel = entry.access_method === 'login' ? 'Login' : 'API';
+      const disabledClass = entry.enabled ? '' : ' cascade-row-disabled';
+      const toggleChecked = entry.enabled ? 'checked' : '';
+
+      return `<tr class="cascade-row${disabledClass}" data-idx="${idx}" data-family="${entry.family_id}" data-method="${entry.access_method}" draggable="true">
+        <td class="cascade-td-rank">${idx + 1}</td>
+        <td class="cascade-td-status">${statusIcon}</td>
+        <td class="cascade-td-name">${name} <span class="cascade-method-label">${methodLabel}</span></td>
+        <td class="cascade-td-cap">${capDots}</td>
+        <td class="cascade-td-cost">${costDots}</td>
+        <td class="cascade-td-toggle"><label class="cascade-switch"><input type="checkbox" ${toggleChecked}><span class="cascade-slider"></span></label></td>
+      </tr>`;
+    }).join('');
+
+    // Toggle handlers
+    bodyEl.querySelectorAll('.cascade-switch input').forEach(input => {
+      input.onchange = async () => {
+        const row = input.closest('.cascade-row');
+        row.classList.toggle('cascade-row-disabled', !input.checked);
+        await saveCascade(serverPort, taskType);
+      };
+    });
+
+    // Drag-and-drop reordering
+    let dragIdx = null;
+    bodyEl.querySelectorAll('.cascade-row').forEach(row => {
+      row.addEventListener('dragstart', (e) => {
+        dragIdx = parseInt(row.dataset.idx);
+        e.dataTransfer.effectAllowed = 'move';
+        row.style.opacity = '0.5';
+      });
+      row.addEventListener('dragend', () => {
+        row.style.opacity = '1';
+      });
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+      });
+      row.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        const dropIdx = parseInt(row.dataset.idx);
+        if (dragIdx === null || dragIdx === dropIdx) return;
+        const rows = [...bodyEl.querySelectorAll('.cascade-row')];
+        const draggedRow = rows[dragIdx];
+        if (dragIdx < dropIdx) {
+          row.after(draggedRow);
+        } else {
+          row.before(draggedRow);
+        }
+        bodyEl.querySelectorAll('.cascade-row').forEach((el, i) => {
+          el.dataset.idx = i;
+          el.querySelector('.cascade-td-rank').textContent = i + 1;
+        });
+        await saveCascade(serverPort, taskType);
+        dragIdx = null;
+      });
+    });
+  } catch (err) {
+    console.error('Failed to load cascade:', err);
+  }
+}
+
+async function saveCascade(serverPort, taskType) {
+  const bodyEl = document.getElementById('cascadeBody');
+  if (!bodyEl) return;
+  const entries = [...bodyEl.querySelectorAll('.cascade-row')].map(row => ({
+    family_id: row.dataset.family,
+    access_method: row.dataset.method,
+    enabled: row.querySelector('.cascade-switch input').checked
+  }));
+  await fetch(`http://localhost:${serverPort}/api/ai/routing/${taskType}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ entries })
+  });
+}
+
+
+/**
+ * Initialize settings event listeners
+ */
+export function initSettingsListeners() {
+  const oauthPortUnlock = document.getElementById('oauthPortUnlock');
+  const oauthPortInput = document.getElementById('oauthPortInput');
+  const oauthPortSave = document.getElementById('oauthPortSave');
+  // Settings nav click handlers
+  document.querySelectorAll('.settings-nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      switchSettingsSection(item.dataset.section);
+    });
+  });
+
+  // Timezone change handler
+  const timezoneSelect = document.getElementById('timezoneSelect');
+  if (timezoneSelect) {
+    timezoneSelect.addEventListener('change', async () => {
+      const serverPort = await window.os8.server.getPort();
+      fetch(`http://localhost:${serverPort}/api/settings/time`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timezone: timezoneSelect.value })
+      }).catch(err => console.error('Failed to save timezone:', err));
+      // Notify clock to update
+      window.dispatchEvent(new CustomEvent('os8:timezone-changed', { detail: { timezone: timezoneSelect.value } }));
+    });
+  }
+
+  // OAuth port handlers
+  if (oauthPortUnlock) {
+    oauthPortUnlock.addEventListener('change', () => {
+      const unlocked = oauthPortUnlock.checked;
+      oauthPortInput.disabled = !unlocked;
+      oauthPortSave.disabled = !unlocked;
+    });
+  }
+
+  if (oauthPortInput) {
+    oauthPortInput.addEventListener('input', () => {
+      updateOAuthPortWarning();
+    });
+  }
+
+  if (oauthPortSave) {
+    oauthPortSave.addEventListener('click', saveOAuthPort);
+  }
+
+  // Tunnel URL handler
+  const tunnelUrlCopy = document.getElementById('tunnelUrlCopy');
+  if (tunnelUrlCopy) {
+    tunnelUrlCopy.addEventListener('click', copyTunnelUrl);
+  }
+
+  // API Keys handlers (delegated to api-keys.js)
+  initApiKeysListeners();
+
+  // Voice settings handlers
+  const voiceSaveBtn = document.getElementById('voiceSaveBtn');
+  if (voiceSaveBtn) {
+    voiceSaveBtn.addEventListener('click', saveVoiceSettings);
+  }
+
+  // Voice sliders update display values on input
+  ['voiceSilenceNormal', 'voiceSilenceShort', 'voiceContextWindow', 'voiceVadSilence'].forEach(id => {
+    const slider = document.getElementById(id);
+    if (slider) {
+      slider.addEventListener('input', updateVoiceDisplayValues);
+    }
+  });
+
+  // User first name — debounced save
+  const userFirstNameInput = document.getElementById('userFirstNameInput');
+  if (userFirstNameInput) {
+    let userNameTimer;
+    userFirstNameInput.addEventListener('input', () => {
+      clearTimeout(userNameTimer);
+      userNameTimer = setTimeout(async () => {
+        const serverPort = await window.os8.server.getPort();
+        fetch(`http://localhost:${serverPort}/api/settings/user`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ firstName: userFirstNameInput.value })
+        }).catch(err => console.error('Failed to save user name:', err));
+      }, 500);
+    });
+  }
+
+  // User photo upload
+  const userPhotoInput = document.getElementById('userPhotoInput');
+  if (userPhotoInput) {
+    userPhotoInput.addEventListener('change', async () => {
+      const file = userPhotoInput.files?.[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('image', file);
+      try {
+        const serverPort = await window.os8.server.getPort();
+        await fetch(`http://localhost:${serverPort}/api/settings/user-image`, { method: 'POST', body: formData });
+        const img = document.getElementById('userPhotoPreview');
+        if (img) { img.src = `http://localhost:${serverPort}/api/settings/user-image?t=${Date.now()}`; img.style.display = 'block'; }
+      } catch (err) {
+        console.error('Failed to upload user photo:', err);
+      }
+      userPhotoInput.value = '';
+    });
+  }
+
+  // User photo remove
+  const userPhotoRemove = document.getElementById('userPhotoRemove');
+  if (userPhotoRemove) {
+    userPhotoRemove.addEventListener('click', async () => {
+      try {
+        const serverPort = await window.os8.server.getPort();
+        await fetch(`http://localhost:${serverPort}/api/settings/user-image`, { method: 'DELETE' });
+        const img = document.getElementById('userPhotoPreview');
+        if (img) img.style.display = 'none';
+      } catch (err) {
+        console.error('Failed to remove user photo:', err);
+      }
+    });
+  }
+
+  // AI Models toggle handlers are now bound dynamically in loadAIModelsSettings()
+
+  // Privacy toggle handlers
+  const privacyToggles = [
+    { id: 'privacyTelemetry', envKey: 'DISABLE_TELEMETRY' },
+    { id: 'privacyErrorReporting', envKey: 'DISABLE_ERROR_REPORTING' },
+    { id: 'privacyFeedbackSurvey', envKey: 'CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY' },
+    { id: 'privacyCodexAnalytics', envKey: 'CODEX_DISABLE_ANALYTICS' },
+    { id: 'privacyCodexFeedback', envKey: 'CODEX_DISABLE_FEEDBACK' },
+    { id: 'privacyCodexHistory', envKey: 'CODEX_DISABLE_HISTORY' },
+    { id: 'privacyGeminiTelemetry', envKey: 'GEMINI_TELEMETRY_ENABLED', invert: true },
+    { id: 'privacyGeminiPromptLogging', envKey: 'GEMINI_TELEMETRY_LOG_PROMPTS', invert: true },
+  ];
+  for (const { id, envKey, invert } of privacyToggles) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('change', async () => {
+        if (invert) {
+          // Inverted: toggle ON → set to 'false' (disables the feature)
+          if (el.checked) {
+            await window.os8.env.set(envKey, 'false', 'Privacy setting');
+          } else {
+            await window.os8.env.delete(envKey);
+          }
+        } else {
+          if (el.checked) {
+            await window.os8.env.set(envKey, '1', 'Privacy setting');
+          } else {
+            await window.os8.env.delete(envKey);
+          }
+        }
+      });
+    }
+  }
+
+}
+

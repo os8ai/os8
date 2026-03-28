@@ -1,0 +1,77 @@
+[
+  {
+    "label": "Personal Assistant",
+    "description": "Manages calendar, email, messaging, reminders, scheduling, and daily tasks. Keeps you organized and on track.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "telegram", "speak"]
+  },
+  {
+    "label": "Executive Assistant",
+    "description": "Handles executive scheduling, email triage, meeting prep, travel coordination, and briefing documents.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "google-drive", "telegram"]
+  },
+  {
+    "label": "Research Analyst",
+    "description": "Conducts deep research, summarizes articles and videos, analyzes data, writes reports, and manages reference materials.",
+    "suggestedSkills": ["youtube", "google-drive", "speak"]
+  },
+  {
+    "label": "Content Creator",
+    "description": "Creates written content, generates images, produces audio/video, manages social media calendars, and builds multimedia projects.",
+    "suggestedSkills": ["imagegen", "speak", "youtube", "google-drive"]
+  },
+  {
+    "label": "Software Developer",
+    "description": "Builds and maintains web applications, reviews code, runs tests, manages deployments, and documents technical systems.",
+    "suggestedSkills": ["app-builder", "app-enhancer"]
+  },
+  {
+    "label": "UI/UX Designer",
+    "description": "Designs user interfaces, creates mockups and prototypes, builds interactive components, and iterates on visual design.",
+    "suggestedSkills": ["app-builder", "app-enhancer", "imagegen"]
+  },
+  {
+    "label": "Data Analyst",
+    "description": "Analyzes datasets, creates visualizations, builds dashboards, writes reports, and extracts insights from structured data.",
+    "suggestedSkills": ["google-drive", "app-builder"]
+  },
+  {
+    "label": "Marketing Manager",
+    "description": "Plans marketing campaigns, manages content calendars, creates promotional materials, tracks metrics, and coordinates launches.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "imagegen", "telegram"]
+  },
+  {
+    "label": "Project Manager",
+    "description": "Tracks tasks and deadlines, coordinates team communications, manages project documentation, and creates status reports.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "google-drive", "telegram"]
+  },
+  {
+    "label": "Sales Representative",
+    "description": "Manages contacts and follow-ups, drafts proposals, schedules meetings, tracks pipeline, and handles client communications.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "telegram"]
+  },
+  {
+    "label": "Customer Support",
+    "description": "Handles support tickets, drafts responses, manages FAQs, escalates issues, and tracks customer satisfaction.",
+    "suggestedSkills": ["google-gmail", "telegram"]
+  },
+  {
+    "label": "Financial Analyst",
+    "description": "Analyzes financial data, creates reports and forecasts, tracks budgets, manages spreadsheets, and monitors market trends.",
+    "suggestedSkills": ["google-drive", "google-gmail"]
+  },
+  {
+    "label": "HR Coordinator",
+    "description": "Manages hiring workflows, schedules interviews, handles onboarding documents, and coordinates team communications.",
+    "suggestedSkills": ["google-calendar", "google-gmail", "google-drive"]
+  },
+  {
+    "label": "Creative Director",
+    "description": "Oversees creative projects, generates visual concepts, provides art direction, manages brand assets, and reviews creative output.",
+    "suggestedSkills": ["imagegen", "google-drive", "app-builder"]
+  },
+  {
+    "label": "Operations Manager",
+    "description": "Optimizes workflows, manages documentation, coordinates logistics, monitors systems, and handles day-to-day operations.",
+    "suggestedSkills": ["google-calendar", "google-drive", "google-gmail", "telegram"]
+  }
+]

@@ -1,0 +1,80 @@
+{
+  "name": "os8",
+  "version": "1.0.0",
+  "description": "OS8 - Desktop workspace for AI-assisted development",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "pretest": "npm rebuild better-sqlite3 --loglevel=error",
+    "test": "vitest run",
+    "test:watch": "npm rebuild better-sqlite3 --loglevel=error && vitest",
+    "posttest": "npx @electron/rebuild -m . -o better-sqlite3 -s 2>/dev/null",
+    "postinstall": "npx @electron/rebuild -m . -o better-sqlite3",
+    "verify:package-assets": "node tools/verify-package-assets.js",
+    "verify:package-dist": "node tools/verify-package-assets.js --dist",
+    "build": "npm run verify:package-assets && electron-builder --mac && npm run verify:package-dist",
+    "build:dir": "npm run verify:package-assets && electron-builder --mac --dir && npm run verify:package-dist"
+  },
+  "keywords": [
+    "electron",
+    "ai",
+    "cli",
+    "workspace"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "electron": "^40.0.0",
+    "electron-builder": "^26.8.1",
+    "electron-reloader": "^1.2.3",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@xenova/transformers": "^2.17.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "async-mutex": "^0.5.0",
+    "better-sqlite3": "^12.6.2",
+    "chokidar": "^3.6.0",
+    "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "lru-cache": "^10.4.3",
+    "multer": "^2.0.2",
+    "node-pty": "^1.1.0",
+    "sharp": "^0.34.5",
+    "ws": "^8.19.0"
+  },
+  "build": {
+    "appId": "com.os8.app",
+    "productName": "OS8",
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dmg",
+      "icon": "build/icon.icns"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "styles.css",
+      "styles/**/*",
+      "src/**/*",
+      "backgrounds/**/*",
+      "build/**/*",
+      "skills/**/*",
+      "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "node_modules/node-pty/**",
+      "node_modules/sharp/**"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    }
+  }
+}

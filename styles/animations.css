@@ -1,0 +1,41 @@
+    @keyframes shimmer-slide {
+      0% {
+        background-position: 200% 0;
+        opacity: 0;
+      }
+      1% {
+        opacity: 1;
+      }
+      9% {
+        opacity: 1;
+      }
+      10% {
+        background-position: -200% 0;
+        opacity: 0;
+      }
+      100% {
+        background-position: -200% 0;
+        opacity: 0;
+      }
+    }
+    @keyframes shimmer-hover {
+      0% {
+        background-position: 200% 0;
+      }
+      100% {
+        background-position: -200% 0;
+      }
+    }
+    @keyframes voice-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    @keyframes voice-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+@keyframes build-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}

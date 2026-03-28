@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Call with {{assistantName}}</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      min-height: 100vh;
+      min-height: -webkit-fill-available;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      gap: 24px;
+    }
+
+    /* Avatar */
+    .avatar {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+
+    .avatar.speaking {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .avatar.thinking {
+      animation: think 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+      }
+      50% {
+        transform: scale(1.08);
+        box-shadow: 0 4px 40px rgba(102, 126, 234, 0.6);
+      }
+    }
+
+    @keyframes think {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+
+    /* Status text */
+    .status {
+      font-size: 16px;
+      color: #a0aec0;
+      text-align: center;
+      min-height: 24px;
+    }
+
+    .status.error {
+      color: #fc8181;
+    }
+
+    /* Transcript area */
+    .transcript-container {
+      width: 100%;
+      max-width: 400px;
+      min-height: 80px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 16px;
+      padding: 16px 20px;
+      text-align: center;
+    }
+
+    .transcript {
+      font-size: 18px;
+      line-height: 1.5;
+      color: #e2e8f0;
+      word-break: break-word;
+    }
+
+    .transcript.partial {
+      color: #a0aec0;
+    }
+
+    .transcript:empty::before {
+      content: 'Listening...';
+      color: #4a5568;
+      font-style: italic;
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 40px;
+      margin-top: 20px;
+    }
+
+    .btn {
+      width: 70px;
+      height: 70px;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, opacity 0.15s;
+    }
+
+    .btn:active {
+      transform: scale(0.95);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .btn-mute {
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-mute.muted {
+      background: #e53e3e;
+    }
+
+    .btn-mute svg {
+      fill: #fff;
+    }
+
+    .btn-end {
+      background: #e53e3e;
+    }
+
+    .btn-end svg {
+      fill: #fff;
+    }
+
+    /* Join screen */
+    .join-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      text-align: center;
+    }
+
+    .join-title {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .btn-join {
+      width: auto;
+      height: auto;
+      padding: 16px 48px;
+      border-radius: 30px;
+      background: linear-gradient(135deg, #667eea, #764ba2);
+      font-size: 18px;
+      font-weight: 600;
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-join:active {
+      transform: scale(0.98);
+    }
+
+    /* Error screen */
+    .error-screen {
+      text-align: center;
+    }
+
+    .error-title {
+      font-size: 20px;
+      color: #fc8181;
+      margin-bottom: 12px;
+    }
+
+    .error-message {
+      color: #a0aec0;
+      margin-bottom: 24px;
+    }
+
+    .btn-retry {
+      background: rgba(255, 255, 255, 0.15);
+      padding: 12px 32px;
+      border-radius: 20px;
+      font-size: 16px;
+      color: #fff;
+      width: auto;
+      height: auto;
+    }
+
+    /* Call ended screen */
+    .ended-screen {
+      text-align: center;
+    }
+
+    .ended-title {
+      font-size: 20px;
+      margin-bottom: 8px;
+    }
+
+    .ended-duration {
+      color: #a0aec0;
+    }
+
+    /* Hidden */
+    .hidden {
+      display: none !important;
+    }
+
+    /* Warning overlay */
+    .warning-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: rgba(237, 137, 54, 0.95);
+      color: #fff;
+      padding: 12px 20px;
+      text-align: center;
+      font-size: 14px;
+      z-index: 100;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Join Screen -->
+    <div id="joinScreen" class="join-screen">
+      <div class="avatar">{{assistantEmoji}}</div>
+      <div class="join-title">Call with {{assistantName}}</div>
+      <button class="btn btn-join" id="joinBtn" onclick="joinCall()">Join Call</button>
+      <div class="status" id="joinStatus"></div>
+    </div>
+
+    <!-- Active Call Screen -->
+    <div id="callScreen" class="hidden">
+      <div class="container">
+        <div class="avatar" id="avatar">{{assistantEmoji}}</div>
+        <div class="status" id="callStatus">Connecting...</div>
+        <div class="transcript-container">
+          <div class="transcript" id="transcript"></div>
+        </div>
+        <div class="controls">
+          <button class="btn btn-mute" id="muteBtn" onclick="toggleMute()">
+            <svg id="micIcon" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+            <svg id="micOffIcon" class="hidden" viewBox="0 0 24 24"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/></svg>
+          </button>
+          <button class="btn btn-end" id="endBtn" onclick="endCall()">
+            <svg viewBox="0 0 24 24"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08c-.18-.17-.29-.42-.29-.7 0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.68-1.36-2.66-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Error Screen -->
+    <div id="errorScreen" class="error-screen hidden">
+      <div class="avatar">{{assistantEmoji}}</div>
+      <div class="error-title" id="errorTitle">Connection Error</div>
+      <div class="error-message" id="errorMessage">Unable to connect to the call.</div>
+      <button class="btn btn-retry" onclick="location.reload()">Try Again</button>
+    </div>
+
+    <!-- Ended Screen -->
+    <div id="endedScreen" class="ended-screen hidden">
+      <div class="avatar">{{assistantEmoji}}</div>
+      <div class="ended-title">Call Ended</div>
+      <div class="ended-duration" id="callDuration"></div>
+    </div>
+  </div>
+
+  <!-- Warning overlay for backgrounded page -->
+  <div id="warningOverlay" class="warning-overlay hidden">
+    Call may have been interrupted. Tap to check connection.
+  </div>
+
+  <script>
+    // Call configuration
+    const callId = '{{callId}}';
+    const token = '{{token}}';
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${location.host}/api/call/${callId}/stream?token=${token}`;
+
+    // State
+    let ws = null;
+    let audioContext = null;
+    let masterGain = null;  // FIX: GainNode for reliable audio cancellation
+    let mediaStream = null;
+    let workletNode = null;
+    let isMuted = false;
+    let callStartTime = null;
+    let nextAudioTime = 0;
+    let scheduledSources = [];
+    let currentResponseId = 0;  // Track which response we're playing audio for
+    let expectedRequestId = null;  // Server's requestId for current response (Fix 2A)
+    let playbackCheckInterval = null;  // Check when all audio finishes
+
+    // FIX: Segment-based audio scheduling
+    // When Claude uses tools, it outputs multiple text blocks. Each block's audio
+    // must play SEQUENTIALLY, not interleaved. We queue audio by segment and
+    // only schedule a segment after previous segments are done.
+    let currentPlayingSegment = 0;  // The segment currently playing
+    let segmentQueues = new Map();  // segmentId -> array of audio chunks waiting to play
+    let segmentComplete = new Map();  // segmentId -> boolean (all audio received for this segment)
+
+    // Transcript throttling
+    let lastTranscriptUpdate = 0;
+    const TRANSCRIPT_THROTTLE_MS = 166;  // ~6 updates/sec
+
+    // Elements
+    const joinScreen = document.getElementById('joinScreen');
+    const callScreen = document.getElementById('callScreen');
+    const errorScreen = document.getElementById('errorScreen');
+    const endedScreen = document.getElementById('endedScreen');
+    const joinBtn = document.getElementById('joinBtn');
+    const joinStatus = document.getElementById('joinStatus');
+    const avatar = document.getElementById('avatar');
+    const callStatus = document.getElementById('callStatus');
+    const transcript = document.getElementById('transcript');
+    const muteBtn = document.getElementById('muteBtn');
+    const micIcon = document.getElementById('micIcon');
+    const micOffIcon = document.getElementById('micOffIcon');
+    const warningOverlay = document.getElementById('warningOverlay');
+
+    // Join the call
+    async function joinCall() {
+      joinBtn.disabled = true;
+      joinStatus.textContent = 'Requesting microphone...';
+
+      try {
+        // Get microphone permission
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 48000
+          }
+        });
+
+        joinStatus.textContent = 'Connecting...';
+
+        // Create AudioContext (requires user gesture on iOS)
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+
+        // FIX: Create master GainNode for reliable audio cancellation
+        // All sources connect through this node - disconnecting it severs all audio instantly
+        masterGain = audioContext.createGain();
+        masterGain.connect(audioContext.destination);
+
+        // Resume if suspended
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
+        // Set up audio capture
+        await setupAudioCapture();
+
+        // Connect WebSocket
+        connectWebSocket();
+
+      } catch (err) {
+        console.error('Join error:', err);
+        joinBtn.disabled = false;
+
+        if (err.name === 'NotAllowedError') {
+          joinStatus.textContent = 'Microphone permission denied';
+          joinStatus.classList.add('error');
+        } else {
+          joinStatus.textContent = 'Failed to start: ' + err.message;
+          joinStatus.classList.add('error');
+        }
+      }
+    }
+
+    // Set up audio capture with AudioWorklet
+    async function setupAudioCapture() {
+      // AudioWorklet for downsampling 48kHz -> 16kHz and converting to Int16
+      const workletCode = `
+        class PCMProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.buffer = [];
+            this.targetSamples = 1600;  // 100ms at 16kHz
+          }
+
+          process(inputs) {
+            const input = inputs[0];
+            if (!input || !input[0]) return true;
+
+            const samples = input[0];
+
+            // Downsample 48kHz -> 16kHz (take every 3rd sample with simple averaging)
+            for (let i = 0; i < samples.length; i += 3) {
+              const avg = (samples[i] + (samples[i+1] || 0) + (samples[i+2] || 0)) / 3;
+              this.buffer.push(avg);
+            }
+
+            // Send when we have enough samples
+            while (this.buffer.length >= this.targetSamples) {
+              const chunk = this.buffer.splice(0, this.targetSamples);
+
+              // Convert to Int16
+              const pcm = new Int16Array(chunk.length);
+              for (let i = 0; i < chunk.length; i++) {
+                const s = Math.max(-1, Math.min(1, chunk[i]));
+                pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              }
+
+              this.port.postMessage(pcm.buffer, [pcm.buffer]);
+            }
+
+            return true;
+          }
+        }
+
+        registerProcessor('pcm-processor', PCMProcessor);
+      `;
+
+      const blob = new Blob([workletCode], { type: 'application/javascript' });
+      const workletUrl = URL.createObjectURL(blob);
+      await audioContext.audioWorklet.addModule(workletUrl);
+
+      const source = audioContext.createMediaStreamSource(mediaStream);
+      workletNode = new AudioWorkletNode(audioContext, 'pcm-processor');
+
+      workletNode.port.onmessage = (e) => {
+        if (ws?.readyState === WebSocket.OPEN && !isMuted) {
+          ws.send(e.data);
+        }
+      };
+
+      source.connect(workletNode);
+      // Don't connect to destination (no local playback of mic)
+    }
+
+    // Connect WebSocket
+    function connectWebSocket() {
+      ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        console.log('WebSocket connected');
+      };
+
+      let msgCount = 0;
+      let audioMsgCount = 0;
+      let audioMsgCountPerResponse = 0;  // DIAG: Reset per response
+      ws.onmessage = (event) => {
+        msgCount++;
+        try {
+          const msg = JSON.parse(event.data);
+          // DIAG: Reset per-response counter on new response
+          if (msg.type === 'agent_thinking') {
+            console.log(`DIAG ws.onmessage: agent_thinking - resetting audioMsgCountPerResponse (was ${audioMsgCountPerResponse})`);
+            audioMsgCountPerResponse = 0;
+          }
+          if (msg.type === 'audio') {
+            audioMsgCount++;
+            audioMsgCountPerResponse++;
+            const sig = msg.data?.slice(0, 20) + ':' + msg.data?.length;
+            console.log(`DIAG WS audio #${audioMsgCountPerResponse} (total: ${audioMsgCount}): requestId=${msg.requestId}, expectedRequestId=${expectedRequestId}, sig=${sig}`);
+          }
+          handleMessage(msg);
+        } catch (e) {
+          console.error('Failed to parse message:', e);
+        }
+      };
+
+      ws.onclose = (e) => {
+        console.log('WebSocket closed:', e.code, e.reason);
+        if (callStartTime) {
+          showEndedScreen();
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        showErrorScreen('Connection Error', 'Failed to connect to the call server.');
+      };
+    }
+
+    // Handle WebSocket messages
+    function handleMessage(msg) {
+      switch (msg.type) {
+        case 'ready':
+          showCallScreen();
+          break;
+
+        case 'ping':
+          ws.send(JSON.stringify({ type: 'pong' }));
+          break;
+
+        case 'transcript':
+          updateTranscript(msg.text, msg.final);
+          break;
+
+        case 'agent_thinking':
+          // New response starting - cancel any existing audio and reset state
+          currentResponseId++;
+          expectedRequestId = msg.requestId;  // Capture server's requestId for validation
+
+          // Log state BEFORE reset for debugging
+          console.log(`=== NEW RESPONSE ${currentResponseId} (requestId=${msg.requestId}) ===`);
+          console.log(`  Before reset: ctxTime=${audioContext?.currentTime?.toFixed(3)}, nextAudioTime=${nextAudioTime.toFixed(3)}, scheduledSources=${scheduledSources.length}`);
+
+          cancelAudio(0);  // Immediate cancel, no fade
+          // FIX: Reset to current time, NOT 0 - prevents scheduling into the past
+          nextAudioTime = audioContext?.currentTime || 0;
+          lastAudioSig = null;  // Reset duplicate detection
+          audioChunkNum = 0;  // Reset chunk counter
+
+          // FIX: Reset segment tracking for new response
+          currentPlayingSegment = 0;
+          segmentQueues.clear();
+          segmentComplete.clear();
+          processingQueue = false;
+
+          console.log(`  After reset: nextAudioTime=${nextAudioTime.toFixed(3)}, scheduledSources=${scheduledSources.length}`);
+
+          avatar.classList.remove('speaking');
+          avatar.classList.add('thinking');
+          callStatus.textContent = 'Thinking...';
+          break;
+
+        case 'tts_segment_start':
+          // New TTS segment starting - prepare queue
+          console.log(`TTS segment ${msg.segmentId} starting (currentPlaying: ${currentPlayingSegment})`);
+          if (!segmentQueues.has(msg.segmentId)) {
+            segmentQueues.set(msg.segmentId, []);
+          }
+          segmentComplete.set(msg.segmentId, false);
+
+          // FIX: If this is segment 1 and nothing is playing yet, start playing it
+          // (currentPlayingSegment starts at 0)
+          if (msg.segmentId === 1 && currentPlayingSegment === 0) {
+            // Process any audio that arrived before the segment_start message
+            const earlyQueue = segmentQueues.get(1);
+            if (earlyQueue && earlyQueue.length > 0) {
+              processingQueue = true;  // Prevent interleaving
+              console.log(`Processing ${earlyQueue.length} early-arrived chunks for segment 1`);
+              while (earlyQueue.length > 0) {
+                const chunk = earlyQueue.shift();
+                scheduleAudioChunk(chunk.base64Data, chunk.requestId, chunk.segmentId);
+              }
+              processingQueue = false;
+            }
+            currentPlayingSegment = 1;
+            console.log(`Segment 1 started, currentPlayingSegment=1`);
+          }
+          break;
+
+        case 'tts_segment_end':
+          // TTS segment complete - all text sent, audio may still be arriving
+          console.log(`TTS segment ${msg.segmentId} text complete`);
+          segmentComplete.set(msg.segmentId, true);
+          // Try to process queued segments
+          processSegmentQueues();
+          break;
+
+        case 'agent_speaking':
+          console.log(`DIAG agent_speaking for requestId=${msg.requestId}`);
+          avatar.classList.remove('thinking');
+          avatar.classList.add('speaking');
+          callStatus.textContent = 'Speaking...';
+          break;
+
+        case 'agent_done':
+          console.log(`DIAG agent_done for requestId=${msg.requestId} - received ${audioChunkNum} chunks, scheduledSources=${scheduledSources.length}`);
+          avatar.classList.remove('speaking', 'thinking');
+          callStatus.textContent = 'Listening...';
+          break;
+
+        case 'audio':
+          // Send debug info back to server
+          if (ws?.readyState === WebSocket.OPEN) {
+            const ctx = audioContext?.currentTime?.toFixed(3) || '?';
+            const next = nextAudioTime?.toFixed(3) || '?';
+            ws.send(JSON.stringify({
+              type: 'client_debug',
+              msg: `audio recv: ctx=${ctx}, next=${next}, curSeg=${currentPlayingSegment}, sources=${scheduledSources.length}`
+            }));
+          }
+          playAudio(msg.data, msg.requestId, msg.segmentId);
+          break;
+
+        case 'cancel_audio':
+          cancelAudio(msg.fadeMs || 50);
+          break;
+
+        case 'call_ended':
+          showEndedScreen(msg.reason);
+          break;
+
+        case 'error':
+          console.error('Server error:', msg.message);
+          callStatus.textContent = msg.message;
+          callStatus.classList.add('error');
+          break;
+      }
+    }
+
+    // Update transcript with throttling
+    function updateTranscript(text, isFinal) {
+      const now = performance.now();
+
+      if (isFinal || now - lastTranscriptUpdate > TRANSCRIPT_THROTTLE_MS) {
+        transcript.textContent = text;
+        transcript.classList.toggle('partial', !isFinal);
+        lastTranscriptUpdate = now;
+      }
+    }
+
+    // Duplicate detection
+    let lastAudioSig = null;
+    let audioChunkNum = 0;
+    let seenAudioSigs = new Set();  // Track ALL signatures in current response
+
+    // Play audio chunk (24kHz PCM base64)
+    // FIX: Now segment-aware - queues audio from future segments
+    function playAudio(base64Data, requestId, segmentId) {
+      if (!audioContext) return;
+
+      // FIX 2A: Validate requestId matches expected (defense in depth)
+      if (requestId !== undefined && requestId !== expectedRequestId) {
+        console.log(`Rejecting audio with mismatched requestId: ${requestId} (expected: ${expectedRequestId})`);
+        return;
+      }
+
+      // Check for duplicate chunks
+      const sig = base64Data.slice(0, 32) + ':' + base64Data.length;
+      audioChunkNum++;
+      if (sig === lastAudioSig) {
+        console.warn('DUPLICATE audio chunk detected!', { chunk: audioChunkNum, sig });
+        return; // Skip duplicate
+      }
+      lastAudioSig = sig;
+
+      // FIX: Segment-based scheduling
+      // If this audio is for a FUTURE segment, queue it instead of playing immediately
+      const effectiveSegmentId = segmentId || 1;  // Default to segment 1 if not provided (backwards compat)
+
+      // FIX: Drop audio from past segments - it's too late, we've moved on
+      if (effectiveSegmentId < currentPlayingSegment) {
+        console.log(`Dropping late audio chunk ${audioChunkNum} from segment ${effectiveSegmentId} (current: ${currentPlayingSegment})`);
+        return;
+      }
+
+      // Queue if:
+      // 1. This is for a future segment (effectiveSegmentId > currentPlayingSegment)
+      // 2. OR we're currently processing a queue (to prevent interleaving)
+      if (effectiveSegmentId > currentPlayingSegment || processingQueue) {
+        // Queue for later
+        console.log(`Queueing audio chunk ${audioChunkNum} for segment ${effectiveSegmentId} (current: ${currentPlayingSegment}, processingQueue: ${processingQueue}, sources: ${scheduledSources.length})`);
+        if (!segmentQueues.has(effectiveSegmentId)) {
+          segmentQueues.set(effectiveSegmentId, []);
+        }
+        segmentQueues.get(effectiveSegmentId).push({ base64Data, requestId, segmentId: effectiveSegmentId });
+
+        // FIX: If this is for the NEXT segment and no sources are playing,
+        // process the queue immediately! This handles the case where segment N's
+        // audio finished before segment N+1's audio arrived.
+        if (effectiveSegmentId === currentPlayingSegment + 1 && scheduledSources.length === 0 && !processingQueue) {
+          console.log(`Triggering immediate queue processing for segment ${effectiveSegmentId}`);
+          processSegmentQueues();
+        }
+        return;
+      }
+
+      // Schedule immediately - this is for the current segment and not processing queue
+      scheduleAudioChunk(base64Data, requestId, effectiveSegmentId);
+    }
+
+    // Actually schedule an audio chunk for playback
+    function scheduleAudioChunk(base64Data, requestId, segmentId) {
+      // Enhanced diagnostic logging
+      const ctxTime = audioContext.currentTime.toFixed(3);
+      const schedTime = Math.max(audioContext.currentTime, nextAudioTime).toFixed(3);
+      const gap = (nextAudioTime - audioContext.currentTime).toFixed(3);
+      console.log(`SCHED chunk ${audioChunkNum} seg${segmentId}: ctx=${ctxTime}, next=${nextAudioTime.toFixed(3)}, sched=${schedTime}, gap=${gap}, sources=${scheduledSources.length}`);
+
+      // Capture current response ID to check if this audio is stale
+      const audioResponseId = currentResponseId;
+
+      // Decode base64 to bytes
+      const binaryStr = atob(base64Data);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+
+      // Convert to Int16 samples
+      const int16 = new Int16Array(bytes.buffer);
+
+      // Create AudioBuffer (24kHz -> AudioContext sample rate)
+      const audioBuffer = audioContext.createBuffer(1, int16.length, 24000);
+      const channelData = audioBuffer.getChannelData(0);
+      for (let i = 0; i < int16.length; i++) {
+        channelData[i] = int16[i] / 32768;
+      }
+
+      // Check if this audio is for the current response (prevent stale audio)
+      if (audioResponseId !== currentResponseId) {
+        console.log('Ignoring stale audio from response', audioResponseId, '(current:', currentResponseId + ')');
+        return;
+      }
+
+      // Create source and schedule - connect through masterGain for reliable cancellation
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(masterGain);  // FIX: Route through GainNode, not directly to destination
+
+      // Gapless scheduling - schedule audio to play after currently scheduled audio
+      const now = audioContext.currentTime;
+      const actualStartTime = Math.max(now, nextAudioTime);
+
+      // NOTE: Removed backpressure check that was causing interleaving.
+      // For sequential TTS playback, we WANT audio scheduled into the future.
+      // The old check would reset nextAudioTime if we were >2s ahead, which
+      // caused multiple segments to interleave when audio arrived in bursts.
+      source.start(actualStartTime);
+      const prevNext = nextAudioTime;
+      nextAudioTime = actualStartTime + audioBuffer.duration;
+
+      // Send post-schedule debug
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'client_debug',
+          msg: `scheduled: start=${actualStartTime.toFixed(3)}, dur=${audioBuffer.duration.toFixed(3)}, prevNext=${prevNext.toFixed(3)}, newNext=${nextAudioTime.toFixed(3)}`
+        }));
+      }
+
+      scheduledSources.push(source);
+
+      // Capture requestId and segmentId for cleanup
+      const sourceRequestId = expectedRequestId;
+      const sourceSegmentId = segmentId;
+
+      // Cleanup finished sources and check for segment completion
+      source.onended = () => {
+        const idx = scheduledSources.indexOf(source);
+        if (idx !== -1) scheduledSources.splice(idx, 1);
+
+        // Check if current segment is done and we should move to next
+        if (scheduledSources.length === 0) {
+          // Try to process next segment
+          processSegmentQueues();
+
+          // If still no sources, all audio is done
+          if (scheduledSources.length === 0 && ws?.readyState === WebSocket.OPEN) {
+            console.log(`All audio finished for request ${sourceRequestId}`);
+            ws.send(JSON.stringify({ type: 'playback_done', requestId: sourceRequestId }));
+          }
+        }
+      };
+    }
+
+    // Flag to prevent direct scheduling while processing queue
+    let processingQueue = false;
+
+    // Process queued segments - called when audio finishes or segment completes
+    function processSegmentQueues() {
+      // Prevent reentrant calls and direct scheduling interference
+      if (processingQueue) return;
+
+      // FIX: Don't advance to next segment while current segment's audio is still playing!
+      // This is the key fix - we must wait for ALL current audio to finish before starting next segment
+      if (scheduledSources.length > 0) {
+        console.log(`Waiting for ${scheduledSources.length} sources to finish before advancing segment`);
+        return;
+      }
+
+      // Find the next segment that has queued audio
+      const nextSegment = currentPlayingSegment + 1;
+
+      if (segmentQueues.has(nextSegment) && segmentQueues.get(nextSegment).length > 0) {
+        // Set flag to force all new audio to queue during processing
+        processingQueue = true;
+
+        console.log(`Processing segment ${nextSegment} queue (${segmentQueues.get(nextSegment).length} chunks), nextAudioTime=${nextAudioTime.toFixed(3)}`);
+
+        // Schedule all queued audio for this segment FIRST
+        const queue = segmentQueues.get(nextSegment);
+        while (queue.length > 0) {
+          const chunk = queue.shift();
+          scheduleAudioChunk(chunk.base64Data, chunk.requestId, chunk.segmentId);
+        }
+
+        // NOW update currentPlayingSegment after queue is processed
+        currentPlayingSegment = nextSegment;
+        processingQueue = false;
+
+        console.log(`Segment ${nextSegment} queue processed, currentPlayingSegment=${currentPlayingSegment}, nextAudioTime=${nextAudioTime.toFixed(3)}`);
+      } else if (segmentComplete.get(nextSegment)) {
+        // Next segment is complete but has no audio - skip to the one after
+        currentPlayingSegment = nextSegment;
+        console.log(`Segment ${nextSegment} complete but empty, advancing`);
+        processSegmentQueues();  // Recurse to check next
+      }
+    }
+
+    // Cancel audio playback (barge-in or new response)
+    function cancelAudio(fadeMs = 50) {
+      if (!audioContext) return;
+
+      const now = audioContext.currentTime;
+      const fadeTime = (fadeMs || 0) / 1000;
+
+      // FIX: Graph-level kill switch - disconnect masterGain to instantly sever ALL audio
+      // This is more reliable than source.stop() on mobile WebKit where stop() can fail
+      if (masterGain) {
+        try {
+          masterGain.disconnect();
+        } catch (e) {}
+        // Create fresh GainNode for next response
+        masterGain = audioContext.createGain();
+        masterGain.connect(audioContext.destination);
+      }
+
+      // Also call stop() on sources (belt and suspenders)
+      for (const source of scheduledSources) {
+        try {
+          source.stop(now + fadeTime);
+        } catch (e) {}
+      }
+
+      scheduledSources = [];
+      // FIX: Reset to current time, NOT 0 - prevents scheduling math errors
+      nextAudioTime = audioContext.currentTime;
+
+      // FIX: Clear segment queues on cancel
+      segmentQueues.clear();
+      segmentComplete.clear();
+      currentPlayingSegment = 0;
+      processingQueue = false;
+
+      // Clear playback check interval
+      if (playbackCheckInterval) {
+        clearInterval(playbackCheckInterval);
+        playbackCheckInterval = null;
+      }
+
+      avatar.classList.remove('speaking', 'thinking');
+      callStatus.textContent = 'Listening...';
+    }
+
+    // Toggle mute
+    function toggleMute() {
+      isMuted = !isMuted;
+      muteBtn.classList.toggle('muted', isMuted);
+      micIcon.classList.toggle('hidden', isMuted);
+      micOffIcon.classList.toggle('hidden', !isMuted);
+
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'mute', muted: isMuted }));
+      }
+    }
+
+    // End call
+    function endCall() {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'end_call' }));
+      }
+      cleanup();
+      showEndedScreen('You ended the call');
+    }
+
+    // Show call screen
+    function showCallScreen() {
+      joinScreen.classList.add('hidden');
+      callScreen.classList.remove('hidden');
+      callStatus.textContent = 'Listening...';
+      callStartTime = Date.now();
+    }
+
+    // Show error screen
+    function showErrorScreen(title, message) {
+      joinScreen.classList.add('hidden');
+      callScreen.classList.add('hidden');
+      errorScreen.classList.remove('hidden');
+      document.getElementById('errorTitle').textContent = title;
+      document.getElementById('errorMessage').textContent = message;
+      cleanup();
+    }
+
+    // Show ended screen
+    function showEndedScreen(reason) {
+      joinScreen.classList.add('hidden');
+      callScreen.classList.add('hidden');
+      errorScreen.classList.add('hidden');
+      endedScreen.classList.remove('hidden');
+
+      if (callStartTime) {
+        const duration = Math.floor((Date.now() - callStartTime) / 1000);
+        const mins = Math.floor(duration / 60);
+        const secs = duration % 60;
+        document.getElementById('callDuration').textContent =
+          mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      }
+
+      cleanup();
+    }
+
+    // Cleanup resources
+    function cleanup() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+
+      if (workletNode) {
+        workletNode.disconnect();
+        workletNode = null;
+      }
+
+      if (masterGain) {
+        try { masterGain.disconnect(); } catch (e) {}
+        masterGain = null;
+      }
+
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+
+      if (playbackCheckInterval) {
+        clearInterval(playbackCheckInterval);
+        playbackCheckInterval = null;
+      }
+
+      scheduledSources = [];
+    }
+
+    // Handle page visibility changes
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden && callStartTime && ws?.readyState === WebSocket.OPEN) {
+        console.log('Page hidden during call');
+      } else if (!document.hidden && callStartTime) {
+        // Page became visible again
+        warningOverlay.classList.remove('hidden');
+        setTimeout(() => {
+          warningOverlay.classList.add('hidden');
+        }, 3000);
+
+        // Check if AudioContext needs resuming
+        if (audioContext?.state === 'suspended') {
+          audioContext.resume();
+        }
+      }
+    });
+
+    // Hide warning on tap
+    warningOverlay.addEventListener('click', () => {
+      warningOverlay.classList.add('hidden');
+      if (audioContext?.state === 'suspended') {
+        audioContext.resume();
+      }
+    });
+  </script>
+</body>
+</html>

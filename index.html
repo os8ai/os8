@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OS8</title>
+  <link rel="stylesheet" href="./node_modules/@xterm/xterm/css/xterm.css">
+  <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <link rel="stylesheet" href="styles/index.css">
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <h1>OS8</h1>
+    <div class="header-clock" id="headerClock"></div>
+  </div>
+
+  <!-- Call Active Banner (shown when phone call is in progress) -->
+  <div class="call-active-banner" id="callActiveBanner" style="display: none;">
+    <span class="call-active-icon">📱</span>
+    <span class="call-active-text">Phone call active — Desktop voice disabled</span>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar" id="tabBar">
+    <div class="tab active" data-tab-id="home">
+      <span class="tab-title">Home</span>
+    </div>
+    <div class="mode-toggle" id="modeToggle">
+      <button class="mode-toggle-btn" data-mode="user">User</button>
+      <button class="mode-toggle-btn active" data-mode="developer">Dev</button>
+    </div>
+  </div>
+
+  <!-- Home View -->
+  <div class="view home-view active" id="homeView">
+    <div class="home-background" id="homeBackground">
+      <div class="home-background-gradient" id="homeBgGradient"></div>
+      <div class="home-background-image" id="homeBgImage"></div>
+      <div class="home-background-overlay" id="homeBgOverlay"></div>
+    </div>
+    <div class="home-actions">
+      <button class="home-action-btn trash" id="trashBtn" title="Junk">
+        <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        </svg>
+      </button>
+      <button class="home-action-btn settings" id="settingsBtn" title="Settings">
+        <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
+      <button class="home-action-btn assistant" id="assistantBtn" title="Agent">
+        <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+      <button class="home-action-btn new-app" id="newAppBtn" title="New App">
+        <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 5v14M5 12h14"/>
+        </svg>
+      </button>
+    </div>
+    <div class="apps-section">
+      <div class="apps-grid" id="appsGrid">
+        <!-- Apps will be rendered here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Workspace View -->
+  <div class="view workspace-view" id="workspaceView">
+    <div class="workspace-container">
+      <div class="workspace-bar">
+        <div class="workspace-bar-left">
+          <span class="workspace-title" id="workspaceTitle">App Name</span>
+        </div>
+        <button class="icon-btn lg close-btn" id="closeAppBtn" title="Close app">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Split View Container (User Mode with multiple apps) -->
+      <div class="split-view-container" id="splitViewContainer">
+        <div class="split-primary" id="splitPrimary">
+          <div class="split-panel-header split-primary-header" id="splitPrimaryHeader">
+            <div class="split-panel-title" id="splitPrimaryTitle">
+              <span class="panel-icon" id="splitPrimaryIcon">A</span>
+              <span id="splitPrimaryName">App</span>
+            </div>
+            <div class="split-panel-controls split-primary-controls">
+              <button class="icon-btn xs split-panel-btn expand-btn" id="splitPrimaryExpandBtn" title="Focus this app">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+                </svg>
+              </button>
+              <button class="icon-btn xs split-panel-btn" id="splitPrimaryCloseBtn" title="Close app">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="split-url-bar" id="splitPrimaryUrlBar">
+            <button class="icon-btn split-url-btn" id="splitPrimaryBackBtn" title="Back">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M19 12H5M12 19l-7-7 7-7"/>
+              </svg>
+            </button>
+            <button class="icon-btn split-url-btn" id="splitPrimaryForwardBtn" title="Forward">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+            </button>
+            <button class="icon-btn split-url-btn" id="splitPrimaryRefreshBtn" title="Refresh">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+              </svg>
+            </button>
+            <div class="split-url-container">
+              <span class="split-url-prefix" id="splitPrimaryUrlPrefix">app/</span>
+              <input type="text" class="split-url-input" id="splitPrimaryUrlInput" placeholder="page">
+            </div>
+          </div>
+          <div class="split-panel-content" id="splitPrimaryContent">
+            <!-- Primary app preview will be positioned here -->
+          </div>
+        </div>
+        <div class="split-secondary" id="splitSecondary">
+          <!-- Secondary app panels will be rendered here dynamically -->
+        </div>
+      </div>
+
+      <div class="workspace-panels">
+      <!-- Terminal Panel -->
+      <div class="panel panel-terminal" id="terminalPanel">
+        <div class="panel-header">
+          <span>Terminal</span>
+          <div class="panel-header-actions">
+            <button class="icon-btn sm panel-header-btn" id="newTerminalBtn" title="New terminal">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 5v14M5 12h14"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="terminals-container" id="terminalsContainer">
+          <!-- Terminal instances added dynamically -->
+        </div>
+      </div>
+
+      <!-- Divider 1 -->
+      <div class="panel-divider" data-divider="1"></div>
+
+      <!-- Preview Panel -->
+      <div class="panel panel-preview" id="previewPanel">
+        <div class="panel-header">
+          <span>Preview</span>
+          <div class="panel-header-actions">
+            <button class="icon-btn sm panel-header-btn" id="expandPreviewBtn" title="Expand preview">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="preview-url-bar">
+          <button class="icon-btn md preview-btn" id="previewBackBtn" title="Back">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <button class="icon-btn md preview-btn" id="previewForwardBtn" title="Forward">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+          <button class="icon-btn md preview-btn" id="previewRefreshBtn" title="Refresh">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+          <div class="preview-url-container">
+            <span class="preview-url-prefix" id="previewUrlPrefix">app-name/</span>
+            <input type="text" class="preview-url-input" id="previewUrlInput" placeholder="page">
+          </div>
+          <button class="icon-btn md preview-btn" id="previewGoBtn" title="Go">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h10"/>
+              <path d="M11 8l4 4-4 4"/>
+              <path d="M19 5v14"/>
+            </svg>
+          </button>
+        </div>
+        <div class="preview-area" id="previewArea">
+          <div class="preview-placeholder">Enter a URL to preview</div>
+        </div>
+      </div>
+
+      <!-- Divider 2 -->
+      <div class="panel-divider" data-divider="2"></div>
+
+      <!-- Right Panel -->
+      <div class="panel panel-right" id="rightPanel">
+        <div class="panel-tasks" id="tasksPanel">
+          <div class="panel-header">
+            <button class="icon-btn sm panel-header-btn" id="collapseRightPanelBtn" title="Hide panel">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 18l6-6-6-6"/>
+              </svg>
+            </button>
+            <span class="panel-header-title">Tasks</span>
+            <select class="panel-mode-select" id="panelModeSelect" style="display: none;">
+              <option value="jobs">Timed Jobs</option>
+              <option value="todos">To-dos</option>
+            </select>
+          </div>
+          <!-- To-dos Content -->
+          <div class="panel-mode-content" id="todosContent">
+            <div class="tasks-toolbar">
+              <select class="panel-select tasks-select" id="tasksViewSelect">
+                <option value="open">Open Items</option>
+                <option value="all">All Items</option>
+                <option value="archive">Archive</option>
+              </select>
+              <div class="tasks-toolbar-actions">
+                <button class="icon-btn sm panel-header-btn" id="addTaskBtn" title="Add task">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                </button>
+                <button class="icon-btn sm panel-header-btn" id="addProjectBtn" title="Add project">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11z"/>
+                  </svg>
+                </button>
+                <button class="icon-btn sm panel-header-btn" id="refreshTasksBtn" title="Refresh tasks">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="scrollable panel-content tasks-content" id="tasksContent">
+              <div class="tasks-list" id="tasksList">
+                <div class="placeholder-text">No tasks yet</div>
+              </div>
+            </div>
+          </div>
+          <!-- Timed Jobs Content -->
+          <div class="panel-mode-content" id="jobsContentWrapper" style="display: none;">
+            <div class="jobs-toolbar">
+              <select class="panel-select jobs-select" id="jobsFilterSelect">
+                <option value="active">Active Jobs</option>
+                <option value="archive">Archive</option>
+              </select>
+              <div class="jobs-toolbar-actions">
+                <button class="icon-btn sm panel-header-btn" id="addJobBtn" title="Add job">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="scrollable panel-content jobs-content" id="jobsContent">
+              <div class="jobs-list" id="jobsList">
+                <div class="placeholder-text">No timed jobs yet</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- Horizontal Divider -->
+        <div class="panel-divider-h" data-divider="h1"></div>
+        <div class="panel-storage" id="storagePanel">
+          <div class="panel-header">Storage</div>
+          <div class="panel-bar storage-toolbar">
+            <select class="panel-select storage-select" id="storageSelect">
+              <option value="system">System Files</option>
+              <option value="data">Data Storage</option>
+              <option value="blob">File Storage</option>
+            </select>
+            <div class="storage-toolbar-actions">
+              <button class="icon-btn sm panel-header-btn" id="toggleHiddenFilesBtn" title="Show hidden files">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+              <button class="icon-btn sm panel-header-btn" id="refreshStorageBtn" title="Refresh">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="panel-content storage-panel-content">
+            <!-- System Files View -->
+            <div class="scrollable storage-view active" id="systemFilesView">
+              <div class="file-tree" id="fileTree"></div>
+            </div>
+            <!-- Data Storage View -->
+            <div class="scrollable storage-view" id="dataStorageView">
+              <div class="data-storage-tree" id="dataStorageTree"></div>
+            </div>
+            <!-- File Storage View -->
+            <div class="scrollable storage-view" id="blobStorageView">
+              <div class="file-tree" id="blobTree"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Right Panel Toggle (shown when right panel is collapsed) -->
+      <button class="right-panel-toggle" id="rightPanelToggle" title="Show panel">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+    </div>
+    </div>
+  </div>
+
+  <!-- Onboarding Overlay (full-screen, above everything) -->
+  <div class="onboarding-overlay" id="onboardingOverlay" style="display:none;">
+    <div class="onboarding-splash" id="onboardingSplash"></div>
+    <div class="onboarding-wizard" id="onboardingWizard" style="display:none;">
+      <div class="onboarding-step-indicator" id="onboardingStepIndicator"></div>
+      <div class="onboarding-content" id="onboardingContent"></div>
+      <div class="onboarding-actions" id="onboardingActions"></div>
+    </div>
+  </div>
+
+  <!-- Whisper Setup Dialog -->
+  <div class="modal-overlay" id="whisperSetupModal" style="display:none;">
+    <div class="modal whisper-setup-modal" id="whisperSetupContent"></div>
+  </div>
+
+  <!-- New App Modal -->
+  <div class="modal-overlay" id="newAppModal">
+    <div class="modal">
+      <!-- Step 1: Name -->
+      <div class="new-app-step" id="newAppStep1">
+        <h2>Create New App</h2>
+        <input type="text" class="surface-lg modal-input" id="newAppName" placeholder="My Awesome App" autofocus>
+        <div class="modal-actions">
+          <button class="modal-btn cancel" id="cancelNewApp">Cancel</button>
+          <button class="modal-btn create" id="nextNewApp" disabled>Next</button>
+        </div>
+      </div>
+      <!-- Step 2: Icon & Color -->
+      <div class="new-app-step" id="newAppStep2" style="display: none;">
+        <h2>Customize Icon</h2>
+        <div class="icon-picker-centered">
+          <input type="text" class="icon-editable" id="newAppIcon" maxlength="2" value="M">
+          <div class="font-color-picker" id="fontColorPicker">
+            <span class="font-color-option selected" data-color="#ffffff" style="background: #ffffff;"></span>
+            <span class="font-color-option" data-color="#18181b" style="background: #18181b;"></span>
+          </div>
+        </div>
+        <div class="icon-hint" style="text-align: center; margin-bottom: 20px;">Press <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
+        <div class="color-picker" id="newAppColorPicker">
+          <div class="color-option selected" data-color="#991b1b" style="background: #991b1b;"></div>
+          <div class="color-option" data-color="#ec4899" style="background: #ec4899;"></div>
+          <div class="color-option" data-color="#ef4444" style="background: #ef4444;"></div>
+          <div class="color-option" data-color="#f97316" style="background: #f97316;"></div>
+          <div class="color-option" data-color="#eab308" style="background: #eab308;"></div>
+          <div class="color-option" data-color="#84cc16" style="background: #84cc16;"></div>
+          <div class="color-option" data-color="#22c55e" style="background: #22c55e;"></div>
+          <div class="color-option" data-color="#14b8a6" style="background: #14b8a6;"></div>
+          <div class="color-option" data-color="#06b6d4" style="background: #06b6d4;"></div>
+          <div class="color-option" data-color="#3b82f6" style="background: #3b82f6;"></div>
+          <div class="color-option" data-color="#6366f1" style="background: #6366f1;"></div>
+          <div class="color-option" data-color="#8b5cf6" style="background: #8b5cf6;"></div>
+          <div class="color-option" data-color="#ffffff" style="background: #ffffff; border: 1px solid #334155;"></div>
+          <div class="color-option" data-color="#94a3b8" style="background: #94a3b8;"></div>
+          <div class="color-option" data-color="#64748b" style="background: #64748b;"></div>
+          <div class="color-option" data-color="#18181b" style="background: #18181b;"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="modal-btn cancel" id="backNewApp">Back</button>
+          <button class="modal-btn create" id="createNewApp">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit App Modal -->
+  <div class="modal-overlay" id="editAppModal">
+    <div class="modal">
+      <h2>Edit App</h2>
+      <input type="text" class="surface-lg modal-input" id="editAppName" placeholder="App Name">
+      <div class="color-picker" id="editAppColorPicker">
+        <div class="color-option" data-color="#991b1b" style="background: #991b1b;"></div>
+        <div class="color-option" data-color="#ec4899" style="background: #ec4899;"></div>
+        <div class="color-option" data-color="#ef4444" style="background: #ef4444;"></div>
+        <div class="color-option" data-color="#f97316" style="background: #f97316;"></div>
+        <div class="color-option" data-color="#eab308" style="background: #eab308;"></div>
+        <div class="color-option" data-color="#84cc16" style="background: #84cc16;"></div>
+        <div class="color-option" data-color="#22c55e" style="background: #22c55e;"></div>
+        <div class="color-option" data-color="#14b8a6" style="background: #14b8a6;"></div>
+        <div class="color-option" data-color="#06b6d4" style="background: #06b6d4;"></div>
+        <div class="color-option" data-color="#3b82f6" style="background: #3b82f6;"></div>
+        <div class="color-option" data-color="#6366f1" style="background: #6366f1;"></div>
+        <div class="color-option" data-color="#8b5cf6" style="background: #8b5cf6;"></div>
+        <div class="color-option" data-color="#ffffff" style="background: #ffffff; border: 1px solid #334155;"></div>
+        <div class="color-option" data-color="#94a3b8" style="background: #94a3b8;"></div>
+        <div class="color-option" data-color="#64748b" style="background: #64748b;"></div>
+        <div class="color-option" data-color="#18181b" style="background: #18181b;"></div>
+      </div>
+      <div class="icon-picker">
+        <input type="text" class="icon-editable" id="editAppIcon" maxlength="2">
+        <div class="font-color-picker" id="editFontColorPicker">
+          <span class="font-color-option" data-color="#ffffff" style="background: #ffffff;"></span>
+          <span class="font-color-option" data-color="#18181b" style="background: #18181b;"></span>
+        </div>
+        <div class="icon-hint">Press <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
+      </div>
+      <div class="modal-actions">
+        <button class="modal-btn cancel" id="cancelEditApp">Cancel</button>
+        <button class="modal-btn create" id="saveEditApp">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- File Viewer Modal -->
+  <div class="modal-overlay" id="fileViewerModal">
+    <div class="modal modal-file-viewer">
+      <div class="file-viewer-header">
+        <span class="file-viewer-name" id="fileViewerName">filename.txt</span>
+        <div class="file-viewer-actions">
+          <button class="icon-btn sm" id="refreshFileViewer" title="Refresh">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+          <button class="icon-btn md file-viewer-close" id="closeFileViewer">&times;</button>
+        </div>
+      </div>
+      <div class="file-viewer-content" id="fileViewerContent">
+        <pre><code id="fileViewerCode"></code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Junk Popover -->
+  <div class="archived-popover" id="archivedPopover">
+    <div class="archived-popover-header">
+      <h3>Junk</h3>
+      <button class="icon-btn archived-popover-close" id="closeArchivedPopover">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="archived-popover-content" id="archivedAppsList">
+      <!-- Archived apps will be rendered here -->
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal settings-modal">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button class="icon-btn settings-close" id="closeSettings">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-sidebar">
+          <button class="settings-nav-item active" data-section="account">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><path d="M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0z"/><path d="M12 2a10 10 0 0 0-6.93 17.07A8 8 0 0 1 12 16a8 8 0 0 1 6.93 3.07A10 10 0 0 0 12 2z"/>
+            </svg>
+            Account
+          </button>
+          <button class="settings-nav-item" data-section="user">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+            </svg>
+            User
+          </button>
+          <button class="settings-nav-item" data-section="time">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+            </svg>
+            System
+          </button>
+          <button class="settings-nav-item" data-section="appearance">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+            Appearance
+          </button>
+          <button class="settings-nav-item" data-section="connections">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+            </svg>
+            Connections
+          </button>
+          <button class="settings-nav-item" data-section="voice">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+            Voice Input
+          </button>
+<button class="settings-nav-item" data-section="ai-models">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2a4 4 0 0 1 4 4v1h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2V6a4 4 0 0 1 4-4z"/>
+              <circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/>
+            </svg>
+            AI Models
+          </button>
+          <button class="settings-nav-item" data-section="capabilities">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
+            Capabilities
+          </button>
+          <button class="settings-nav-item" data-section="apikeys">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+            </svg>
+            API Keys
+          </button>
+          <button class="settings-nav-item" data-section="privacy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            Privacy
+          </button>
+        </div>
+        <div class="settings-content">
+          <!-- Account Section -->
+          <div class="settings-section active" id="section-account">
+            <!-- Populated by src/renderer/account.js -->
+          </div>
+
+          <!-- User Section -->
+          <div class="settings-section" id="section-user">
+            <div class="setting-group">
+              <label class="setting-label">Your First Name</label>
+              <input type="text" id="userFirstNameInput" class="setting-input" placeholder="Enter your first name" />
+            </div>
+            <div class="setting-group">
+              <label class="setting-label">Your Photo</label>
+              <p class="setting-description">Reference image agents use to recognize you</p>
+              <div style="display: flex; align-items: center; gap: 12px; margin-top: 8px;">
+                <img id="userPhotoPreview" src="" alt="" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background: #374151; display: none;" />
+                <div style="display: flex; gap: 10px;">
+                  <label style="font-size: 12px; color: #60a5fa; cursor: pointer;">
+                    Upload
+                    <input type="file" id="userPhotoInput" accept="image/png,image/jpeg,image/webp" style="display: none;" />
+                  </label>
+                  <button type="button" id="userPhotoRemove" style="font-size: 12px; color: #f87171; background: none; border: none; cursor: pointer;">Remove</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- System Section -->
+          <div class="settings-section" id="section-time">
+            <div class="setting-group">
+              <label class="setting-label">Application Install Location</label>
+              <p class="setting-description">Where the OS8 application and system files are installed</p>
+              <span class="setting-path-display" id="installPathDisplay">—</span>
+            </div>
+            <div class="setting-group">
+              <label class="setting-label">User Data Location</label>
+              <p class="setting-description">Where your apps, agents, and data are stored</p>
+              <span class="setting-path-display" id="userDataPathDisplay">—</span>
+            </div>
+            <div class="setting-group">
+              <label class="setting-label">Timezone</label>
+              <p class="setting-description">All clocks, agent time context, and scheduled jobs use this timezone</p>
+              <select class="surface setting-select" id="timezoneSelect">
+                <optgroup label="US">
+                  <option value="America/New_York">Eastern (New York)</option>
+                  <option value="America/Chicago">Central (Chicago)</option>
+                  <option value="America/Denver">Mountain (Denver)</option>
+                  <option value="America/Los_Angeles">Pacific (Los Angeles)</option>
+                  <option value="America/Anchorage">Alaska (Anchorage)</option>
+                  <option value="Pacific/Honolulu">Hawaii (Honolulu)</option>
+                </optgroup>
+                <optgroup label="Americas">
+                  <option value="America/Toronto">Toronto</option>
+                  <option value="America/Mexico_City">Mexico City</option>
+                  <option value="America/Bogota">Bogota</option>
+                  <option value="America/Sao_Paulo">Sao Paulo</option>
+                  <option value="America/Argentina/Buenos_Aires">Buenos Aires</option>
+                </optgroup>
+                <optgroup label="Europe">
+                  <option value="Europe/London">London</option>
+                  <option value="Europe/Paris">Paris</option>
+                  <option value="Europe/Berlin">Berlin</option>
+                  <option value="Europe/Rome">Rome</option>
+                  <option value="Europe/Madrid">Madrid</option>
+                  <option value="Europe/Amsterdam">Amsterdam</option>
+                  <option value="Europe/Moscow">Moscow</option>
+                  <option value="Europe/Istanbul">Istanbul</option>
+                </optgroup>
+                <optgroup label="Asia / Pacific">
+                  <option value="Asia/Dubai">Dubai</option>
+                  <option value="Asia/Kolkata">India (Kolkata)</option>
+                  <option value="Asia/Bangkok">Bangkok</option>
+                  <option value="Asia/Singapore">Singapore</option>
+                  <option value="Asia/Shanghai">Shanghai</option>
+                  <option value="Asia/Tokyo">Tokyo</option>
+                  <option value="Asia/Seoul">Seoul</option>
+                  <option value="Australia/Sydney">Sydney</option>
+                  <option value="Pacific/Auckland">Auckland</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+
+          <!-- Appearance Section -->
+          <div class="settings-section" id="section-appearance">
+            <div class="setting-group">
+              <label class="setting-label">Home Background</label>
+              <p class="setting-description">Choose a background for the home screen</p>
+              <div class="background-picker" id="backgroundPicker">
+                <!-- Populated by JavaScript -->
+              </div>
+            </div>
+            <div class="setting-group">
+              <label class="setting-label">Background Scrim</label>
+              <p class="setting-description">Darken the background to make app icons easier to see</p>
+              <div class="scrim-slider-container">
+                <input type="range" class="scrim-slider" id="scrimSlider" min="0" max="80" value="25">
+                <span class="scrim-value" id="scrimValue">25%</span>
+              </div>
+            </div>
+          </div>
+          <!-- Connections Section -->
+          <div class="settings-section" id="section-connections">
+            <p class="setting-description" style="margin-bottom: 16px;">Connect your accounts for OAuth access (Gmail, Calendar, Drive, etc.)</p>
+            <div id="connectionsList" class="connections-list">
+              <!-- Populated by JavaScript -->
+            </div>
+            <button class="add-connection-btn" id="addConnectionBtn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+              </svg>
+              Add Connection
+            </button>
+
+            <!-- OS8 Port Setting -->
+            <div class="oauth-port-section">
+              <div class="oauth-port-header">
+                <div class="oauth-port-label">
+                  <span class="setting-label" style="margin-bottom: 0;">OS8 Port</span>
+                  <span class="setting-description" style="margin-bottom: 0;">Port for web server and OAuth callbacks</span>
+                </div>
+                <label class="oauth-port-unlock">
+                  <input type="checkbox" id="oauthPortUnlock">
+                  <span class="oauth-port-unlock-label">Unlock</span>
+                </label>
+              </div>
+              <div class="oauth-port-input-row">
+                <input type="number" id="oauthPortInput" class="oauth-port-input" min="1024" max="65535" disabled>
+                <button class="oauth-port-save" id="oauthPortSave" disabled>Save</button>
+              </div>
+              <div class="oauth-port-default" id="oauthPortDefault">
+                Default port: <strong>8888</strong>
+              </div>
+              <div class="oauth-port-warning" id="oauthPortWarning" style="display: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                  <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+                <span>Update your Google OAuth redirect URI to: <code id="oauthRedirectUri"></code></span>
+              </div>
+            </div>
+
+            <!-- Tunnel URL Setting (Remote Access) -->
+            <div class="oauth-port-section">
+              <div class="oauth-port-header">
+                <div class="oauth-port-label">
+                  <span class="setting-label" style="margin-bottom: 0;">Tunnel URL</span>
+                  <span class="setting-description" style="margin-bottom: 0;">Public URL for remote access (auto-generated if cloudflared installed)</span>
+                </div>
+              </div>
+              <div class="oauth-port-input-row">
+                <input type="text" id="tunnelUrlInput" class="oauth-port-input" style="flex: 1;" placeholder="Auto-generated on startup..." readonly>
+                <button class="oauth-port-save" id="tunnelUrlCopy">Copy</button>
+              </div>
+              <div class="oauth-port-default" id="tunnelUrlHint">
+                Install cloudflared for auto-tunnel: <code>brew install cloudflared</code>
+              </div>
+              <div class="oauth-port-warning" id="tunnelUrlStatus" style="display: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+                <span id="tunnelUrlStatusText">Tunnel URL saved</span>
+              </div>
+            </div>
+          </div>
+          <!-- Agent Section -->
+          <!-- Voice Section -->
+          <div class="settings-section" id="section-voice">
+            <p class="setting-description" style="margin-bottom: 16px;">Configure voice input and speech-to-text settings</p>
+
+            <div class="setting-group">
+              <label class="setting-label">Pause Before Send (Normal)</label>
+              <p class="setting-description">Silence duration before auto-sending longer messages (3+ words)</p>
+              <div class="voice-slider-container">
+                <input type="range" class="voice-slider" id="voiceSilenceNormal" min="500" max="4000" step="100" value="1800">
+                <span class="voice-slider-value" id="voiceSilenceNormalValue">1.8s</span>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Pause Before Send (Short)</label>
+              <p class="setting-description">Silence duration for short messages (longer for gathering thoughts)</p>
+              <div class="voice-slider-container">
+                <input type="range" class="voice-slider" id="voiceSilenceShort" min="1000" max="5000" step="100" value="2500">
+                <span class="voice-slider-value" id="voiceSilenceShortValue">2.5s</span>
+              </div>
+            </div>
+
+            <!-- Server-side settings divider -->
+            <div style="border-top: 1px solid #334155; margin: 24px 0 16px; padding-top: 16px;">
+              <label class="setting-label" style="font-size: 13px; color: #94a3b8; margin-bottom: 8px;">Server Settings (requires whisper restart)</label>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">Context Window</label>
+              <p class="setting-description">Audio context window for transcription (longer = better for long utterances)</p>
+              <div class="voice-slider-container">
+                <input type="range" class="voice-slider" id="voiceContextWindow" min="5000" max="30000" step="1000" value="10000">
+                <span class="voice-slider-value" id="voiceContextWindowValue">10s</span>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <label class="setting-label">VAD Silence Threshold</label>
+              <p class="setting-description">Server-side voice activity detection silence duration</p>
+              <div class="voice-slider-container">
+                <input type="range" class="voice-slider" id="voiceVadSilence" min="500" max="4000" step="100" value="1800">
+                <span class="voice-slider-value" id="voiceVadSilenceValue">1.8s</span>
+              </div>
+            </div>
+
+            <button class="agent-save-btn" id="voiceSaveBtn">Save Changes</button>
+            <div class="agent-save-status" id="voiceSaveStatus"></div>
+          </div>
+<!-- AI Models Section -->
+          <div class="settings-section" id="section-ai-models">
+            <!-- Provider Status -->
+            <div class="ai-section-group" id="providerStatusSection">
+              <h4 class="ai-section-title">Provider Status</h4>
+              <table class="provider-status-table" id="providerStatusTable">
+                <thead>
+                  <tr><th></th><th>Login</th><th>API</th></tr>
+                </thead>
+                <tbody id="providerStatusBody">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+              <button class="btn-small" id="billingCheckBtn" style="margin-top: 8px;">Check All</button>
+            </div>
+
+            <!-- Model API Constraints -->
+            <div class="ai-section-group" id="apiConstraintsSection" style="margin-top: 20px;">
+              <h4 class="ai-section-title">Model API Constraints</h4>
+              <table class="provider-status-table" id="apiConstraintsTable">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Chat</th>
+                    <th>Jobs</th>
+                    <th>Planning</th>
+                    <th>Coding</th>
+                    <th>Summary</th>
+                  </tr>
+                </thead>
+                <tbody id="apiConstraintsBody">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Routing Cascades -->
+            <div class="ai-section-group" id="routingCascadeSection" style="margin-top: 20px;">
+              <h4 class="ai-section-title">Model Priority</h4>
+              <div class="cascade-tabs" id="cascadeTabs">
+                <button class="cascade-tab active" data-task="conversation">Chat</button>
+                <button class="cascade-tab" data-task="jobs">Jobs</button>
+                <button class="cascade-tab" data-task="planning">Planning</button>
+                <button class="cascade-tab" data-task="coding">Coding</button>
+                <button class="cascade-tab" data-task="summary">Summary</button>
+              </div>
+              <div style="margin: 8px 0; display: flex; align-items: center; gap: 8px;">
+                <label for="routingPreferenceSelect" style="font-size: 12px; color: var(--color-text-muted);">Optimize for</label>
+                <select id="routingPreferenceSelect" class="routing-preference-select">
+                  <option value="minimize_cost">Save Cost</option>
+                  <option value="balanced" selected>Balanced</option>
+                  <option value="best_quality">Best Quality</option>
+                </select>
+              </div>
+              <table class="cascade-table" id="cascadeTable">
+                <thead>
+                  <tr>
+                    <th class="cascade-th-rank">#</th>
+                    <th class="cascade-th-status"></th>
+                    <th class="cascade-th-name">Model</th>
+                    <th class="cascade-th-cap">Ability</th>
+                    <th class="cascade-th-cost">Cost</th>
+                    <th class="cascade-th-toggle">On</th>
+                  </tr>
+                </thead>
+                <tbody id="cascadeBody">
+                  <!-- Populated dynamically -->
+                </tbody>
+              </table>
+              <button class="btn-small" id="cascadeRegenerateBtn" style="margin-top: 8px;">Regenerate</button>
+            </div>
+          </div>
+          <!-- Capabilities Section -->
+          <div class="settings-section" id="section-capabilities">
+            <p class="setting-description" style="margin-bottom: 12px;">
+              APIs and skills available to your agents. APIs are REST endpoints served by OS8. Skills are multi-step workflows with SKILL.md instructions.
+            </p>
+            <div class="cascade-tabs" id="capabilityFilterTabs" style="margin-bottom: 12px;">
+              <button class="cascade-tab active" data-filter="all">All</button>
+              <button class="cascade-tab" data-filter="api">APIs</button>
+              <button class="cascade-tab" data-filter="skill">Skills</button>
+              <button class="cascade-tab" data-filter="mcp">MCP</button>
+            </div>
+            <div id="capabilitiesList" class="capabilities-list"></div>
+          </div>
+          <!-- API Keys Section -->
+          <div class="settings-section" id="section-apikeys">
+            <p class="setting-description" style="margin-bottom: 16px;">Store API keys for AI services and other integrations. Keys are stored locally and used across OS8.</p>
+
+            <!-- Pre-defined API Keys (populated by api-keys.js) -->
+            <div class="api-keys-list" id="apiKeysList"></div>
+
+            <!-- Custom Keys Section -->
+            <div class="custom-keys-section">
+              <div class="custom-keys-header">
+                <label class="setting-label" style="font-size: 13px; color: #94a3b8;">Custom Environment Variables</label>
+              </div>
+              <div id="customKeysList" class="custom-keys-list"></div>
+              <button class="add-custom-key-btn" id="addCustomKeyBtn">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Custom Variable
+              </button>
+            </div>
+          </div>
+          <!-- Privacy Section -->
+          <div class="settings-section" id="section-privacy">
+            <p class="setting-description" style="margin-bottom: 16px;">Control what data AI backends send to their providers. Changes apply to new terminal sessions and agent tasks.</p>
+
+            <h4 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Anthropic / Claude</h4>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Usage Telemetry</label>
+                  <p class="setting-description">Prevents analytics data (via Statsig) from being sent.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyTelemetry">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Error Reporting</label>
+                  <p class="setting-description">Prevents crash and error logs from being sent.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyErrorReporting">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Feedback Surveys</label>
+                  <p class="setting-description">Prevents in-CLI feedback prompts from appearing.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyFeedbackSurvey">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group" style="background: var(--color-bg-panel); border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 16px;">
+              <p class="setting-description" style="margin: 0;">Anthropic retains user prompts and outputs for up to 30 days for trust &amp; safety. See <a href="https://www.anthropic.com/privacy" target="_blank" style="color: var(--color-primary);">Anthropic Privacy Center</a> for details.</p>
+            </div>
+
+            <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">OpenAI / Codex</h4>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Analytics</label>
+                  <p class="setting-description">Prevents analytics and usage data from being collected.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyCodexAnalytics">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Feedback</label>
+                  <p class="setting-description">Prevents feedback prompts and data collection.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyCodexFeedback">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Session History</label>
+                  <p class="setting-description">Prevents session history from being persisted locally.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyCodexHistory">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group" style="background: var(--color-bg-panel); border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 16px;">
+              <p class="setting-description" style="margin: 0;">OpenAI may process inputs and outputs per their data usage policies. See <a href="https://openai.com/enterprise-privacy/" target="_blank" style="color: var(--color-primary);">OpenAI Privacy</a> for details.</p>
+            </div>
+
+            <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Google / Gemini</h4>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Telemetry</label>
+                  <p class="setting-description">Prevents anonymized usage and performance data from being sent.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyGeminiTelemetry">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Disable Prompt Logging</label>
+                  <p class="setting-description">Prevents prompts and responses from being included in telemetry data.</p>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="privacyGeminiPromptLogging">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-group" style="background: var(--color-bg-panel); border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 16px;">
+              <p class="setting-description" style="margin: 0;">Google may collect usage data depending on your account type. See <a href="https://google-gemini.github.io/gemini-cli/docs/tos-privacy.html" target="_blank" style="color: var(--color-primary);">Gemini CLI Privacy</a> for details.</p>
+            </div>
+
+            <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">xAI / Grok</h4>
+
+            <div class="setting-group" style="background: var(--color-bg-panel); border: 1px solid var(--color-border); border-radius: 8px; padding: 12px 16px;">
+              <p class="setting-description" style="margin: 0;">Grok CLI does not collect telemetry or analytics locally. Data handling is governed by the xAI API. See <a href="https://x.ai/legal/privacy-policy" target="_blank" style="color: var(--color-primary);">xAI Privacy Policy</a> for details.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connection Wizard Modal -->
+  <div class="modal-overlay" id="connectionWizardModal">
+    <div class="modal wizard-modal">
+      <div class="wizard-header">
+        <div class="wizard-step-indicator" id="wizardStepIndicator">
+          <!-- Steps rendered by JS -->
+        </div>
+        <div class="wizard-title" id="wizardTitle">Choose Provider</div>
+        <button class="icon-btn wizard-close" id="wizardClose">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="wizard-content" id="wizardContent">
+        <!-- Content rendered by JS -->
+      </div>
+      <div class="wizard-actions" id="wizardActions">
+        <!-- Buttons rendered by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Timed Job Modal -->
+  <div class="modal-overlay" id="jobModal">
+    <div class="modal job-modal">
+      <div class="modal-header">
+        <h3>New Timed Job</h3>
+        <button class="icon-btn modal-close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="jobName">Name</label>
+          <input type="text" id="jobName" class="form-input" placeholder="Job name...">
+        </div>
+        <div class="form-group">
+          <label for="jobDescription">Description (optional)</label>
+          <textarea id="jobDescription" class="form-input form-textarea" placeholder="What should happen..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="jobSkill">Linked Skill</label>
+          <select id="jobSkill" class="form-select">
+            <option value="">None (use description only)</option>
+            <!-- Skills populated by JS -->
+          </select>
+          <p class="form-hint" id="jobSkillHint" style="display: none;">Agent will be instructed to follow all steps in the skill file.</p>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="jobType" value="one-time"> One-time
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="jobType" value="recurring" checked> Recurring
+            </label>
+          </div>
+        </div>
+
+        <!-- One-time schedule -->
+        <div class="form-group schedule-section" id="scheduleOneTime" style="display: none;">
+          <label>Date & Time</label>
+          <div class="schedule-inputs">
+            <input type="date" id="jobDate" class="form-input">
+            <input type="time" id="jobTime" class="form-input">
+          </div>
+        </div>
+
+        <!-- Recurring schedule -->
+        <div class="form-group schedule-section" id="scheduleRecurring">
+          <label>Frequency</label>
+          <select id="jobFrequency" class="form-select">
+            <option value="every-x-minutes">Every X minutes</option>
+            <option value="every-x-hours">Every X hours</option>
+            <option value="hourly">Hourly</option>
+            <option value="weekdays">Weekdays (Mon-Fri)</option>
+            <option value="daily" selected>Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="annually">Annually</option>
+          </select>
+          <div class="frequency-options" id="frequencyOptions">
+            <!-- Dynamic options rendered by JS -->
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="jobOnMissed">If app is closed during scheduled time</label>
+          <select id="jobOnMissed" class="form-select">
+            <option value="run" selected>Run when app opens</option>
+            <option value="skip">Skip and wait for next</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="jobCompletionChecks">Success Checks (optional)</label>
+          <textarea id="jobCompletionChecks" class="form-input form-textarea" placeholder="One check per line, for example:&#10;Exists: blob/current-image/current-image.png&#10;Recent File: blob/current-image"></textarea>
+          <p class="form-hint">These are validated automatically after the agent reports completion.</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="modal-btn cancel" id="jobModalCancel">Cancel</button>
+        <button class="modal-btn create" id="jobModalSave" data-mode="create">Create Job</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/renderer/main.js"></script>
+</body>
+</html>
