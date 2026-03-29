@@ -209,8 +209,8 @@ app.whenReady().then(async () => {
   db = initDatabase();
   console.log('OS8 database initialized');
 
-  // Encrypt any plaintext API keys at rest (uses OS keychain via safeStorage)
-  EnvService.migrateUnencrypted(db);
+  // Migrate any previously-encrypted keys back to plaintext (one-time)
+  EnvService.migrateEncryptedToPlaintext(db);
 
   // Request microphone permission on macOS (triggers system dialog if needed)
   if (process.platform === 'darwin') {
