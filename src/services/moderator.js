@@ -82,7 +82,7 @@ const ModeratorService = {
    * Extract the speaking order from the last round of agent responses.
    * A "round" is the most recent contiguous block of agent messages
    * (after the last user message, or from the tail if no user message).
-   * Returns agent names in the order they spoke, e.g. ["Lisa", "Penny"].
+   * Returns agent names in the order they spoke, e.g. ["Alice", "Bob"].
    */
   _getPreviousSpeakingOrder(recentMessages, agents) {
     const agentIds = new Set(agents.map(a => a.id));
@@ -101,7 +101,7 @@ const ModeratorService = {
 
   /**
    * Extract names mentioned or addressed in the last message content.
-   * Catches patterns like "Penny, ..." or "Penny you ..." (not just @mentions).
+   * Catches patterns like "Alice, ..." or "Alice you ..." (not just @mentions).
    */
   _getNameAddressed(content, agents) {
     if (!content) return [];
@@ -155,7 +155,7 @@ const ModeratorService = {
       if (mentionedAgent) mentions.push(mentionedAgent.id);
     }
 
-    // Also detect name-addressing (e.g., "Penny, what do you think?")
+    // Also detect name-addressing (e.g., "Alice, what do you think?")
     const nameAddressed = this._getNameAddressed(lastMessage?.content, agents);
     for (const id of nameAddressed) {
       if (!mentions.includes(id)) mentions.push(id);

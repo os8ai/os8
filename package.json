@@ -22,8 +22,9 @@
     "cli",
     "workspace"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Leo <leo@os8.ai>",
+  "homepage": "https://os8.ai",
+  "license": "MIT",
   "devDependencies": {
     "@electron/rebuild": "^4.0.3",
     "electron": "^40.0.0",

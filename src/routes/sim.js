@@ -145,7 +145,7 @@ function createSimRouter(db, deps) {
 
   /**
    * POST /snapshot
-   * Body: { journal: { reconstructedHistory, currentState, narrative, isSpark }, imageOverrides: { provider, expressionOverride, isNsfw } }
+   * Body: { journal: { reconstructedHistory, currentState, narrative, isSpark }, imageOverrides: { provider, expressionOverride } }
    * Chains: journal write → portrait generation → POV generation → DB storage
    * Takes ~30-60s for full image pipeline
    */

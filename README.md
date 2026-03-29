@@ -2,6 +2,8 @@
 
 A personal operating system for building custom web apps with AI agents. Everything local, everything yours.
 
+Learn more at [os8.ai](https://os8.ai)
+
 <p align="center">
   <img src="build/icon.png" alt="OS8" width="128" />
 </p>
@@ -38,7 +40,7 @@ npx electron-rebuild -f -w better-sqlite3
 npm start
 ```
 
-**Requirements:** Node.js 18+ (LTS recommended). Supports macOS, Windows, and Linux.
+**Requirements:** Node.js 20+ (LTS recommended). Supports macOS, Windows, and Linux.
 
 OS8 runs on port **8888** by default (configurable in Settings). Apps are served at `http://localhost:8888/{app-id}/`.
 
