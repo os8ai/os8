@@ -781,6 +781,8 @@ function App() {
                 baseApiUrl={baseApiUrl}
                 appId={appId}
                 agentId={selectedAgentId}
+                config={config}
+                onConfigUpdated={loadConfig}
               />
             </div>
           )}

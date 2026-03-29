@@ -276,6 +276,7 @@ function createSchema(db) {
       voice_id TEXT,
       voice_name TEXT,
       myself_content TEXT,
+      myself_preamble TEXT,
       life_intensity TEXT DEFAULT 'medium',
       chat_reset_at TEXT,
       myself_custom TEXT,

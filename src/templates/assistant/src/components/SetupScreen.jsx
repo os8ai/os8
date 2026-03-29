@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { MAX_PINNED_CAPABILITIES } from '../constants'
+import { buildHeadshotPrompt, buildBodyPrompt, buildAppearanceDesc, buildAssignments, generateParallel, fetchImageAsBase64 } from '../utils/imagegen'
 
 function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
   const [step, setStep] = useState(1)
@@ -277,19 +278,7 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
     }
   }, [telegramVerified, telegramChatId])
 
-  // Build appearance description from structured fields
-  const buildAppearanceDesc = () => {
-    const parts = []
-    if (age) parts.push(`${age} years old`)
-    if (hairColor) parts.push(`${hairColor} hair`)
-    if (skinTone) parts.push(`${skinTone} skin tone`)
-    if (height) parts.push(`${height} height`)
-    if (build) parts.push(`${build} build`)
-    if (otherFeatures.trim()) parts.push(otherFeatures.trim())
-    return parts.join(', ')
-  }
-
-  const appearanceDesc = buildAppearanceDesc()
+  const appearanceDesc = buildAppearanceDesc({ age, hairColor, skinTone, height, build, otherFeatures })
   const hasAppearance = !!(gender && (hairColor || skinTone || height || build || otherFeatures.trim()))
 
   // Track active image generation so we can abort on navigation
@@ -303,55 +292,21 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
     abortControllerRef.current = controller
 
     setGenerating(true)
-    // Get available providers, sorted: grok first (fastest), then gemini, then openai
-    const priorityOrder = ['grok', 'gemini', 'openai']
-    const available = priorityOrder.filter(p => imagegenProviders[p]?.available)
+    const roleDesc = useCustomRole ? customDescription.trim() : (selectedRole || '')
+    const prompt = buildHeadshotPrompt({ gender, age, hairColor, skinTone, height, build, otherFeatures, role: roleDesc })
+    const assignments = buildAssignments(imagegenProviders, ['grok', 'gemini', 'openai'])
+    if (assignments.length === 0) { setGenerating(false); return }
 
-    // 2 images per provider
-    const assignments = available.flatMap(p => [p, p])
-    // Fallback: at least 4 if only 1 provider
-    while (assignments.length < 4) assignments.push(available[0])
-
-    // Append loading placeholders to existing images
     const startIndex = generatedImages.length
     setGeneratedImages(prev => [...prev, ...assignments.map(() => ({ loading: true }))])
 
-    const genderWord = gender === 'male' ? 'male' : 'female'
-    const roleDesc = useCustomRole ? customDescription.trim() : (selectedRole || '')
-    const rolePart = roleDesc ? ` Their role: ${roleDesc}.` : ''
-    const prompt = `Portrait headshot of a ${genderWord} person. ${appearanceDesc}.${rolePart} Clean background, photorealistic, professional lighting.`
-
-    // Fire all in parallel, each updates its grid cell on completion
-    const promises = assignments.map((provider, i) =>
-      fetch(`${baseApiUrl}/api/imagegen`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt, provider, options: { size: '1024x1024', quality: 'medium' } }),
-        signal: controller.signal
+    await generateParallel({
+      baseApiUrl, prompt, assignments, signal: controller.signal,
+      onImageReady: (i, result) => setGeneratedImages(prev => {
+        const next = [...prev]; next[startIndex + i] = result; return next
       })
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-          if (controller.signal.aborted) return
-          setGeneratedImages(prev => {
-            const next = [...prev]
-            next[startIndex + i] = data.success && data.images?.[0]
-              ? { url: data.images[0].url, filename: data.images[0].filename, loading: false }
-              : { error: true, loading: false }
-            return next
-          })
-        })
-        .catch((err) => {
-          if (err.name === 'AbortError') return
-          if (controller.signal.aborted) return
-          setGeneratedImages(prev => {
-            const next = [...prev]
-            next[startIndex + i] = { error: true, loading: false }
-            return next
-          })
-        })
-    )
+    })
 
-    await Promise.allSettled(promises)
     if (!controller.signal.aborted) {
       setGenerationCycles(prev => prev + 1)
       setGenerating(false)
@@ -366,73 +321,30 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
 
     setGeneratingBody(true)
 
-    // Fetch headshot as base64 for reference
-    let headshotRef = null
+    let referenceImages = null
     if (selectedAvatar) {
       try {
-        const imgRes = await fetch(`${baseApiUrl}/api/imagegen/files/${selectedAvatar}`)
-        const blob = await imgRes.blob()
-        const base64 = await new Promise(resolve => {
-          const reader = new FileReader()
-          reader.onloadend = () => resolve(reader.result.split(',')[1])
-          reader.readAsDataURL(blob)
-        })
-        headshotRef = { data: base64, mimeType: blob.type || 'image/png' }
+        const ref = await fetchImageAsBase64(`${baseApiUrl}/api/imagegen/files/${selectedAvatar}`)
+        referenceImages = [ref]
       } catch (e) {
         console.warn('Failed to load headshot for body reference:', e)
       }
     }
 
-    const genderWord = gender === 'male' ? 'male' : 'female'
-    const heightDesc = height ? `${height} height` : ''
-    const buildDesc = build ? `${build} build` : ''
-    const bodyDesc = [heightDesc, buildDesc].filter(Boolean).join(', ')
-    const prompt = `Full body photo of a ${genderWord} person${bodyDesc ? ` with ${bodyDesc}` : ''}. Wearing a simple form-fitting outfit (plain t-shirt and fitted pants). Standing in a neutral pose, clean white background, photorealistic, full body visible head to toe.`
-
-    // Use providers that support reference images well: gemini + openai
-    const priorityOrder = ['gemini', 'openai', 'grok']
-    const available = priorityOrder.filter(p => imagegenProviders[p]?.available)
-    const assignments = available.flatMap(p => [p, p])
-    while (assignments.length < 4) assignments.push(available[0])
+    const prompt = buildBodyPrompt({ gender, height, build })
+    const assignments = buildAssignments(imagegenProviders, ['gemini', 'openai', 'grok'])
+    if (assignments.length === 0) { setGeneratingBody(false); return }
 
     const startIndex = bodyImages.length
     setBodyImages(prev => [...prev, ...assignments.map(() => ({ loading: true }))])
 
-    const promises = assignments.map((provider, i) =>
-      fetch(`${baseApiUrl}/api/imagegen`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt,
-          provider,
-          ...(headshotRef ? { referenceImages: [headshotRef] } : {}),
-          options: { size: '1024x1024', quality: 'medium' }
-        }),
-        signal: controller.signal
+    await generateParallel({
+      baseApiUrl, prompt, assignments, referenceImages, signal: controller.signal,
+      onImageReady: (i, result) => setBodyImages(prev => {
+        const next = [...prev]; next[startIndex + i] = result; return next
       })
-        .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-        .then(data => {
-          if (controller.signal.aborted) return
-          setBodyImages(prev => {
-            const next = [...prev]
-            next[startIndex + i] = data.success && data.images?.[0]
-              ? { url: data.images[0].url, filename: data.images[0].filename, loading: false }
-              : { error: true, loading: false }
-            return next
-          })
-        })
-        .catch((err) => {
-          if (err.name === 'AbortError') return
-          if (controller.signal.aborted) return
-          setBodyImages(prev => {
-            const next = [...prev]
-            next[startIndex + i] = { error: true, loading: false }
-            return next
-          })
-        })
-    )
+    })
 
-    await Promise.allSettled(promises)
     if (!controller.signal.aborted) {
       setBodyCycles(prev => prev + 1)
       setGeneratingBody(false)

@@ -3,6 +3,7 @@
  * Replaces the former full-screen modal context viewer.
  */
 import AgentLifeImages from './AgentLifeImages'
+import AgentLifeMyself from './AgentLifeMyself'
 
 /** Memory content sub-component — renders the context debug sections */
 function MemoryContent({ contextData, contextTab, onTabChange }) {
@@ -152,7 +153,7 @@ function MemoryContent({ contextData, contextTab, onTabChange }) {
   )
 }
 
-function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activeTab, onActiveTabChange, baseApiUrl, appId, agentId }) {
+function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activeTab, onActiveTabChange, baseApiUrl, appId, agentId, config, onConfigUpdated }) {
   return (
     <div className="h-full flex flex-col bg-gray-800/50 border-t border-gray-700">
       {/* Tab bar */}
@@ -162,6 +163,10 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
           onClick={() => onActiveTabChange('memory')}
         >Memory</button>
         <button
+          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'myself' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
+          onClick={() => onActiveTabChange('myself')}
+        >Myself</button>
+        <button
           className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'images' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
           onClick={() => onActiveTabChange('images')}
         >Images</button>
@@ -169,16 +174,19 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {isLoading && (
+        {isLoading && activeTab === 'memory' && (
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <span className="animate-pulse">Loading context...</span>
           </div>
         )}
-        {!isLoading && !contextData && (
+        {!isLoading && !contextData && activeTab === 'memory' && (
           <p className="text-xs text-gray-500">Send a message to see memory context.</p>
         )}
         {!isLoading && contextData && activeTab === 'memory' && (
           <MemoryContent contextData={contextData} contextTab={contextTab} onTabChange={onTabChange} />
+        )}
+        {activeTab === 'myself' && (
+          <AgentLifeMyself baseApiUrl={baseApiUrl} appId={appId} agentId={agentId} config={config} onConfigUpdated={onConfigUpdated} />
         )}
         {activeTab === 'images' && (
           <AgentLifeImages baseApiUrl={baseApiUrl} appId={appId} agentId={agentId} />

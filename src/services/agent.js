@@ -119,7 +119,7 @@ const AgentService = {
       'telegram_bot_token', 'telegram_bot_username', 'telegram_chat_id', 'telegram_owner_user_id',
       'setup_complete', 'gender', 'role', 'appearance',
       'age', 'birth_date', 'hair_color', 'skin_tone', 'height', 'build', 'other_features',
-      'voice_id', 'voice_name', 'myself_content', 'myself_custom', 'user_custom', 'chat_reset_at',
+      'voice_id', 'voice_name', 'myself_preamble', 'myself_content', 'myself_custom', 'user_custom', 'chat_reset_at',
       'visibility', 'subconscious_memory', 'subconscious_direct', 'subconscious_depth'
     ];
 
@@ -400,7 +400,18 @@ const AgentService = {
       showImage: agent.show_image !== undefined ? !!agent.show_image : (diskConfig.showImage !== undefined ? diskConfig.showImage : true),
       gender: agent.gender || 'female',
       role: agent.role || '',
-      myselfContent: agent.myself_content || '',
+      myselfPreamble: (Buffer.isBuffer(agent.myself_preamble) ? agent.myself_preamble.toString('utf-8') : agent.myself_preamble) || '',
+      myselfContent: (Buffer.isBuffer(agent.myself_content) ? agent.myself_content.toString('utf-8') : agent.myself_content) || '',
+      myselfCustom: (Buffer.isBuffer(agent.myself_custom) ? agent.myself_custom.toString('utf-8') : agent.myself_custom) || '',
+
+      // Appearance (DB fields for Myself tab editing)
+      age: agent.age || null,
+      birthDate: agent.birth_date || null,
+      hairColor: agent.hair_color || '',
+      skinTone: agent.skin_tone || '',
+      agentHeight: agent.height || '',
+      agentBuild: agent.build || '',
+      otherFeatures: agent.other_features || '',
 
       // Telegram (DB is source of truth)
       telegramBotToken: agent.telegram_bot_token || '',
@@ -504,6 +515,7 @@ const AgentService = {
       otherFeatures: 'other_features',
       voiceId: 'voice_id',
       voiceName: 'voice_name',
+      myselfPreamble: 'myself_preamble',
       myselfContent: 'myself_content',
       myselfCustom: 'myself_custom',
       userCustom: 'user_custom',

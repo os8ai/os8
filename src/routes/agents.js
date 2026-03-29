@@ -272,6 +272,12 @@ function createAgentsRouter(db, deps) {
           const agentPaths = AgentService.getPaths(agent.app_id, agent.id);
           const destDir = path.join(agentPaths.agentBlobDir, 'reference-images');
           fs.mkdirSync(destDir, { recursive: true });
+          // Remove old headshot files (any extension) before copying new one
+          try {
+            for (const f of fs.readdirSync(destDir)) {
+              if (/^headshot\./i.test(f)) fs.unlinkSync(path.join(destDir, f));
+            }
+          } catch (e) { /* ignore cleanup errors */ }
           fs.copyFileSync(sourcePath, path.join(destDir, `headshot${ext}`));
         }
       } catch (e) {
@@ -291,6 +297,12 @@ function createAgentsRouter(db, deps) {
           const agentPaths = AgentService.getPaths(agent.app_id, agent.id);
           const destDir = path.join(agentPaths.agentBlobDir, 'reference-images');
           fs.mkdirSync(destDir, { recursive: true });
+          // Remove old body-reference files (any extension) before copying new one
+          try {
+            for (const f of fs.readdirSync(destDir)) {
+              if (/^body-reference\./i.test(f)) fs.unlinkSync(path.join(destDir, f));
+            }
+          } catch (e) { /* ignore cleanup errors */ }
           fs.copyFileSync(sourcePath, path.join(destDir, `body-reference${ext}`));
         }
       } catch (e) {
