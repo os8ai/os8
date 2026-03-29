@@ -158,16 +158,22 @@ function MemoryContent({ contextData, contextTab, onTabChange }) {
 function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activeTab, onActiveTabChange, baseApiUrl, appId, agentId, config, onConfigUpdated, onClose }) {
   return (
     <div className="h-full flex flex-col bg-gray-800/50 border-t border-gray-700">
+      {/* Title bar */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1.5 border-b border-gray-700/50">
+        <span className="text-xs font-semibold text-gray-300 uppercase tracking-wide">Agent Manager</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-white text-lg leading-none">&times;</button>
+      </div>
+
       {/* Tab bar */}
       <div className="shrink-0 flex items-center gap-1 px-3 py-1.5 border-b border-gray-700/50">
-        <button
-          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'memory' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
-          onClick={() => onActiveTabChange('memory')}
-        >Memory</button>
         <button
           className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'myself' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
           onClick={() => onActiveTabChange('myself')}
         >Identity</button>
+        <button
+          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'motivations' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
+          onClick={() => onActiveTabChange('motivations')}
+        >Motivations</button>
         <button
           className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'images' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
           onClick={() => onActiveTabChange('images')}
@@ -177,10 +183,9 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
           onClick={() => onActiveTabChange('items')}
         >Items</button>
         <button
-          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'motivations' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
-          onClick={() => onActiveTabChange('motivations')}
-        >Motivations</button>
-        <button onClick={onClose} className="ml-auto text-gray-400 hover:text-white text-lg leading-none">&times;</button>
+          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'memory' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
+          onClick={() => onActiveTabChange('memory')}
+        >Memory</button>
       </div>
 
       {/* Scrollable content */}

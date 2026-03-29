@@ -284,7 +284,7 @@ function createSchema(db) {
       visibility TEXT DEFAULT 'visible',
       subconscious_memory INTEGER DEFAULT 1,
       subconscious_direct INTEGER DEFAULT 0,
-      subconscious_depth INTEGER DEFAULT 2,
+      subconscious_depth INTEGER DEFAULT 1,
       setup_complete INTEGER DEFAULT 0,
       is_default INTEGER DEFAULT 0,
       display_order INTEGER DEFAULT 0,
