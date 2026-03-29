@@ -93,6 +93,37 @@ function createAssistantRouter(db, deps) {
   router.get('/config', getConfig({ AgentService, AppService, APPS_DIR, db }));
   router.post('/config', updateConfig({ AgentService, AppService, APPS_DIR, db }));
 
+  // ============ UI State Persistence ============
+  // Merges assistant app UI state into the existing appUi:{appId} settings blob
+  // (preserves shell-owned keys like terminalLayout, panelMode, storageView)
+
+  function resolveAppId(req) {
+    const agent = resolveAgent(req);
+    return agent?.app_id || null;
+  }
+
+  router.get('/ui-state', (req, res) => {
+    const appId = resolveAppId(req);
+    if (!appId) return res.json({});
+    const json = SettingsService.get(db, `appUi:${appId}`);
+    if (!json) return res.json({});
+    try { res.json(JSON.parse(json)); }
+    catch { res.json({}); }
+  });
+
+  router.put('/ui-state', (req, res) => {
+    const appId = resolveAppId(req);
+    if (!appId) return res.status(400).json({ error: 'Could not resolve app' });
+
+    let existing = {};
+    const json = SettingsService.get(db, `appUi:${appId}`);
+    if (json) try { existing = JSON.parse(json); } catch {}
+
+    const merged = { ...existing, ...req.body };
+    SettingsService.set(db, `appUi:${appId}`, JSON.stringify(merged));
+    res.json({ success: true });
+  });
+
   // ============ Persistent Assistant Process ============
   router.post('/start', async (req, res) => {
     const assistant = db ? resolveAgent(req) : null;

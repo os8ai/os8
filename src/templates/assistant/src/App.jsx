@@ -7,6 +7,7 @@ import SetupScreen from './components/SetupScreen'
 import ThreadSidebar from './components/ThreadSidebar'
 import ThreadView from './components/ThreadView'
 import ThreadImagePanel from './components/ThreadImagePanel'
+import AgentLifePanel from './components/AgentLifePanel'
 
 class ErrorBoundary extends Component {
   state = { hasError: false, error: null }
@@ -33,6 +34,17 @@ class ErrorBoundary extends Component {
   }
 }
 
+function Tooltip({ text, children }) {
+  return (
+    <div className="relative group">
+      {children}
+      <div className="absolute top-full mt-1 right-0 px-2 py-1 bg-gray-900 text-gray-200 text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity delay-300 z-50">
+        {text}
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [config, setConfig] = useState(null)
@@ -55,15 +67,24 @@ function App() {
   const [activeThread, setActiveThread] = useState(null) // null = 1:1 chat, object = thread view
   const [threadImageCollapsed, setThreadImageCollapsed] = useState(false)
 
-  // Context debug viewer
+  // Agent Life panel
   const [contextData, setContextData] = useState(null)
   const [contextTab, setContextTab] = useState('conscious') // 'conscious' or 'raw'
+  const [agentLifeOpen, setAgentLifeOpen] = useState(false)
+  const [agentLifeHeight, setAgentLifeHeight] = useState(35) // percent of main area
+  const [agentLifeActiveTab, setAgentLifeActiveTab] = useState('memory')
+  const [contextLoading, setContextLoading] = useState(false)
+
+  // UI state persistence
+  const [uiStateLoaded, setUiStateLoaded] = useState(false)
+  const savedUiStateRef = useRef(null)
 
   const currentPort = window.location.port || '8888'
   const baseApiUrl = `http://localhost:${currentPort}`
 
-  // Get the app's base path (/{appId})
-  const basePath = '/' + window.location.pathname.split('/').filter(Boolean)[0]
+  // Get the app's base path (/{appId}) and appId
+  const appId = window.location.pathname.split('/').filter(Boolean)[0]
+  const basePath = '/' + appId
 
   // Derive initial agent display slug from URL path (/{appId}/{displaySlug})
   const getInitialDisplaySlug = () => {
@@ -84,6 +105,32 @@ function App() {
   const setAgentUrl = (displaySlug) => {
     history.replaceState(null, '', `${basePath}/${displaySlug}`)
   }
+
+  // Load persisted UI state on mount, then load agents (sequential to avoid race)
+  useEffect(() => {
+    fetch(`${baseApiUrl}/api/assistant/ui-state`)
+      .then(r => r.json())
+      .then(saved => {
+        if (saved.imageCollapsed != null) setImageCollapsed(saved.imageCollapsed)
+        if (saved.imageWidth != null) setImageWidth(saved.imageWidth)
+        if (saved.agentLifeOpen != null) setAgentLifeOpen(saved.agentLifeOpen)
+        if (saved.agentLifeActiveTab) setAgentLifeActiveTab(saved.agentLifeActiveTab)
+        if (saved.agentLifeHeight != null) setAgentLifeHeight(saved.agentLifeHeight)
+        if (saved.showThreads != null) setShowThreads(saved.showThreads)
+        if (saved.threadImageCollapsed != null) setThreadImageCollapsed(saved.threadImageCollapsed)
+        if (saved.contextTab) setContextTab(saved.contextTab)
+        savedUiStateRef.current = saved
+      })
+      .catch(() => {})
+      .finally(() => {
+        setUiStateLoaded(true)
+        loadAgents()
+      })
+    fetch(`${baseApiUrl}/api/ai/ready`)
+      .then(r => r.json())
+      .then(data => setAiReady(!!data.ready))
+      .catch(() => setAiReady(false))
+  }, [])
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -127,13 +174,13 @@ function App() {
           if (bySlug) initialId = bySlug.id
           else if (byId) initialId = byId.id
         }
-        if (!initialId) {
-          // Only use defaultAgentId if it exists in the active agents list
-          if (data.defaultAgentId && agentsList.some(a => a.id === data.defaultAgentId)) {
-            initialId = data.defaultAgentId
-          } else if (agentsList.length > 0) {
-            initialId = agentsList[0].id
-          }
+        // Try saved UI state agent (persisted from last session)
+        if (!initialId && savedUiStateRef.current?.selectedAgentId) {
+          const savedId = savedUiStateRef.current.selectedAgentId
+          if (agentsList.some(a => a.id === savedId)) initialId = savedId
+        }
+        if (!initialId && agentsList.length > 0) {
+          initialId = agentsList[0].id
         }
         if (initialId) {
           setSelectedAgentId(initialId)
@@ -184,14 +231,32 @@ function App() {
     }).catch(() => {})
   }, [baseApiUrl, selectedAgentId])
 
-  // Load agents and check AI readiness on mount
-  useEffect(() => {
-    loadAgents()
-    fetch(`${baseApiUrl}/api/ai/ready`)
-      .then(r => r.json())
-      .then(data => setAiReady(!!data.ready))
-      .catch(() => setAiReady(false))
+  // Fetch agent context for the Agent Life panel
+  const fetchContext = useCallback(async () => {
+    if (!selectedAgentId) return
+    setContextLoading(true)
+    try {
+      const resp = await fetch(`${baseApiUrl}/api/agent/${selectedAgentId}/context`)
+      if (!resp.ok) { setContextData(null); return }
+      setContextData(await resp.json())
+    } catch { setContextData(null) }
+    finally { setContextLoading(false) }
+  }, [selectedAgentId, baseApiUrl])
+
+  // Stable callback for Chat onMessageComplete (ref pattern avoids EventSource recreation)
+  const handleMessageComplete = useCallback(() => {
+    if (agentLifeOpen) fetchContext()
+  }, [agentLifeOpen, fetchContext])
+
+  const handleMessageCompleteRef = useRef(handleMessageComplete)
+  useEffect(() => { handleMessageCompleteRef.current = handleMessageComplete }, [handleMessageComplete])
+
+  const stableMessageComplete = useCallback(() => {
+    handleMessageCompleteRef.current?.()
   }, [])
+
+  // Note: loadAgents() is called from the UI state load effect (sequential)
+  // AI readiness check also runs there in parallel
 
   // Load config when selected agent changes
   useEffect(() => {
@@ -228,12 +293,29 @@ function App() {
     }
   }, [loadConfig, loadAgents])
 
+  // Auto-fetch context when panel opens or agent changes
+  useEffect(() => {
+    if (agentLifeOpen && selectedAgentId) fetchContext()
+  }, [selectedAgentId, agentLifeOpen])
+
+  // Restore active thread from saved UI state
+  useEffect(() => {
+    const savedThreadId = savedUiStateRef.current?.activeThreadId
+    if (uiStateLoaded && showThreads && savedThreadId && selectedAgentId && !activeThread) {
+      fetch(`${baseApiUrl}/api/agent-chat/threads/${savedThreadId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(thread => { if (thread) setActiveThread(thread) })
+        .catch(() => {})
+    }
+  }, [uiStateLoaded, showThreads, selectedAgentId])
+
   // Switch agent — also update URL path for shell sidebar scoping
   const handleSelectAgent = (agentId) => {
     setSelectedAgentId(agentId)
     setShowAgentDropdown(false)
     setActiveThread(null) // Return to 1:1 chat
     setConfig(null) // Reset config to show loading
+    setContextData(null) // Clear stale context
     // Communicate scope to OS8 shell via URL path
     setAgentUrl(getDisplaySlug(agentId))
   }
@@ -289,6 +371,34 @@ function App() {
       setCreatingAgent(false)
     }
   }
+
+  // Save UI state to database (immediate — no debounce, fires are infrequent)
+  const saveUiState = useCallback(() => {
+    const uiState = {
+      selectedAgentId,
+      imageCollapsed,
+      imageWidth,
+      agentLifeOpen,
+      agentLifeActiveTab,
+      agentLifeHeight,
+      showThreads,
+      threadImageCollapsed,
+      activeThreadId: activeThread?.id || null,
+      contextTab,
+    }
+    fetch(`${baseApiUrl}/api/assistant/ui-state`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(uiState),
+    }).catch(() => {})
+  }, [selectedAgentId, imageCollapsed, imageWidth, agentLifeOpen,
+      agentLifeActiveTab, agentLifeHeight, showThreads, threadImageCollapsed, activeThread, contextTab, baseApiUrl])
+
+  // Save UI state whenever any persisted value changes
+  useEffect(() => {
+    if (uiStateLoaded && selectedAgentId) saveUiState()
+  }, [uiStateLoaded, saveUiState, selectedAgentId, imageCollapsed, imageWidth, agentLifeOpen,
+      agentLifeActiveTab, agentLifeHeight, showThreads, threadImageCollapsed, activeThread?.id, contextTab])
 
   if (!config || !selectedAgentId) {
     // While loading, also check if AI is definitively not ready
@@ -432,65 +542,61 @@ function App() {
 
           <div className="flex items-center gap-3">
             {/* New Agent button */}
-            <button
-              onClick={() => setShowNewAgent(true)}
-              className="new-agent-btn p-1.5 rounded-md transition-colors bg-blue-600 text-white hover:bg-blue-700"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M12 5v14M5 12h14"/>
-              </svg>
-            </button>
+            <Tooltip text="Create new agent">
+              <button
+                onClick={() => setShowNewAgent(true)}
+                className="new-agent-btn p-1.5 rounded-md transition-colors bg-blue-600 text-white hover:bg-blue-700"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M12 5v14M5 12h14"/>
+                </svg>
+              </button>
+            </Tooltip>
 
             {/* Thread toggle button */}
-            <button
-              onClick={() => {
-                setShowThreads(!showThreads)
-                if (showThreads) setActiveThread(null) // Close thread view when hiding sidebar
-              }}
-              className={`p-1.5 rounded transition-colors ${showThreads ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-              title="Threads"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-              </svg>
-            </button>
+            <Tooltip text="Chat threads">
+              <button
+                onClick={() => {
+                  setShowThreads(!showThreads)
+                  if (showThreads) setActiveThread(null) // Close thread view when hiding sidebar
+                }}
+                className={`p-1.5 rounded transition-colors ${showThreads ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+              </button>
+            </Tooltip>
 
             {/* Settings gear */}
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className={`p-1.5 rounded transition-colors ${showSettings ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-              title="Settings"
-            >
+            <Tooltip text="Settings">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className={`p-1.5 rounded transition-colors ${showSettings ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
-            </button>
+              </button>
+            </Tooltip>
 
-            {/* Context debug viewer */}
-            <button
-              onClick={async () => {
-                if (!selectedAgentId) return
-                try {
-                  const resp = await fetch(`${baseApiUrl}/api/agent/${selectedAgentId}/context`)
-                  if (!resp.ok) {
-                    const err = await resp.json()
-                    alert(err.error || 'No context available')
-                    return
-                  }
-                  setContextData(await resp.json())
-                } catch (err) {
-                  alert('Failed to fetch context: ' + err.message)
-                }
-              }}
-              className="p-1.5 rounded transition-colors text-gray-400 hover:text-white hover:bg-gray-700"
-              title="View memory context"
-            >
-              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
-                <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
-              </svg>
-            </button>
+            {/* Agent Life panel toggle */}
+            <Tooltip text="Agent manager">
+              <button
+                onClick={() => {
+                  const opening = !agentLifeOpen
+                  setAgentLifeOpen(opening)
+                  if (opening && !contextData) fetchContext()
+                }}
+                className={`p-1.5 rounded transition-colors ${agentLifeOpen ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                </svg>
+              </button>
+            </Tooltip>
 
           </div>
         </div>
@@ -533,169 +639,6 @@ function App() {
                 {creatingAgent ? 'Creating...' : 'Create'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Context Debug Modal */}
-      {contextData && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) setContextData(null) }}>
-          <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 shadow-2xl" style={{ width: '90%', maxWidth: 800, maxHeight: '85vh', overflowY: 'auto' }}>
-            <div className="flex items-center justify-between mb-1">
-              <h2 className="text-lg font-semibold text-white">Memory Context</h2>
-              <button onClick={() => setContextData(null)} className="text-gray-400 hover:text-white text-lg">&times;</button>
-            </div>
-            <p className="text-xs text-gray-500 mb-2">
-              Assembled at {contextData.timestamp || '?'} &middot; Full context: {contextData.fullContext ? (contextData.fullContext.length / 1024).toFixed(1) : '0'}K chars
-              {contextData.images?.length > 0 && ` \u00b7 ${contextData.images.length} image${contextData.images.length > 1 ? 's' : ''}`}
-              {contextData.subconsciousEnabled && contextData.subconsciousDuration != null && ` \u00b7 Subconscious: ${contextData.subconsciousDuration}ms`}
-              {contextData.subconsciousUsage && ` (${contextData.subconsciousUsage.input_tokens} in / ${contextData.subconsciousUsage.output_tokens} out)`}
-            </p>
-            {contextData.subconsciousEnabled && (
-              <div className="flex gap-2 mb-3">
-                <button
-                  className={`text-xs px-2.5 py-1 rounded transition-colors ${contextTab === 'conscious' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200 bg-gray-700/40'}`}
-                  onClick={() => setContextTab('conscious')}
-                >Conscious memory</button>
-                <button
-                  className={`text-xs px-2.5 py-1 rounded transition-colors ${contextTab === 'raw' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200 bg-gray-700/40'}`}
-                  onClick={() => setContextTab('raw')}
-                >Raw subconscious</button>
-              </div>
-            )}
-            {contextData.subconsciousEnabled && contextTab === 'conscious' && contextData.subconsciousClassification && (
-              <div className={`text-xs font-semibold py-1.5 px-2 rounded mb-1 ${contextData.subconsciousClassification === 'CONVERSATIONAL' ? 'text-blue-400 bg-blue-900/20' : 'text-orange-400 bg-orange-900/20'}`}>
-                Action Classification: {contextData.subconsciousClassification} {contextData.subconsciousClassification === 'TOOL_USE' ? '→ CLI spawn (planning cascade)' : '→ direct response (conversation cascade)'}
-                {contextData.classifierDurationMs && (
-                  <span className="ml-2 font-normal text-gray-500">
-                    ({contextData.classifierDurationMs}ms{contextData.classifierUsage ? `, ${contextData.classifierUsage.input_tokens}→${contextData.classifierUsage.output_tokens} tok` : ''})
-                  </span>
-                )}
-              </div>
-            )}
-            {contextData.subconsciousEnabled && contextTab === 'conscious' && contextData.subconsciousError && (
-              <p className="text-xs text-red-400 bg-red-900/20 rounded-lg px-3 py-2 mb-2">
-                Subconscious processing failed: {contextData.subconsciousError} (fell back to raw context)
-              </p>
-            )}
-            {contextData.subconsciousEnabled && contextTab === 'conscious' && (contextData.subconsciousContext || contextData.subconsciousOutput) && (
-              <details className="mb-1" open>
-                <summary className="text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-200 py-1.5 px-2 rounded bg-gray-700/30 hover:bg-gray-700/60 transition-colors">
-                  Curated Context{contextData.subconsciousDepthLabel ? ` — ${contextData.subconsciousDepthLabel}` : ''} ({((contextData.subconsciousContext || contextData.subconsciousOutput || '').length / 1024).toFixed(1)}K chars)
-                </summary>
-                <pre className="text-xs text-gray-300 bg-black/30 rounded-lg p-3 mt-1 mb-2 overflow-auto whitespace-pre-wrap break-words" style={{ maxHeight: 600 }}>
-                  {contextData.subconsciousContext || contextData.subconsciousOutput}
-                </pre>
-              </details>
-            )}
-            {contextData.subconsciousEnabled && contextTab === 'conscious' && contextData.subconsciousRecommendedResponse && (
-              <details className="mb-1" open>
-                <summary className={`text-xs font-semibold cursor-pointer hover:text-gray-200 py-1.5 px-2 rounded transition-colors ${!contextData.subconsciousRequiresToolUse ? 'text-green-400 bg-green-900/20 hover:bg-green-900/40' : 'text-orange-400 bg-orange-900/20 hover:bg-orange-900/40'}`}>
-                  Recommended Response {!contextData.subconsciousRequiresToolUse ? '(DIRECT — sent as final)' : '(discarded — TOOL_USE classified, CLI spawned)'}
-                </summary>
-                <pre className="text-xs text-gray-300 bg-black/30 rounded-lg p-3 mt-1 mb-2 overflow-auto whitespace-pre-wrap break-words" style={{ maxHeight: 400 }}>
-                  {contextData.subconsciousRecommendedResponse}
-                </pre>
-              </details>
-            )}
-            {contextData.imageDataUrls?.length > 0 && (
-              <details className="mb-1" open>
-                <summary className="text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-200 py-1.5 px-2 rounded bg-gray-700/30 hover:bg-gray-700/60 transition-colors">
-                  Images ({contextData.imageDataUrls.length})
-                  {contextData.images && ` \u2014 ${contextData.images.map(i => `${i.label}: ${i.sizeKB}KB`).join(', ')}`}
-                </summary>
-                <div className="flex gap-3 mt-2 mb-3 flex-wrap">
-                  {contextData.imageDataUrls.map((img, i) => (
-                    <div key={i} className="flex flex-col items-center">
-                      <img src={img.dataUrl} alt={img.label} className="rounded-lg border border-gray-600" style={{ maxHeight: 200, maxWidth: 250, objectFit: 'contain' }} />
-                      <span className="text-xs text-gray-500 mt-1">{img.label}</span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-            {(() => {
-              const isConscious = contextData.subconsciousEnabled && contextTab === 'conscious';
-              // Extract structural identity (preamble + Identity + Current Model + Appearance)
-              const structuralIdentity = (() => {
-                if (!contextData.identityContext) return null;
-                const lines = contextData.identityContext.split('\n');
-                const result = [];
-                let inAppearance = false;
-                for (const line of lines) {
-                  if (inAppearance) {
-                    if (line.startsWith('-') || !line.trim()) { result.push(line); continue; }
-                    break;
-                  }
-                  result.push(line);
-                  if (/^## Appearance/.test(line)) inAppearance = true;
-                }
-                return result.join('\n').trim() || null;
-              })();
-              // Extract principles from identity context (<principles>...</principles> tags)
-              const principlesContent = (() => {
-                if (!contextData.identityContext) return null;
-                const match = contextData.identityContext.match(/<principles[^>]*>([\s\S]*?)<\/principles>/);
-                return match ? match[1].trim() : null;
-              })();
-              // Extract motivations from identity context (<motivations>...</motivations> tags)
-              const motivationsContent = (() => {
-                if (!contextData.identityContext) return null;
-                const match = contextData.identityContext.match(/<motivations[^>]*>([\s\S]*?)<\/motivations>/);
-                return match ? match[1].trim() : null;
-              })();
-              // Extract system instructions from identity context (<system_instructions>...</system_instructions> tags)
-              const systemInstructionsContent = (() => {
-                if (!contextData.identityContext) return null;
-                const match = contextData.identityContext.match(/<system_instructions[^>]*>([\s\S]*?)<\/system_instructions>/);
-                return match ? match[0].trim() : null;
-              })();
-              // Strip system instructions from identity context to avoid duplication
-              const identityWithoutInstructions = (() => {
-                if (!contextData.identityContext || !systemInstructionsContent) return contextData.identityContext;
-                return contextData.identityContext.replace(/<system_instructions[^>]*>[\s\S]*?<\/system_instructions>\s*/, '').trim();
-              })();
-              const allSections = [
-                { title: 'Budget Profile', content: contextData.profile ? JSON.stringify(contextData.profile, null, 2) : null, raw: true },
-                { title: 'System Instructions', content: systemInstructionsContent, raw: true },
-                { title: 'Identity Context', content: identityWithoutInstructions, raw: true },
-                { title: 'Identity (passthrough)', content: structuralIdentity, conscious: true },
-                { title: 'Principles & Domain Syntheses', content: principlesContent },
-                { title: 'Motivations', content: motivationsContent },
-                { title: 'Memory - Raw Entries', content: contextData.memoryContext?.rawEntries
-                  ? `${contextData.memoryContext.rawEntries.length} entries\n\n` + contextData.memoryContext.rawEntries.map(e => `[${e.timestamp || ''}] ${e.speaker || e.role || ''}: ${e.content || ''}`).join('\n---\n')
-                  : null, raw: true },
-                { title: 'Memory - Session Digests', content: contextData.memoryContext?.sessionDigests || contextData.memoryContext?.digestText, raw: true },
-                { title: 'Memory - Daily Digests', content: contextData.memoryContext?.dailyDigests, raw: true },
-                { title: 'Memory - Semantic Search', content: contextData.semanticMemoryText
-                  || (contextData.memoryContext?.relevantMemory?.length
-                    ? contextData.memoryContext.relevantMemory.map(c => `[${c.source || ''}] (score: ${c.score?.toFixed(3) || '?'})\n${c.text}`).join('\n---\n')
-                    : '(no semantic results for this message)'), raw: true },
-                { title: 'Agent DMs', content: contextData.agentDMContext, raw: true },
-                { title: 'Skills / Capabilities', content: contextData.skillContext },
-              ];
-              return (isConscious ? allSections.filter(s => !s.raw || s.conscious) : allSections.filter(s => !s.conscious));
-            })().map((section, i) => {
-              const text = section.content || ''
-              const chars = text.length
-              if (!text) return null
-              return (
-                <details key={i} className="mb-1">
-                  <summary className="text-xs font-semibold text-gray-400 cursor-pointer hover:text-gray-200 py-1.5 px-2 rounded bg-gray-700/30 hover:bg-gray-700/60 transition-colors">
-                    {section.title} ({(chars / 1024).toFixed(1)}K chars)
-                  </summary>
-                  <pre className="text-xs text-gray-300 bg-black/30 rounded-lg p-3 mt-1 mb-2 overflow-auto whitespace-pre-wrap break-words" style={{ maxHeight: 400 }}>
-                    {text}
-                  </pre>
-                </details>
-              )
-            })}
-            <button
-              onClick={() => setContextData(null)}
-              className="w-full mt-3 px-3 py-2 text-sm text-gray-400 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
-            >
-              Close
-            </button>
           </div>
         </div>
       )}
@@ -769,25 +712,77 @@ function App() {
         )}
 
         {/* Main content area */}
-        <main className="flex-1 flex overflow-hidden min-w-0">
-          {activeThread ? (
-            <ThreadView
-              thread={activeThread}
-              baseApiUrl={baseApiUrl}
-              agents={agents}
-              onClose={() => setActiveThread(null)}
+        <main className="flex-1 flex flex-col overflow-hidden min-w-0">
+          {/* Chat/Thread area */}
+          <div className="overflow-hidden" style={agentLifeOpen && !activeThread ? { flex: `0 0 ${100 - agentLifeHeight}%` } : { flex: '1 1 auto' }}>
+            {activeThread ? (
+              <ThreadView
+                thread={activeThread}
+                baseApiUrl={baseApiUrl}
+                agents={agents}
+                onClose={() => setActiveThread(null)}
+              />
+            ) : (
+              <Chat
+                assistantName={assistantName}
+                ownerName={ownerName}
+                agentApiBase={getAgentApiBase(selectedAgentId)}
+                baseApiUrl={baseApiUrl}
+                selectedAgentId={selectedAgentId}
+                config={config}
+                onBackendError={handleBackendError}
+                onConfigChanged={loadConfig}
+                onMessageComplete={stableMessageComplete}
+              />
+            )}
+          </div>
+
+          {/* Drag divider — only when panel is open and not in thread view */}
+          {agentLifeOpen && !activeThread && (
+            <div
+              style={{ height: 4, cursor: 'row-resize', background: 'rgba(255,255,255,0.08)', flexShrink: 0 }}
+              onMouseEnter={e => e.currentTarget.style.background = 'rgba(59,130,246,0.5)'}
+              onMouseLeave={e => { if (!e.currentTarget.dataset.dragging) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+              onMouseDown={e => {
+                e.preventDefault()
+                const startY = e.clientY
+                const startH = agentLifeHeight
+                const container = e.currentTarget.parentElement
+                const containerH = container.getBoundingClientRect().height
+                const div = e.currentTarget
+                div.dataset.dragging = '1'
+                div.style.background = 'rgba(59,130,246,0.5)'
+                const onMove = (ev) => {
+                  const dy = startY - ev.clientY
+                  setAgentLifeHeight(Math.min(70, Math.max(15, startH + (dy / containerH) * 100)))
+                }
+                const onUp = () => {
+                  delete div.dataset.dragging
+                  div.style.background = 'rgba(255,255,255,0.08)'
+                  document.removeEventListener('mousemove', onMove)
+                  document.removeEventListener('mouseup', onUp)
+                }
+                document.addEventListener('mousemove', onMove)
+                document.addEventListener('mouseup', onUp)
+              }}
             />
-          ) : (
-            <Chat
-              assistantName={assistantName}
-              ownerName={ownerName}
-              agentApiBase={getAgentApiBase(selectedAgentId)}
-              baseApiUrl={baseApiUrl}
-              selectedAgentId={selectedAgentId}
-              config={config}
-              onBackendError={handleBackendError}
-              onConfigChanged={loadConfig}
-            />
+          )}
+
+          {/* Agent Life Panel */}
+          {agentLifeOpen && !activeThread && (
+            <div style={{ flex: `0 0 ${agentLifeHeight}%` }} className="overflow-hidden">
+              <AgentLifePanel
+                contextData={contextData}
+                contextTab={contextTab}
+                onTabChange={setContextTab}
+                isLoading={contextLoading}
+                activeTab={agentLifeActiveTab}
+                onActiveTabChange={setAgentLifeActiveTab}
+                baseApiUrl={baseApiUrl}
+                appId={appId}
+                agentId={selectedAgentId}
+              />
+            </div>
           )}
         </main>
       </div>

@@ -51,7 +51,7 @@ function StepLine({ step }) {
   )
 }
 
-function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgentId, config, onBackendError, onConfigChanged }) {
+function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgentId, config, onBackendError, onConfigChanged, onMessageComplete }) {
   // Agent API base - use prop if provided, otherwise derive from URL or fallback to legacy
   const apiBase = agentApiBase || (() => {
     const currentPort = window.location.port || '8888'
@@ -294,6 +294,10 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
   const onConfigChangedRef = useRef(onConfigChanged)
   useEffect(() => { onConfigChangedRef.current = onConfigChanged }, [onConfigChanged])
 
+  // Ref for message complete callback to avoid EventSource recreation
+  const onMessageCompleteRef = useRef(onMessageComplete)
+  useEffect(() => { onMessageCompleteRef.current = onMessageComplete }, [onMessageComplete])
+
   // Refs for TTS functions to avoid EventSource recreation
   const handleTTSTextRef = useRef(handleTTSText)
   const ttsFlushRef = useRef(ttsFlush)
@@ -524,6 +528,8 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
           // If TTS is NOT ready, onStart callback will detect ttsStreamDoneRef
           // and handle the drain+flush when the WebSocket connects
 
+          // Notify parent that message processing is complete (for auto-refresh of agent life panel)
+          onMessageCompleteRef.current?.()
         }
       } catch (e) {
         console.error('Stream parse error:', e)

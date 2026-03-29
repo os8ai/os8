@@ -289,6 +289,28 @@ function createImagesRouter(db, deps) {
     });
   });
 
+  /**
+   * DELETE /api/agent/:agentId/images/by-filename/:filename
+   * Delete an image entry from the database by its original filename
+   */
+  router.delete('/by-filename/:filename', (req, res) => {
+    const assistant = db ? resolveAgent(db, req, AppService) : null;
+    if (!assistant) {
+      return res.status(404).json({ error: 'Assistant not found' });
+    }
+
+    const { filename } = req.params;
+    if (!filename) return res.status(400).json({ error: 'filename is required' });
+
+    const result = db.prepare(`
+      DELETE FROM conversation_entries
+      WHERE app_id = ? AND type = 'image'
+        AND json_extract(metadata, '$.original_filename') = ?
+    `).run(assistant.id, filename);
+
+    res.json({ success: true, deleted: result.changes });
+  });
+
   return router;
 }
 

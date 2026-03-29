@@ -71,7 +71,11 @@ function registerSettingsHandlers({ db, services, helpers }) {
   });
 
   ipcMain.handle('settings:set-app-ui', (event, appId, settings) => {
-    SettingsService.set(db, `appUi:${appId}`, JSON.stringify(settings));
+    let existing = {};
+    const json = SettingsService.get(db, `appUi:${appId}`);
+    if (json) try { existing = JSON.parse(json); } catch {}
+    const merged = { ...existing, ...settings };
+    SettingsService.set(db, `appUi:${appId}`, JSON.stringify(merged));
     return { success: true };
   });
 
