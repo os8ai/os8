@@ -121,9 +121,11 @@ All user data lives in `~/os8/` (override with `OS8_HOME` env var):
 - **[OS8-project-design-principles.md](OS8-project-design-principles.md)** — Code patterns and conventions
 - **[CLAUDE.md](CLAUDE.md)** — AI development reference (file locations, service index)
 
-## Contributing
+## Community
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Have a question, idea, or something to show off? Join the [GitHub Discussions](https://github.com/os8ai/os8/discussions).
+
+See [ROADMAP.md](ROADMAP.md) for where the project is headed and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 
