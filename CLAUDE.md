@@ -8,14 +8,6 @@ For architecture and philosophy, see [OS8 Project Context.md](OS8%20Project%20Co
 
 For code patterns and conventions, see [OS8-project-design-principles.md](OS8-project-design-principles.md).
 
-## Session Management
-
-**Start:** Follow [skills/session-start.md](skills/session-start.md).
-
-**Close:** Follow [skills/session-close.md](skills/session-close.md).
-
-**Session Log:** [SESSION_LOG.md](SESSION_LOG.md)
-
 ## Quick Orientation
 
 1. OS8 is an **Electron app** — main process (`main.js`) + renderer (`index.html`)
