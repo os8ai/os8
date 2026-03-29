@@ -9,7 +9,7 @@
     "pretest": "npm rebuild better-sqlite3 --loglevel=error",
     "test": "vitest run",
     "test:watch": "npm rebuild better-sqlite3 --loglevel=error && vitest",
-    "posttest": "npx @electron/rebuild -m . -o better-sqlite3 -s 2>/dev/null",
+    "posttest": "npx @electron/rebuild -m . -o better-sqlite3 -s --loglevel=error",
     "postinstall": "npx @electron/rebuild -m . -o better-sqlite3",
     "verify:package-assets": "node tools/verify-package-assets.js",
     "verify:package-dist": "node tools/verify-package-assets.js --dist",
