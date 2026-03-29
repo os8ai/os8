@@ -783,6 +783,7 @@ function App() {
                 agentId={selectedAgentId}
                 config={config}
                 onConfigUpdated={loadConfig}
+                onClose={() => setAgentLifeOpen(false)}
               />
             </div>
           )}

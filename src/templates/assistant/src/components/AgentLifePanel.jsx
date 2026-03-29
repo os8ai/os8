@@ -4,6 +4,8 @@
  */
 import AgentLifeImages from './AgentLifeImages'
 import AgentLifeMyself from './AgentLifeMyself'
+import AgentLifeItems from './AgentLifeItems'
+import AgentLifeMotivations from './AgentLifeMotivations'
 
 /** Memory content sub-component — renders the context debug sections */
 function MemoryContent({ contextData, contextTab, onTabChange }) {
@@ -153,7 +155,7 @@ function MemoryContent({ contextData, contextTab, onTabChange }) {
   )
 }
 
-function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activeTab, onActiveTabChange, baseApiUrl, appId, agentId, config, onConfigUpdated }) {
+function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activeTab, onActiveTabChange, baseApiUrl, appId, agentId, config, onConfigUpdated, onClose }) {
   return (
     <div className="h-full flex flex-col bg-gray-800/50 border-t border-gray-700">
       {/* Tab bar */}
@@ -165,11 +167,20 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
         <button
           className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'myself' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
           onClick={() => onActiveTabChange('myself')}
-        >Myself</button>
+        >Identity</button>
         <button
           className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'images' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
           onClick={() => onActiveTabChange('images')}
         >Images</button>
+        <button
+          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'items' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
+          onClick={() => onActiveTabChange('items')}
+        >Items</button>
+        <button
+          className={`text-xs px-2.5 py-1 rounded transition-colors ${activeTab === 'motivations' ? 'bg-gray-600 text-white' : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/40'}`}
+          onClick={() => onActiveTabChange('motivations')}
+        >Motivations</button>
+        <button onClick={onClose} className="ml-auto text-gray-400 hover:text-white text-lg leading-none">&times;</button>
       </div>
 
       {/* Scrollable content */}
@@ -190,6 +201,12 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
         )}
         {activeTab === 'images' && (
           <AgentLifeImages baseApiUrl={baseApiUrl} appId={appId} agentId={agentId} />
+        )}
+        {activeTab === 'items' && (
+          <AgentLifeItems baseApiUrl={baseApiUrl} agentId={agentId} />
+        )}
+        {activeTab === 'motivations' && (
+          <AgentLifeMotivations baseApiUrl={baseApiUrl} agentId={agentId} />
         )}
       </div>
     </div>

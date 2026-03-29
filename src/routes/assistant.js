@@ -124,6 +124,67 @@ function createAssistantRouter(db, deps) {
     res.json({ success: true });
   });
 
+  // ============ Motivations File ============
+
+  router.get('/motivations', (req, res) => {
+    const agent = resolveAgent(req);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const paths = AgentService.getPaths(agent.app_id, agent.id);
+    const filePath = path.join(paths.agentDir, 'MOTIVATIONS.md');
+    try {
+      if (!fs.existsSync(filePath)) return res.json({ content: '' });
+      res.json({ content: fs.readFileSync(filePath, 'utf-8') });
+    } catch (e) {
+      res.json({ content: '' });
+    }
+  });
+
+  router.put('/motivations', (req, res) => {
+    const agent = resolveAgent(req);
+    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    const paths = AgentService.getPaths(agent.app_id, agent.id);
+    const filePath = path.join(paths.agentDir, 'MOTIVATIONS.md');
+    const { content } = req.body;
+
+    fs.writeFileSync(filePath, content || '');
+
+    // Auto-provision missing motivation jobs whenever content exists
+    if (content?.trim()) {
+      try {
+        const JobsFileService = require('../services/jobs-file');
+        const existing = JobsFileService.getAll(paths.agentDir);
+
+        if (!existing.some(j => j.skill === 'motivations-update' || (j.name || '').toLowerCase().includes('motivations update'))) {
+          JobsFileService.create(paths.agentDir, {
+            name: 'Motivations Update',
+            description: 'Periodic mission assessment, goal-setting, and accountability reporting',
+            type: 'recurring',
+            schedule: { frequency: 'daily', time: '08:00' },
+            onMissed: 'run',
+            skill: 'motivations-update',
+            enabled: true
+          });
+        }
+        if (!existing.some(j => j.skill === 'action-planner' || (j.name || '').toLowerCase().includes('action planner'))) {
+          JobsFileService.create(paths.agentDir, {
+            name: 'Action Planner',
+            description: 'Reviews missions, checks schedule, creates one concrete timed job per mission',
+            type: 'recurring',
+            schedule: { frequency: 'daily', time: '09:00' },
+            onMissed: 'run',
+            skill: 'action-planner',
+            skillScope: 'system',
+            enabled: true
+          });
+        }
+      } catch (e) {
+        console.warn('[Motivations] Failed to auto-provision jobs:', e.message);
+      }
+    }
+
+    res.json({ success: true });
+  });
+
   // ============ Persistent Assistant Process ============
   router.post('/start', async (req, res) => {
     const assistant = db ? resolveAgent(req) : null;

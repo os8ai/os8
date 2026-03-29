@@ -20,7 +20,6 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
   const [preamble, setPreamble] = useState('')
   const [narrative, setNarrative] = useState('')
   const [custom, setCustom] = useState('')
-  const [showCustom, setShowCustom] = useState(false)
   const [saved, setSaved] = useState(false)
   const [refImages, setRefImages] = useState({ headshot: null, body: null })
   const [lightboxUrl, setLightboxUrl] = useState(null)
@@ -43,7 +42,6 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
     setPreamble(config.myselfPreamble || '')
     setNarrative(config.myselfContent || '')
     setCustom(config.myselfCustom || '')
-    setShowCustom(!!config.myselfCustom)
   }, [config?.assistantName, agentId])
 
   // Load reference images (extracted so regen can trigger refresh)
@@ -105,8 +103,8 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
       )}
 
       {/* Reference Images */}
-      <div>
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Reference Images</h3>
+      <details open>
+        <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200 mb-2">Reference Images</summary>
         <div className="flex gap-4">
           <div className="flex flex-col items-center gap-1">
             {refImages.headshot ? (
@@ -137,10 +135,10 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
             </button>
           </div>
         </div>
-      </div>
+      </details>
 
       {/* Preamble */}
-      <details>
+      <details open>
         <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200">
           Preamble
         </summary>
@@ -154,8 +152,8 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
       </details>
 
       {/* Identity */}
-      <div>
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Identity</h3>
+      <details open>
+        <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200 mb-2">Identity</summary>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
           <label className="block">
             <span className="text-[11px] text-gray-500">Name</span>
@@ -179,11 +177,11 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
               className={inputClass} />
           </label>
         </div>
-      </div>
+      </details>
 
       {/* Appearance */}
-      <div>
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Appearance</h3>
+      <details open>
+        <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200 mb-2">Appearance</summary>
         <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
           <label className="block">
             <span className="text-[11px] text-gray-500">
@@ -224,11 +222,11 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
               className={inputClass} />
           </label>
         </div>
-      </div>
+      </details>
 
       {/* Narrative */}
-      <div>
-        <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Narrative</h3>
+      <details open>
+        <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200 mb-1">Narrative</summary>
         <p className="text-[10px] text-gray-600 mb-1.5">First-person identity story — who the agent is, their voice, values, and history</p>
         <textarea
           value={narrative}
@@ -237,29 +235,20 @@ function AgentLifeMyself({ baseApiUrl, appId, agentId, config, onConfigUpdated }
           style={{ minHeight: 200 }}
           placeholder="The agent's first-person narrative..."
         />
-      </div>
+      </details>
 
       {/* Custom additions */}
-      <div>
-        {!showCustom && !custom ? (
-          <button onClick={() => setShowCustom(true)}
-            className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors">
-            + Add custom content
-          </button>
-        ) : (
-          <>
-            <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Custom Additions</h3>
-            <p className="text-[10px] text-gray-600 mb-1.5">Additional content appended to MYSELF.md</p>
-            <textarea
-              value={custom}
-              onChange={(e) => { setCustom(e.target.value); longDebouncedSave({ myselfCustom: e.target.value }) }}
-              className={`${inputClass} resize-y`}
-              style={{ minHeight: 80 }}
-              placeholder="Additional identity content..."
-            />
-          </>
-        )}
-      </div>
+      <details open>
+        <summary className="text-xs font-semibold text-gray-400 uppercase tracking-wide cursor-pointer hover:text-gray-200 mb-1">Custom Additions</summary>
+        <p className="text-[10px] text-gray-600 mb-1.5">Additional content appended to MYSELF.md</p>
+        <textarea
+          value={custom}
+          onChange={(e) => { setCustom(e.target.value); longDebouncedSave({ myselfCustom: e.target.value }) }}
+          className={`${inputClass} resize-y`}
+          style={{ minHeight: 80 }}
+          placeholder="Additional identity content..."
+        />
+      </details>
 
       {/* Lightbox */}
       {lightboxUrl && (
