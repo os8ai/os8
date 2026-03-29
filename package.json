@@ -1,6 +1,6 @@
 {
   "name": "os8",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "OS8 - Desktop workspace for AI-assisted development",
   "main": "main.js",
   "scripts": {
@@ -55,6 +55,15 @@
       "category": "public.app-category.developer-tools",
       "target": "dmg",
       "icon": "build/icon.icns"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png",
+      "category": "Development"
     },
     "files": [
       "main.js",
