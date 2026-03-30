@@ -617,6 +617,7 @@ function createSchema(db) {
       cap_planning INTEGER DEFAULT 3,
       cap_coding INTEGER DEFAULT 3,
       cap_summary INTEGER DEFAULT 3,
+      cap_image INTEGER DEFAULT 0,
       eligible_tasks TEXT DEFAULT NULL,
       is_default INTEGER DEFAULT 0,
       display_order INTEGER DEFAULT 0,

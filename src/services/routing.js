@@ -21,7 +21,7 @@ const BILLING_PATTERNS = {
   xai: [/rate_limit/i, /insufficient.*balance/i, /429/]
 };
 
-const TASK_TYPES = ['conversation', 'jobs', 'planning', 'coding', 'summary'];
+const TASK_TYPES = ['conversation', 'jobs', 'planning', 'coding', 'summary', 'image'];
 const PROVIDER_IDS = ['anthropic', 'google', 'openai', 'xai'];
 const DEFAULT_EXHAUSTION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -172,7 +172,8 @@ const RoutingService = {
         const eligible = f.eligible_tasks.split(',').map(s => s.trim());
         if (!eligible.includes(taskType)) continue;
       }
-      const cap = f[capCol] || 1;
+      const cap = f[capCol] || 0;
+      if (cap <= 0) continue; // Skip families with no capability for this task
       const cost = f.cost_tier || 3;
       const container = AIRegistryService.getContainer(db, f.container_id);
       const provider = container ? AIRegistryService.getProvider(db, container.provider_id) : null;
@@ -347,7 +348,14 @@ const RoutingService = {
     for (const pid of PROVIDER_IDS) {
       defaults[pid] = {};
       for (const tt of TASK_TYPES) {
-        defaults[pid][tt] = (tt === 'jobs' || tt === 'summary') ? 'api' : 'both';
+        if (tt === 'jobs' || tt === 'summary') {
+          defaults[pid][tt] = 'api';
+        } else if (tt === 'image') {
+          // Only Google supports login for images (OAuth token covers Imagen API)
+          defaults[pid][tt] = pid === 'google' ? 'both' : 'api';
+        } else {
+          defaults[pid][tt] = 'both';
+        }
       }
     }
     return defaults;

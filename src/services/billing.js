@@ -189,7 +189,21 @@ const BillingService = {
       // Method 2: Auth file check (Gemini, Codex)
       if (!loggedIn && container.auth_file_path) {
         try {
-          loggedIn = fs.existsSync(path.join(os.homedir(), container.auth_file_path));
+          const authPath = path.join(os.homedir(), container.auth_file_path);
+          loggedIn = fs.existsSync(authPath);
+
+          // Proactively refresh Gemini OAuth token if expired
+          if (loggedIn && container.provider_id === 'google') {
+            try {
+              const creds = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
+              if (creds.expiry_date && Date.now() > creds.expiry_date - 60000 && creds.refresh_token) {
+                const ImageGenService = require('./imagegen');
+                await ImageGenService._refreshGeminiToken(authPath, creds);
+              }
+            } catch (e) {
+              console.warn('[Billing] Gemini token refresh:', e.message);
+            }
+          }
         } catch (e) {
           console.warn(`[billing] Auth file check failed for ${container.auth_file_path}: ${e.message}`);
         }

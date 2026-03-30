@@ -55,8 +55,6 @@ function App() {
   const [agents, setAgents] = useState([])
   const [selectedAgentId, setSelectedAgentId] = useState(null)
   const [showAgentDropdown, setShowAgentDropdown] = useState(false)
-  const [showNewAgent, setShowNewAgent] = useState(false)
-  const [newAgentName, setNewAgentName] = useState('')
   const [creatingAgent, setCreatingAgent] = useState(false)
   const [aiReady, setAiReady] = useState(null) // null = loading, true/false
   const [agentsLoaded, setAgentsLoaded] = useState(false)
@@ -343,16 +341,15 @@ function App() {
     }
   }
 
-  // Create new agent
+  // Create new agent — skip modal, go straight to setup wizard
   const handleCreateAgent = async () => {
-    if (!newAgentName.trim()) return
     setCreatingAgent(true)
     try {
       const res = await fetch(`${baseApiUrl}/api/agents`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: newAgentName.trim()
+          name: 'New Agent'
         })
       })
       const data = await res.json()
@@ -362,8 +359,6 @@ function App() {
         // Keep URL as /new during setup — swaps to agent slug on setup complete
         setAgentUrl('new')
         setConfig(null)
-        setShowNewAgent(false)
-        setNewAgentName('')
       }
     } catch (err) {
       console.error('Failed to create agent:', err)
@@ -419,31 +414,20 @@ function App() {
         </div>
       )
     }
-    // No agents exist — show create agent UI
+    // No agents exist — show create agent button
     if (agentsLoaded && agents.length === 0) {
       return (
         <div className="h-screen flex items-center justify-center bg-gray-900">
           <div className="text-center max-w-sm px-6">
             <p className="text-lg text-gray-200 mb-2 font-medium">Create Your Agent</p>
-            <p className="text-sm text-gray-400 mb-6">Give your agent a name to get started.</p>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={newAgentName}
-                onChange={(e) => setNewAgentName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleCreateAgent()}
-                placeholder="Agent name..."
-                autoFocus
-                className="flex-1 px-3 py-2 text-sm text-white bg-gray-800 border border-gray-600 rounded-lg focus:outline-none focus:border-blue-500"
-              />
-              <button
-                onClick={handleCreateAgent}
-                disabled={creatingAgent || !newAgentName.trim()}
-                className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-              >
-                {creatingAgent ? 'Creating...' : 'Create'}
-              </button>
-            </div>
+            <p className="text-sm text-gray-400 mb-6">Set up your first AI agent to get started.</p>
+            <button
+              onClick={handleCreateAgent}
+              disabled={creatingAgent}
+              className="px-6 py-2.5 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+            >
+              {creatingAgent ? 'Creating...' : 'Get Started'}
+            </button>
           </div>
         </div>
       )
@@ -462,10 +446,13 @@ function App() {
         <SetupScreen
           agentId={selectedAgentId}
           baseApiUrl={baseApiUrl}
-          onSetupComplete={() => {
+          onSetupComplete={async () => {
+            const res = await fetch(`${baseApiUrl}/api/agents?filter=visible`)
+            const data = await res.json()
+            const agentsList = data.agents || []
+            setAgents(agentsList)
             loadConfig()
-            // Swap URL from /new to the agent's real slug
-            setAgentUrl(getDisplaySlug(selectedAgentId))
+            setAgentUrl(getDisplaySlug(selectedAgentId, agentsList))
           }}
         />
       </ErrorBoundary>
@@ -544,8 +531,9 @@ function App() {
             {/* New Agent button */}
             <Tooltip text="Create new agent">
               <button
-                onClick={() => setShowNewAgent(true)}
-                className="new-agent-btn p-1.5 rounded-md transition-colors bg-blue-600 text-white hover:bg-blue-700"
+                onClick={handleCreateAgent}
+                disabled={creatingAgent}
+                className="new-agent-btn p-1.5 rounded-md transition-colors bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <path d="M12 5v14M5 12h14"/>
@@ -601,47 +589,6 @@ function App() {
           </div>
         </div>
       </header>
-
-      {/* New Agent Modal */}
-      {showNewAgent && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={(e) => { if (e.target === e.currentTarget) setShowNewAgent(false) }}>
-          <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 w-80 shadow-2xl">
-            <h2 className="text-lg font-semibold text-white mb-4">New Agent</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Name</label>
-                <input
-                  type="text"
-                  value={newAgentName}
-                  onChange={(e) => setNewAgentName(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && newAgentName.trim()) handleCreateAgent()
-                    if (e.key === 'Escape') setShowNewAgent(false)
-                  }}
-                  placeholder="Bob"
-                  className="w-full bg-gray-700 text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 border border-gray-600"
-                  autoFocus
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 mt-5">
-              <button
-                onClick={() => setShowNewAgent(false)}
-                className="flex-1 px-3 py-2 text-sm text-gray-400 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateAgent}
-                disabled={!newAgentName.trim() || creatingAgent}
-                className="flex-1 px-3 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {creatingAgent ? 'Creating...' : 'Create'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Main content - image, threads sidebar, and chat side by side */}
       <div className="flex-1 flex overflow-hidden">

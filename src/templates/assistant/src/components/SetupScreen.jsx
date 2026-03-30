@@ -488,7 +488,6 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          setupComplete: true,
           gender,
           pronouns: gender === 'male' ? 'he' : 'she',
           role: useCustomRole ? customDescription.trim() : (selectedRole || ''),
@@ -999,7 +998,7 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
               /* No imagegen providers configured */
               <div className="bg-gray-700/50 rounded-lg p-3 mb-4 border border-gray-600">
                 <p className="text-xs text-gray-400 mb-2">
-                  To generate a profile image, add an API key for an image provider in Settings &gt; API Keys (OpenAI, xAI, or Google).
+                  To generate a profile image, log in to Google or add an API key for Google, OpenAI, or xAI in Settings.
                 </p>
                 <button
                   onClick={() => {
@@ -1725,6 +1724,11 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
               <button
                 onClick={async () => {
                   await saveTelegramCredentials()
+                  await fetch(`${baseApiUrl}/api/agents/${agentId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ setupComplete: true })
+                  })
                   onSetupComplete()
                 }}
                 className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"

@@ -509,7 +509,8 @@ async function loadConstraintsUI(serverPort, statuses) {
       { key: 'jobs', label: 'Jobs' },
       { key: 'planning', label: 'Planning' },
       { key: 'coding', label: 'Coding' },
-      { key: 'summary', label: 'Summary' }
+      { key: 'summary', label: 'Summary' },
+      { key: 'image', label: 'Image' }
     ];
     const options = [
       { value: 'both', label: 'Login & API' },

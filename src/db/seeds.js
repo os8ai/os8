@@ -40,6 +40,10 @@ function seedData(db) {
     insertFamily.run('grok', 'grok', 'Grok', 'Grok', 'grok-4-0709', 1, 0);
     insertFamily.run('grok-fast', 'grok', 'Grok Fast', 'Grok Fast', 'grok-4-fast-reasoning', 0, 1);
     insertFamily.run('grok-code-fast', 'grok', 'Code Fast', 'Grok Code Fast', 'grok-code-fast-1', 0, 2);
+    // Image generation families (use existing containers for login auth inheritance)
+    insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
+    insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
+    insertFamily.run('grok-imagine', 'grok', 'Imagine', 'Grok Imagine', null, 0, 12);
 
     // Seed versioned models (linked to families)
     const insertModel = db.prepare(
@@ -228,6 +232,7 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN cap_coding INTEGER DEFAULT 3'); } catch(e) {}
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN cap_summary INTEGER DEFAULT 3'); } catch(e) {}
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN eligible_tasks TEXT DEFAULT NULL'); } catch(e) {}
+  try { db.exec('ALTER TABLE ai_model_families ADD COLUMN cap_image INTEGER DEFAULT 0'); } catch(e) {}
 
   // Backfill capability/cost for known families (1-5 scale)
   // Ability: 1=minimal, 2=basic, 3=good, 4=strong, 5=best-in-class
@@ -244,12 +249,16 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gpt-chat':           { cost_tier: 3, cap_chat: 4, cap_jobs: 3, cap_planning: 2, cap_coding: 2, cap_summary: 4 },
       'grok':               { cost_tier: 4, cap_chat: 3, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
       'grok-fast':          { cost_tier: 3, cap_chat: 3, cap_jobs: 3, cap_planning: 2, cap_coding: 3, cap_summary: 3 },
-      'grok-code-fast':     { cost_tier: 2, cap_chat: 2, cap_jobs: 2, cap_planning: 1, cap_coding: 3, cap_summary: 2 }
+      'grok-code-fast':     { cost_tier: 2, cap_chat: 2, cap_jobs: 2, cap_planning: 1, cap_coding: 3, cap_summary: 2 },
+      // Image generation families
+      'gemini-imagen':      { cost_tier: 2, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
+      'openai-dalle':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
+      'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 }
     };
     // Always update to latest scores (unconditional)
-    const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ? WHERE id = ?`);
+    const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ?, cap_image = ? WHERE id = ?`);
     for (const [id, c] of Object.entries(caps)) {
-      stmt.run(c.cost_tier, c.cap_chat, c.cap_jobs, c.cap_planning, c.cap_coding, c.cap_summary, id);
+      stmt.run(c.cost_tier, c.cap_chat, c.cap_jobs, c.cap_planning, c.cap_coding, c.cap_summary, c.cap_image || 0, id);
     }
   });
   backfillFamilyCaps();
@@ -262,6 +271,9 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gpt-chat':       'conversation,summary',
       'grok-code-fast': 'jobs,planning,coding',
       'grok-fast':      'conversation,summary',
+      'gemini-imagen':  'image',
+      'openai-dalle':   'image',
+      'grok-imagine':   'image',
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET eligible_tasks = ? WHERE id = ?`);
     for (const [id, tasks] of Object.entries(eligibility)) {
@@ -319,6 +331,51 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
     }
   } catch (e) {
     console.warn('[DB] Routing cascade seed:', e.message);
+  }
+
+  // Seed image cascade with login-first priority (if no image entries exist yet)
+  try {
+    const imageCount = db.prepare("SELECT COUNT(*) as cnt FROM routing_cascade WHERE task_type = 'image'").get().cnt;
+    if (imageCount === 0) {
+      const insertCascade = db.prepare('INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated) VALUES (?, ?, ?, ?, 1, 0)');
+      insertCascade.run('image', 0, 'gemini-imagen', 'login');
+      insertCascade.run('image', 1, 'grok-imagine', 'api');
+      insertCascade.run('image', 2, 'gemini-imagen', 'api');
+      insertCascade.run('image', 3, 'openai-dalle', 'api');
+      console.log('[DB] Seeded image generation cascade');
+    }
+  } catch (e) {
+    console.warn('[DB] Image cascade seed:', e.message);
+  }
+
+  // Remove openai-dalle/login from image cascade (OpenAI login tokens lack DALL-E API scopes)
+  try {
+    db.prepare("DELETE FROM routing_cascade WHERE task_type = 'image' AND family_id = 'openai-dalle' AND access_method = 'login'").run();
+  } catch (e) {}
+
+  // Update model_api_constraints to include 'image' task type if missing
+  // Only Google supports login for images; OpenAI and xAI are API-only
+  try {
+    const constraintsRow = db.prepare("SELECT value FROM settings WHERE key = 'model_api_constraints'").get();
+    if (constraintsRow && constraintsRow.value) {
+      const constraints = JSON.parse(constraintsRow.value);
+      let updated = false;
+      for (const pid of Object.keys(constraints)) {
+        if (!constraints[pid].image) {
+          constraints[pid].image = pid === 'google' ? 'both' : 'api';
+          updated = true;
+        } else if (pid !== 'google' && constraints[pid].image === 'both') {
+          // Fix existing 'both' to 'api' for non-Google providers
+          constraints[pid].image = 'api';
+          updated = true;
+        }
+      }
+      if (updated) {
+        db.prepare("UPDATE settings SET value = ? WHERE key = 'model_api_constraints'").run(JSON.stringify(constraints));
+      }
+    }
+  } catch (e) {
+    console.warn('[DB] Image constraints backfill:', e.message);
   }
 
   // Backfill agent_voices: save existing voice selections as ElevenLabs

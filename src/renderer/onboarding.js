@@ -319,16 +319,23 @@ function renderStep2Backend(container) {
 }
 
 // Step 3: Image AI Setup
+// Only Google login works for images (OAuth token covers Imagen API).
+// OpenAI and xAI require API keys for image generation.
 function renderStep3Image(container) {
   const imageProviders = ['google', 'openai', 'xai'];
-  const configured = imageProviders.filter(id =>
-    providerStatuses[id]?.login || providerStatuses[id]?.apiKey
-  );
+  const configured = imageProviders.filter(id => {
+    if (id === 'google') return providerStatuses[id]?.login || providerStatuses[id]?.apiKey;
+    return providerStatuses[id]?.apiKey;
+  });
 
   let html = `<h2>Image Generation</h2>`;
 
   if (configured.length > 0) {
-    const names = configured.map(id => PROVIDERS[id].name).join(', ');
+    const names = configured.map(id => {
+      const name = PROVIDERS[id].name;
+      if (id === 'google' && providerStatuses[id]?.login && !providerStatuses[id]?.apiKey) return `${name} (login)`;
+      return name;
+    }).join(', ');
     html += `
       <div class="onboarding-allset">
         <span class="onboarding-allset-icon">&#10003;</span>
@@ -344,7 +351,7 @@ function renderStep3Image(container) {
     }
   } else {
     html += `
-      <p class="onboarding-subtitle">Anthropic can't generate images. Choose at least one for image generation.</p>
+      <p class="onboarding-subtitle">Image generation requires a Google login or an API key for Google, OpenAI, or xAI.</p>
       <div class="onboarding-providers">
         ${imageProviders.map(id => renderProviderCard(id, id === 'google')).join('')}
       </div>
@@ -702,8 +709,12 @@ function isStepSatisfied() {
     }
     case 3: {
       // At least one image-capable provider configured
+      // Only Google login works for images; OpenAI and xAI need API keys
       const imageProviders = ['google', 'openai', 'xai'];
-      return imageProviders.some(id => providerStatuses[id]?.login || providerStatuses[id]?.apiKey);
+      return imageProviders.some(id => {
+        if (id === 'google') return providerStatuses[id]?.login || providerStatuses[id]?.apiKey;
+        return providerStatuses[id]?.apiKey;
+      });
     }
     case 4:
       // Recommended but not required
