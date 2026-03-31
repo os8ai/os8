@@ -264,6 +264,10 @@
   color: var(--color-success);
 }
 
+.onboarding-provider-status.connected-muted {
+  color: var(--color-text-muted);
+}
+
 .onboarding-provider-status.not-connected {
   color: var(--color-text-muted);
 }
@@ -498,6 +502,46 @@
 .onboarding-btn-primary:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.onboarding-btn-muted {
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+}
+
+.onboarding-btn-muted:hover {
+  background: var(--color-surface-active);
+}
+
+.onboarding-warning-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.onboarding-warning-box {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  max-width: 420px;
+  text-align: center;
+}
+
+.onboarding-warning-box p {
+  margin: 0 0 20px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.onboarding-warning-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
 }
 
 .onboarding-btn-back {

@@ -310,7 +310,7 @@ function renderStep2Backend(container) {
   const providerOrder = ['anthropic', 'google', 'openai', 'xai'];
   container.innerHTML = `
     <h2>Connect your AI providers</h2>
-    <p class="onboarding-subtitle">You'll need at least one to get started. Logins are free with an existing subscription.</p>
+    <p class="onboarding-subtitle">You'll need at least one to get started.</p>
     <div class="onboarding-providers">
       ${providerOrder.map(id => renderProviderCard(id, id === 'anthropic')).join('')}
     </div>
@@ -341,8 +341,8 @@ function renderStep3Image(container) {
         <div class="onboarding-providers">
           ${unconfigured.map(id => {
             const hasLoginOnly = providerStatuses[id]?.login && !providerStatuses[id]?.apiKey;
-            const opts = hasLoginOnly
-              ? { requireApiKey: 'Image generation requires an API key.' } : {};
+            const opts = { loginInsufficient: true };
+            if (hasLoginOnly) opts.requireApiKey = 'Image generation requires an API key.';
             return renderProviderCard(id, false, opts);
           }).join('')}
         </div>`;
@@ -353,8 +353,8 @@ function renderStep3Image(container) {
       <div class="onboarding-providers">
         ${imageProviders.map(id => {
           const hasLoginOnly = providerStatuses[id]?.login && !providerStatuses[id]?.apiKey;
-          const opts = hasLoginOnly
-            ? { requireApiKey: 'Image generation requires an API key.' } : {};
+          const opts = { loginInsufficient: true };
+          if (hasLoginOnly) opts.requireApiKey = 'Image generation requires an API key.';
           return renderProviderCard(id, id === 'google', opts);
         }).join('')}
       </div>
@@ -546,10 +546,16 @@ function renderProviderCard(providerId, isPrimary, options = {}) {
   const isConfigured = status.login || status.apiKey;
   const needsApiKey = options.requireApiKey && status.login && !status.apiKey;
 
+  const loginMuted = options.loginInsufficient && status.login && !status.apiKey;
+
   let statusHtml;
-  if (status.login) {
+  if (status.login && status.apiKey) {
     const tierLabel = status.planTier ? ` (${status.planTier})` : '';
-    statusHtml = `<span class="onboarding-provider-status connected">&#10003; Logged in${tierLabel}</span>`;
+    statusHtml = `<span class="onboarding-provider-status connected">&#10003; Logged in${tierLabel} · API key set</span>`;
+  } else if (status.login) {
+    const tierLabel = status.planTier ? ` (${status.planTier})` : '';
+    const statusClass = loginMuted ? 'connected-muted' : 'connected';
+    statusHtml = `<span class="onboarding-provider-status ${statusClass}">&#10003; Logged in${tierLabel}</span>`;
   } else if (status.apiKey) {
     statusHtml = `<span class="onboarding-provider-status connected">&#10003; API key set</span>`;
   } else {
@@ -562,7 +568,21 @@ function renderProviderCard(providerId, isPrimary, options = {}) {
   }
 
   let actionsHtml = '';
-  if (!isConfigured || needsApiKey) {
+  if (isConfigured && !status.apiKey && !needsApiKey) {
+    // Logged in but no API key — offer optional API key entry
+    actionsHtml = `
+      <div class="onboarding-provider-actions">
+        <button class="btn btn-apikey" data-provider="${providerId}" data-action="toggle-key">Add API Key</button>
+        <a class="onboarding-apikey-link" href="#" data-url="${p.url}">${p.urlLabel}</a>
+      </div>
+      <div class="onboarding-apikey-section" data-provider-key="${providerId}">
+        <div class="onboarding-apikey-row">
+          <input type="password" placeholder="${p.placeholder}" data-provider-input="${providerId}">
+          <button data-provider="${providerId}" data-action="save-key">Save</button>
+        </div>
+      </div>
+    `;
+  } else if (!isConfigured || needsApiKey) {
     actionsHtml = '<div class="onboarding-provider-actions">';
     if (p.hasLogin && !status.login) {
       actionsHtml += `<button class="btn btn-login" data-provider="${providerId}" data-action="login">${p.loginLabel}</button>`;
@@ -690,7 +710,7 @@ function renderStepActions() {
     </div>
     <div class="onboarding-actions-right">
       ${showSkip ? '<button class="onboarding-btn-skip" id="onboardingSkip">Skip for now</button>' : ''}
-      <button class="onboarding-btn onboarding-btn-primary" id="onboardingContinue"
+      <button class="onboarding-btn ${currentStep === 3 && !isImageConfigured() ? 'onboarding-btn-muted' : 'onboarding-btn-primary'}" id="onboardingContinue"
         ${isStepSatisfied() ? '' : 'disabled'}>${continueLabel}</button>
     </div>
   `;
@@ -720,15 +740,9 @@ function isStepSatisfied() {
       const aiProviders = ['anthropic', 'google', 'openai', 'xai'];
       return aiProviders.some(id => providerStatuses[id]?.login || providerStatuses[id]?.apiKey);
     }
-    case 3: {
-      // At least one image-capable provider configured
-      // Only Google login works for images; OpenAI and xAI need API keys
-      const imageProviders = ['google', 'openai', 'xai'];
-      return imageProviders.some(id => {
-        if (id === 'google') return providerStatuses[id]?.login || providerStatuses[id]?.apiKey;
-        return providerStatuses[id]?.apiKey;
-      });
-    }
+    case 3:
+      // Soft-gated — always allows continue, but shows warning if unconfigured
+      return true;
     case 4:
       // Recommended but not required
       return true;
@@ -742,10 +756,48 @@ function isStepSatisfied() {
   }
 }
 
+function isImageConfigured() {
+  const imageProviders = ['google', 'openai', 'xai'];
+  return imageProviders.some(id => {
+    if (id === 'google') return providerStatuses[id]?.login || providerStatuses[id]?.apiKey;
+    return providerStatuses[id]?.apiKey;
+  });
+}
+
+function showImageWarning() {
+  const { overlay } = els();
+  const warning = document.createElement('div');
+  warning.className = 'onboarding-warning-overlay';
+  warning.innerHTML = `
+    <div class="onboarding-warning-box">
+      <p>An API key for at least one image generation provider is strongly recommended.</p>
+      <div class="onboarding-warning-actions">
+        <button class="onboarding-btn onboarding-btn-back" id="warningGoBack">Go Back</button>
+        <button class="onboarding-btn onboarding-btn-muted" id="warningContinue">Continue Anyway</button>
+      </div>
+    </div>
+  `;
+  overlay.appendChild(warning);
+
+  warning.querySelector('#warningGoBack').addEventListener('click', () => {
+    warning.remove();
+  });
+  warning.querySelector('#warningContinue').addEventListener('click', async () => {
+    warning.remove();
+    await nextStep();
+  });
+}
+
 // --- Navigation ---
 
 async function handleContinue() {
   if (!isStepSatisfied()) return;
+
+  // Soft-gate: warn if no image provider configured
+  if (currentStep === 3 && !isImageConfigured()) {
+    showImageWarning();
+    return;
+  }
 
   // Save step-specific data
   if (currentStep === 1) {
