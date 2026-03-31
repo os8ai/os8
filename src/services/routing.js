@@ -116,8 +116,18 @@ const RoutingService = {
 
     // API
     const exhausted = status?.api_exhausted_until && status.api_exhausted_until > now;
-    const valid = status?.api_status !== 'invalid' && status?.api_status !== 'no_key';
-    return !exhausted && valid;
+    if (exhausted) return false;
+    // Check live key presence — ai_account_status may be stale if key was added after last billing check
+    if (status?.api_status === 'no_key') {
+      const provider = db.prepare('SELECT api_key_env FROM ai_providers WHERE id = ?').get(container.provider_id);
+      if (provider?.api_key_env) {
+        const EnvService = require('./env');
+        const hasKey = !!(EnvService.get(db, provider.api_key_env)?.value || process.env[provider.api_key_env]);
+        return hasKey;
+      }
+      return false;
+    }
+    return status?.api_status !== 'invalid';
   },
 
   /**

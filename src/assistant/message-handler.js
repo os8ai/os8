@@ -196,6 +196,21 @@ function handleSend(deps) {
       console.warn('Memory context error:', memErr.message);
     }
 
+    // Filter timeline images to raw conversation window — images from digested eras
+    // should not appear in recent_history (they cause the agent to react to old attachments)
+    if (rawConversationEntries.length > 0 && timelineImages.length > 0) {
+      const oldestRawTs = new Date(rawConversationEntries[0].timestamp).getTime();
+      const before = timelineImages.length;
+      for (let i = timelineImages.length - 1; i >= 0; i--) {
+        if (new Date(timelineImages[i].timestamp).getTime() < oldestRawTs) {
+          timelineImages.splice(i, 1);
+        }
+      }
+      if (timelineImages.length < before) {
+        console.log(`[ChatImages] Filtered ${before} → ${timelineImages.length} (dropped ${before - timelineImages.length} outside raw window)`);
+      }
+    }
+
     lap('memory-assembly');
 
     // Token profiler: log per-turn context breakdown
@@ -1252,6 +1267,21 @@ function handleChat(deps) {
         rawConversationEntries = memoryContext.rawEntries || [];
       } catch (memErr) {
         console.warn('Memory context error:', memErr.message);
+      }
+
+      // Filter timeline images to raw conversation window — images from digested eras
+      // should not appear in recent_history (they cause the agent to react to old attachments)
+      if (rawConversationEntries.length > 0 && timelineImages.length > 0) {
+        const oldestRawTs = new Date(rawConversationEntries[0].timestamp).getTime();
+        const before = timelineImages.length;
+        for (let i = timelineImages.length - 1; i >= 0; i--) {
+          if (new Date(timelineImages[i].timestamp).getTime() < oldestRawTs) {
+            timelineImages.splice(i, 1);
+          }
+        }
+        if (timelineImages.length < before) {
+          console.log(`[ChatImages] Filtered ${before} → ${timelineImages.length} (dropped ${before - timelineImages.length} outside raw window)`);
+        }
       }
 
       // --- Step 1: Active plan check ---

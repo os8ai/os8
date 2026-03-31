@@ -151,6 +151,25 @@ function createAgentsRouter(db, deps) {
     }
   });
 
+  // GET /api/agents/voices/preview/:voiceId — Generate on-demand voice preview (OpenAI)
+  router.get('/voices/preview/:voiceId', async (req, res) => {
+    const TTSService = require('../services/tts');
+    const apiKey = TTSService.getApiKey(db);
+    const providerName = TTSService.getProviderName(db);
+    if (!apiKey || providerName !== 'openai') {
+      return res.status(400).json({ error: 'OpenAI TTS not configured' });
+    }
+    try {
+      const { generateAudio } = require('../services/tts-openai');
+      const buffer = await generateAudio(apiKey, 'Hi there, this is what I sound like.', req.params.voiceId);
+      res.set('Content-Type', 'audio/mpeg');
+      res.send(buffer);
+    } catch (err) {
+      console.error('Voice preview error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // GET /api/agents/:id/self — Self-info endpoint for agents to look up their own config
   router.get('/:id/self', (req, res) => {
     const agent = AgentService.getById(db, req.params.id);

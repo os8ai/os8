@@ -44,7 +44,7 @@ async function getVoices() {
   return VOICES.map(v => ({
     voiceId: v.voiceId,
     name: v.name,
-    category: v.gender,
+    category: null,
     labels: { gender: v.gender },
     previewUrl: null
   }))

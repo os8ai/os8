@@ -38,6 +38,7 @@ const CoreService = {
       },
       devDependencies: {
         "vite": "^5.0.0",
+        "esbuild": "^0.25.0",
         "@vitejs/plugin-react": "^4.2.0",
         "tailwindcss": "^3.3.0",
         "postcss": "^8.4.0",
@@ -168,10 +169,34 @@ export {};
     fs.writeFileSync(path.join(CORE_DIR, '.installing'), Date.now().toString());
 
     return new Promise((resolve, reject) => {
-      const npmInstall = spawn('npm', ['install'], {
+      // Electron's process environment (DYLD_*, NODE_OPTIONS, etc.) causes native
+      // binary crashes (SIGILL/SIGKILL) when npm runs postinstall scripts like
+      // esbuild's binary validation. Use --ignore-scripts to bypass this — the
+      // binaries are valid and work fine at runtime without the validation step.
+      const { execSync } = require('child_process');
+      const os = require('os');
+
+      let systemNpm;
+      try {
+        systemNpm = execSync('which npm', { encoding: 'utf-8', env: { PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' } }).trim();
+      } catch {
+        systemNpm = '/usr/local/bin/npm';
+      }
+
+      const cleanEnv = {
+        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+        HOME: os.homedir(),
+        USER: os.userInfo().username,
+        SHELL: process.env.SHELL || '/bin/zsh',
+        TMPDIR: os.tmpdir(),
+        LANG: process.env.LANG || 'en_US.UTF-8',
+      };
+
+      const npmInstall = spawn(systemNpm, ['install', '--ignore-scripts'], {
         cwd: CORE_DIR,
-        shell: true,
-        stdio: 'pipe'
+        shell: false,
+        stdio: 'pipe',
+        env: cleanEnv
       });
 
       let output = '';

@@ -357,6 +357,12 @@
   text-decoration: underline;
 }
 
+.onboarding-apikey-hint {
+  font-size: var(--text-md);
+  color: var(--text-secondary);
+  margin: 6px 0 0;
+}
+
 /* All-set message */
 .onboarding-allset {
   display: flex;

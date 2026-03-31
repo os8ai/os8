@@ -42,6 +42,7 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
   const [loadingVoices, setLoadingVoices] = useState(false)
   const [playingVoiceId, setPlayingVoiceId] = useState(null)
   const audioRef = useRef(null)
+  const previewCacheRef = useRef(new Map())
 
   // Skills step state
   const [suggestedSkills, setSuggestedSkills] = useState([])
@@ -91,7 +92,7 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
   useEffect(() => {
     fetch(`${baseApiUrl}/api/agents/${agentId}`)
       .then(r => r.json())
-      .then(data => { if (data.name) setAgentName(data.name) })
+      .then(data => { if (data.name && data.name !== 'New Agent') setAgentName(data.name) })
       .catch(() => {})
     fetch(`${baseApiUrl}/api/skills/role-templates`)
       .then(r => r.json())
@@ -998,7 +999,7 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
               /* No imagegen providers configured */
               <div className="bg-gray-700/50 rounded-lg p-3 mb-4 border border-gray-600">
                 <p className="text-xs text-gray-400 mb-2">
-                  To generate a profile image, log in to Google or add an API key for Google, OpenAI, or xAI in Settings.
+                  To generate a profile image, add an API key for Google, OpenAI, or xAI in Settings.
                 </p>
                 <button
                   onClick={() => {
@@ -1100,28 +1101,46 @@ function SetupScreen({ agentId, baseApiUrl, onSetupComplete }) {
                       {voice.category && (
                         <span className="text-xs text-gray-500 ml-auto">{voice.category}</span>
                       )}
-                      {voice.previewUrl && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (playingVoiceId === voice.voiceId) {
-                              audioRef.current?.pause()
-                              setPlayingVoiceId(null)
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (playingVoiceId === voice.voiceId) {
+                            audioRef.current?.pause()
+                            setPlayingVoiceId(null)
+                            return
+                          }
+                          const playAudio = (url) => {
+                            if (audioRef.current) audioRef.current.pause()
+                            const audio = new Audio(url)
+                            audioRef.current = audio
+                            setPlayingVoiceId(voice.voiceId)
+                            audio.play()
+                            audio.onended = () => setPlayingVoiceId(null)
+                          }
+                          if (voice.previewUrl) {
+                            playAudio(voice.previewUrl)
+                          } else {
+                            const cached = previewCacheRef.current.get(voice.voiceId)
+                            if (cached) {
+                              playAudio(cached)
                             } else {
-                              if (audioRef.current) audioRef.current.pause()
-                              const audio = new Audio(voice.previewUrl)
-                              audioRef.current = audio
                               setPlayingVoiceId(voice.voiceId)
-                              audio.play()
-                              audio.onended = () => setPlayingVoiceId(null)
+                              fetch(`${baseApiUrl}/api/agents/voices/preview/${voice.voiceId}`)
+                                .then(r => r.blob())
+                                .then(blob => {
+                                  const url = URL.createObjectURL(blob)
+                                  previewCacheRef.current.set(voice.voiceId, url)
+                                  playAudio(url)
+                                })
+                                .catch(() => setPlayingVoiceId(null))
                             }
-                          }}
-                          className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0"
-                        >
-                          {playingVoiceId === voice.voiceId ? 'Stop' : 'Play'}
-                        </button>
-                      )}
+                          }
+                        }}
+                        className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex-shrink-0 ml-auto"
+                      >
+                        {playingVoiceId === voice.voiceId ? (previewCacheRef.current.has(voice.voiceId) || voice.previewUrl ? 'Stop' : '...') : 'Play'}
+                      </button>
                     </div>
                     {voice.labels && Object.keys(voice.labels).length > 0 && (
                       <div className="flex gap-1 mt-1 ml-6 flex-wrap">

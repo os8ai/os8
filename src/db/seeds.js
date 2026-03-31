@@ -338,23 +338,22 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
     const imageCount = db.prepare("SELECT COUNT(*) as cnt FROM routing_cascade WHERE task_type = 'image'").get().cnt;
     if (imageCount === 0) {
       const insertCascade = db.prepare('INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated) VALUES (?, ?, ?, ?, 1, 0)');
-      insertCascade.run('image', 0, 'gemini-imagen', 'login');
+      insertCascade.run('image', 0, 'gemini-imagen', 'api');
       insertCascade.run('image', 1, 'grok-imagine', 'api');
-      insertCascade.run('image', 2, 'gemini-imagen', 'api');
-      insertCascade.run('image', 3, 'openai-dalle', 'api');
+      insertCascade.run('image', 2, 'openai-dalle', 'api');
       console.log('[DB] Seeded image generation cascade');
     }
   } catch (e) {
     console.warn('[DB] Image cascade seed:', e.message);
   }
 
-  // Remove openai-dalle/login from image cascade (OpenAI login tokens lack DALL-E API scopes)
+  // Remove login entries from image cascade (Imagen API requires API key, not OAuth login)
   try {
-    db.prepare("DELETE FROM routing_cascade WHERE task_type = 'image' AND family_id = 'openai-dalle' AND access_method = 'login'").run();
+    db.prepare("DELETE FROM routing_cascade WHERE task_type = 'image' AND access_method = 'login'").run();
   } catch (e) {}
 
   // Update model_api_constraints to include 'image' task type if missing
-  // Only Google supports login for images; OpenAI and xAI are API-only
+  // All image providers are API-only (Imagen API doesn't accept OAuth login tokens)
   try {
     const constraintsRow = db.prepare("SELECT value FROM settings WHERE key = 'model_api_constraints'").get();
     if (constraintsRow && constraintsRow.value) {

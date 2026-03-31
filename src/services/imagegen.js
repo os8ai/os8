@@ -22,6 +22,9 @@ const DEFAULT_GROK_MODEL = 'grok-imagine-image';
 const DEFAULT_GEMINI_MODEL = 'imagen-4.0-generate-001';
 // Gemini model for image editing (supports reference images via generateContent)
 const GEMINI_IMAGE_EDIT_MODEL = 'gemini-2.5-flash-image';
+// Gemini CLI OAuth client secret — public "installed app" credential, safe to embed.
+// Source: @google/gemini-cli-core/dist/src/code_assist/oauth2.js
+const GEMINI_OAUTH_CLIENT_SECRET = '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';
 
 // Supported image MIME types
 const IMAGE_MIME_TYPES = {
@@ -85,17 +88,21 @@ class ImageGenService {
 
   /**
    * Read Gemini OAuth token from CLI auth file.
-   * Synchronous — token refresh is handled proactively by BillingService.
+   * Attempts inline refresh if the token is expired.
    * @returns {{ type: 'bearer', token: string } | null}
    */
-  static _getGeminiLoginAuth() {
+  static async _getGeminiLoginAuth() {
     try {
       const authPath = path.join(os.homedir(), '.gemini', 'oauth_creds.json');
       if (!fs.existsSync(authPath)) return null;
       const creds = JSON.parse(fs.readFileSync(authPath, 'utf-8'));
       if (!creds.access_token) return null;
-      // If expired, return null instantly — proactive refresh should have handled it
-      if (creds.expiry_date && Date.now() > creds.expiry_date - 60000) return null;
+      // If expired, attempt inline refresh
+      if (creds.expiry_date && Date.now() > creds.expiry_date - 60000) {
+        const newToken = await this._refreshGeminiToken(authPath, creds);
+        if (!newToken) return null;
+        return { type: 'bearer', token: newToken };
+      }
       return { type: 'bearer', token: creds.access_token };
     } catch {
       return null;
@@ -125,6 +132,7 @@ class ImageGenService {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           client_id: clientId,
+          client_secret: GEMINI_OAUTH_CLIENT_SECRET,
           grant_type: 'refresh_token',
           refresh_token: creds.refresh_token
         }).toString()
@@ -161,11 +169,11 @@ class ImageGenService {
    * @param {string} accessMethod - 'login' or 'api'
    * @returns {{ type: 'bearer'|'apikey', token: string } | null}
    */
-  static getAuthForProvider(db, provider, accessMethod) {
+  static async getAuthForProvider(db, provider, accessMethod) {
     if (accessMethod === 'login') {
       // Only Google supports login for images (OAuth token covers Imagen API)
       // OpenAI login tokens lack DALL-E API scopes; xAI has no login
-      if (provider === 'google') return this._getGeminiLoginAuth();
+      if (provider === 'google') return await this._getGeminiLoginAuth();
       return null;
     }
     // API key
@@ -326,7 +334,7 @@ class ImageGenService {
     const policyErrors = [];
 
     for (const entry of providerOrder) {
-      const auth = this.getAuthForProvider(db, entry.providerId, entry.accessMethod);
+      const auth = await this.getAuthForProvider(db, entry.providerId, entry.accessMethod);
       if (!auth) continue;
 
       const authLabel = `${entry.provider}/${entry.accessMethod}`;

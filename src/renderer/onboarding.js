@@ -323,19 +323,12 @@ function renderStep2Backend(container) {
 // OpenAI and xAI require API keys for image generation.
 function renderStep3Image(container) {
   const imageProviders = ['google', 'openai', 'xai'];
-  const configured = imageProviders.filter(id => {
-    if (id === 'google') return providerStatuses[id]?.login || providerStatuses[id]?.apiKey;
-    return providerStatuses[id]?.apiKey;
-  });
+  const configured = imageProviders.filter(id => providerStatuses[id]?.apiKey);
 
   let html = `<h2>Image Generation</h2>`;
 
   if (configured.length > 0) {
-    const names = configured.map(id => {
-      const name = PROVIDERS[id].name;
-      if (id === 'google' && providerStatuses[id]?.login && !providerStatuses[id]?.apiKey) return `${name} (login)`;
-      return name;
-    }).join(', ');
+    const names = configured.map(id => PROVIDERS[id].name).join(', ');
     html += `
       <div class="onboarding-allset">
         <span class="onboarding-allset-icon">&#10003;</span>
@@ -346,14 +339,24 @@ function renderStep3Image(container) {
     if (unconfigured.length > 0) {
       html += `<p class="onboarding-add-more">Would you like to add others?</p>
         <div class="onboarding-providers">
-          ${unconfigured.map(id => renderProviderCard(id, false)).join('')}
+          ${unconfigured.map(id => {
+            const hasLoginOnly = providerStatuses[id]?.login && !providerStatuses[id]?.apiKey;
+            const opts = hasLoginOnly
+              ? { requireApiKey: 'Image generation requires an API key.' } : {};
+            return renderProviderCard(id, false, opts);
+          }).join('')}
         </div>`;
     }
   } else {
     html += `
-      <p class="onboarding-subtitle">Image generation requires a Google login or an API key for Google, OpenAI, or xAI.</p>
+      <p class="onboarding-subtitle">Image generation requires an API key for Google, OpenAI, or xAI.</p>
       <div class="onboarding-providers">
-        ${imageProviders.map(id => renderProviderCard(id, id === 'google')).join('')}
+        ${imageProviders.map(id => {
+          const hasLoginOnly = providerStatuses[id]?.login && !providerStatuses[id]?.apiKey;
+          const opts = hasLoginOnly
+            ? { requireApiKey: 'Image generation requires an API key.' } : {};
+          return renderProviderCard(id, id === 'google', opts);
+        }).join('')}
       </div>
     `;
   }
@@ -458,15 +461,20 @@ function renderStep4Voice(container) {
 
       if (envKey === 'ELEVENLABS_API_KEY') {
         providerStatuses.elevenlabs = { apiKey: true };
-        // Set as TTS provider
         await window.os8.settings.set('tts_provider', 'elevenlabs');
       } else if (envKey === 'OPENAI_API_KEY') {
         providerStatuses.openai = { ...providerStatuses.openai, apiKey: true };
-        // Set OpenAI as TTS provider if no ElevenLabs
         if (!providerStatuses.elevenlabs?.apiKey) {
           await window.os8.settings.set('tts_provider', 'openai');
         }
       }
+      // Enable voice output when a TTS key is saved during onboarding
+      const port = await window.os8.server.getPort();
+      await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true })
+      }).catch(() => {});
 
       renderStep();
     });
@@ -532,10 +540,11 @@ function renderStep6Handoff(container) {
 
 // --- Provider Card Rendering ---
 
-function renderProviderCard(providerId, isPrimary) {
+function renderProviderCard(providerId, isPrimary, options = {}) {
   const p = PROVIDERS[providerId];
   const status = providerStatuses[providerId] || {};
   const isConfigured = status.login || status.apiKey;
+  const needsApiKey = options.requireApiKey && status.login && !status.apiKey;
 
   let statusHtml;
   if (status.login) {
@@ -553,9 +562,9 @@ function renderProviderCard(providerId, isPrimary) {
   }
 
   let actionsHtml = '';
-  if (!isConfigured) {
+  if (!isConfigured || needsApiKey) {
     actionsHtml = '<div class="onboarding-provider-actions">';
-    if (p.hasLogin) {
+    if (p.hasLogin && !status.login) {
       actionsHtml += `<button class="btn btn-login" data-provider="${providerId}" data-action="login">${p.loginLabel}</button>`;
     }
     actionsHtml += `<button class="btn btn-apikey" data-provider="${providerId}" data-action="toggle-key">API Key</button>`;
@@ -570,10 +579,14 @@ function renderProviderCard(providerId, isPrimary) {
         <a class="onboarding-apikey-link" href="#" data-url="${p.url}">${p.urlLabel}</a>
       </div>
     `;
+
+    if (needsApiKey) {
+      actionsHtml += `<p class="onboarding-apikey-hint">${options.requireApiKey}</p>`;
+    }
   }
 
   return `
-    <div class="onboarding-provider-card${isConfigured ? ' configured' : ''}${isPrimary && !isConfigured ? ' primary' : ''}"
+    <div class="onboarding-provider-card${isConfigured && !needsApiKey ? ' configured' : ''}${isPrimary && !isConfigured ? ' primary' : ''}"
          data-provider-id="${providerId}">
       <div class="onboarding-provider-header">
         <div class="onboarding-provider-info">
@@ -737,6 +750,29 @@ async function handleContinue() {
   // Save step-specific data
   if (currentStep === 1) {
     await window.os8.settings.set('user_first_name', userName);
+  }
+
+  // Auto-set TTS provider and enable voice output when leaving voice step
+  if (currentStep === 4) {
+    const currentProvider = await window.os8.settings.get('tts_provider');
+    if (!currentProvider) {
+      let selectedProvider = null;
+      if (providerStatuses.elevenlabs?.apiKey) {
+        selectedProvider = 'elevenlabs';
+      } else if (providerStatuses.openai?.apiKey || providerStatuses.openai?.login) {
+        selectedProvider = 'openai';
+      }
+      if (selectedProvider) {
+        await window.os8.settings.set('tts_provider', selectedProvider);
+        // Enable voice output by default when a provider is configured during onboarding
+        const port = await window.os8.server.getPort();
+        await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true })
+        }).catch(() => {});
+      }
+    }
   }
 
   if (currentStep === 6) {
