@@ -221,7 +221,7 @@ function createAgentsRouter(db, deps) {
   });
 
   // PATCH /api/agents/:id — Update agent config
-  router.patch('/:id', (req, res) => {
+  router.patch('/:id', async (req, res) => {
     const agent = AgentService.getById(db, req.params.id);
     if (!agent) {
       console.error(`[Agents PATCH] Agent not found: id=${req.params.id}`,
@@ -281,13 +281,13 @@ function createAgentsRouter(db, deps) {
     }
 
     // If avatarUrl provided, copy image to agent's reference-images/headshot and discard the field
+    // Compress to 1024px JPEG to keep reference images fast for body generation APIs
     if (configUpdates.avatarUrl && configUpdates.avatarUrl.startsWith('/api/imagegen/files/')) {
       try {
         const sourceFilename = configUpdates.avatarUrl.replace('/api/imagegen/files/', '');
         const ImageGenService = require('../services/imagegen');
         const sourcePath = ImageGenService.getFilePath(sourceFilename);
         if (sourcePath && fs.existsSync(sourcePath)) {
-          const ext = path.extname(sourceFilename) || '.png';
           const agentPaths = AgentService.getPaths(agent.app_id, agent.id);
           const destDir = path.join(agentPaths.agentBlobDir, 'reference-images');
           fs.mkdirSync(destDir, { recursive: true });
@@ -297,7 +297,21 @@ function createAgentsRouter(db, deps) {
               if (/^headshot\./i.test(f)) fs.unlinkSync(path.join(destDir, f));
             }
           } catch (e) { /* ignore cleanup errors */ }
-          fs.copyFileSync(sourcePath, path.join(destDir, `headshot${ext}`));
+          // Compress large images to 1024px JPEG before saving as reference
+          const sourceBuffer = fs.readFileSync(sourcePath);
+          const MAX_REF_SIZE = 300 * 1024; // 300KB threshold
+          if (sourceBuffer.length > MAX_REF_SIZE) {
+            const sharp = require('sharp');
+            const compressed = await sharp(sourceBuffer)
+              .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+              .jpeg({ quality: 85 })
+              .toBuffer();
+            fs.writeFileSync(path.join(destDir, 'headshot.jpg'), compressed);
+            console.log(`Agent headshot compressed: ${(sourceBuffer.length / 1024).toFixed(0)}KB → ${(compressed.length / 1024).toFixed(0)}KB`);
+          } else {
+            const ext = path.extname(sourceFilename) || '.png';
+            fs.copyFileSync(sourcePath, path.join(destDir, `headshot${ext}`));
+          }
         }
       } catch (e) {
         console.warn('Failed to copy avatar to agent blob:', e.message);
@@ -306,13 +320,13 @@ function createAgentsRouter(db, deps) {
     }
 
     // If bodyUrl provided, copy image to agent's reference-images/body-reference and discard the field
+    // Compress to 1024px JPEG if large, same as headshot
     if (configUpdates.bodyUrl && configUpdates.bodyUrl.startsWith('/api/imagegen/files/')) {
       try {
         const sourceFilename = configUpdates.bodyUrl.replace('/api/imagegen/files/', '');
         const ImageGenService = require('../services/imagegen');
         const sourcePath = ImageGenService.getFilePath(sourceFilename);
         if (sourcePath && fs.existsSync(sourcePath)) {
-          const ext = path.extname(sourceFilename) || '.png';
           const agentPaths = AgentService.getPaths(agent.app_id, agent.id);
           const destDir = path.join(agentPaths.agentBlobDir, 'reference-images');
           fs.mkdirSync(destDir, { recursive: true });
@@ -322,7 +336,20 @@ function createAgentsRouter(db, deps) {
               if (/^body-reference\./i.test(f)) fs.unlinkSync(path.join(destDir, f));
             }
           } catch (e) { /* ignore cleanup errors */ }
-          fs.copyFileSync(sourcePath, path.join(destDir, `body-reference${ext}`));
+          const sourceBuffer = fs.readFileSync(sourcePath);
+          const MAX_REF_SIZE = 300 * 1024;
+          if (sourceBuffer.length > MAX_REF_SIZE) {
+            const sharp = require('sharp');
+            const compressed = await sharp(sourceBuffer)
+              .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+              .jpeg({ quality: 85 })
+              .toBuffer();
+            fs.writeFileSync(path.join(destDir, 'body-reference.jpg'), compressed);
+            console.log(`Agent body-reference compressed: ${(sourceBuffer.length / 1024).toFixed(0)}KB → ${(compressed.length / 1024).toFixed(0)}KB`);
+          } else {
+            const ext = path.extname(sourceFilename) || '.png';
+            fs.copyFileSync(sourcePath, path.join(destDir, `body-reference${ext}`));
+          }
         }
       } catch (e) {
         console.warn('Failed to copy body reference to agent blob:', e.message);
