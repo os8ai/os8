@@ -4,7 +4,7 @@
  * Thin dispatcher — business logic lives in FileSystemService.
  */
 
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const AgentService = require('../services/agent');
@@ -59,6 +59,25 @@ function registerFilesHandlers({ db, services }) {
 
   ipcMain.handle('files:read', (event, filePath) => {
     return FileSystemService.readFile(filePath, [APPS_DIR, BLOB_DIR]);
+  });
+
+  ipcMain.handle('files:download', async (event, filePath) => {
+    // Security: ensure file is within allowed directories
+    const resolved = path.resolve(filePath);
+    const allowed = [APPS_DIR, BLOB_DIR].some(dir => resolved.startsWith(path.resolve(dir)));
+    if (!allowed) return { error: 'Access denied' };
+
+    const { canceled, filePath: savePath } = await dialog.showSaveDialog({
+      defaultPath: path.basename(resolved),
+    });
+    if (canceled || !savePath) return { canceled: true };
+
+    try {
+      await fs.promises.copyFile(resolved, savePath);
+      return { success: true };
+    } catch (err) {
+      return { error: err.message };
+    }
   });
 }
 

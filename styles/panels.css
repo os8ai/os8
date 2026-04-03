@@ -621,6 +621,8 @@
       line-height: 1.6;
       color: var(--color-text-light);
       white-space: pre;
+      user-select: text;
+      cursor: text;
     }
 
     .file-viewer-error {

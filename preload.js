@@ -195,6 +195,7 @@ contextBridge.exposeInMainWorld('os8', {
     listBlob: (appId, agentId) => ipcRenderer.invoke('files:list-blob', appId, agentId),
     getPaths: (appId, agentId) => ipcRenderer.invoke('files:get-paths', appId, agentId),
     read: (filePath) => ipcRenderer.invoke('files:read', filePath),
+    download: (filePath) => ipcRenderer.invoke('files:download', filePath),
   },
 
   // Terminal (PTY)

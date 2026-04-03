@@ -23,7 +23,7 @@ import { createAgentInstance } from './agent-panel.js';
 import {
   getFileIcon, getFileIconClass, renderFileTreeItem, filterHiddenFiles,
   HIDDEN_FILES, loadFileTree, viewFile, switchStorageView, loadStorageView, loadBlobTree,
-  refreshViewedFile
+  refreshViewedFile, downloadViewedFile
 } from './file-tree.js';
 import {
   escapeHtml, renderTaskItem, showContextMenu, hideContextMenu,
@@ -291,7 +291,7 @@ function init() {
     settingsBtn, settingsModal,
     fileTree, blobTree, storageSelect, refreshStorageBtn, toggleHiddenFilesBtn,
     systemFilesView, dataStorageView, blobStorageView,
-    fileViewerModal, fileViewerName, fileViewerCode, closeFileViewer, refreshFileViewer,
+    fileViewerModal, fileViewerName, fileViewerCode, closeFileViewer, refreshFileViewer, downloadFileViewer,
     terminalsContainer, tasksList, tasksViewSelect, addTaskBtn, addProjectBtn, refreshTasksBtn
   } = elements;
 
@@ -661,6 +661,10 @@ function init() {
 
   refreshFileViewer.addEventListener('click', () => {
     refreshViewedFile();
+  });
+
+  downloadFileViewer.addEventListener('click', () => {
+    downloadViewedFile();
   });
 
   fileViewerModal.addEventListener('click', (e) => {

@@ -254,6 +254,7 @@ ${chunk.text}`;
 
   elements.fileViewerName.textContent = title;
   elements.fileViewerModal.classList.add('active');
+  elements.downloadFileViewer.style.display = 'none';
 
   // Reset content area
   elements.fileViewerContent.className = 'file-viewer-content';

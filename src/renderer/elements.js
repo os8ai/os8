@@ -54,6 +54,7 @@ export function initElements() {
   elements.fileViewerCode = document.getElementById('fileViewerCode');
   elements.closeFileViewer = document.getElementById('closeFileViewer');
   elements.refreshFileViewer = document.getElementById('refreshFileViewer');
+  elements.downloadFileViewer = document.getElementById('downloadFileViewer');
 
   // Terminal
   elements.terminalsContainer = document.getElementById('terminalsContainer');

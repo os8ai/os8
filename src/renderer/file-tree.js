@@ -118,6 +118,7 @@ export async function viewFile(filePath, fileName) {
 
   elements.fileViewerName.textContent = fileName;
   elements.fileViewerModal.classList.add('active');
+  elements.downloadFileViewer.style.display = '';
 
   // Reset content area
   elements.fileViewerContent.className = 'file-viewer-content';
@@ -144,6 +145,12 @@ export async function viewFile(filePath, fileName) {
 export async function refreshViewedFile() {
   if (currentViewedFile.path && currentViewedFile.name) {
     await viewFile(currentViewedFile.path, currentViewedFile.name);
+  }
+}
+
+export async function downloadViewedFile() {
+  if (currentViewedFile.path) {
+    await window.os8.files.download(currentViewedFile.path);
   }
 }
 
