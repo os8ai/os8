@@ -71,8 +71,25 @@ async function storeChatImages(db, appId, images, { imageView, speaker, role, ch
   }
 }
 
+/**
+ * Persist lastContext to agent_context_cache, stripping base64 imageDataUrls.
+ */
+function persistContextCache(db, agentId, context) {
+  if (!db || !agentId || !context) return;
+  try {
+    const toSave = { ...context };
+    delete toSave.imageDataUrls;
+    db.prepare(`
+      INSERT INTO agent_context_cache (agent_id, context_json, updated_at)
+      VALUES (?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(agent_id) DO UPDATE SET context_json = excluded.context_json, updated_at = CURRENT_TIMESTAMP
+    `).run(agentId, JSON.stringify(toSave));
+  } catch (_e) { /* non-critical */ }
+}
+
 module.exports = {
   prepareAgentEnv,
   prepareClaudeEnv,
-  storeChatImages
+  storeChatImages,
+  persistContextCache
 };

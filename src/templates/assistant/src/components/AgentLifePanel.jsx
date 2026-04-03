@@ -8,17 +8,60 @@ import AgentLifeItems from './AgentLifeItems'
 import AgentLifeMotivations from './AgentLifeMotivations'
 
 /** Memory content sub-component — renders the context debug sections */
-function MemoryContent({ contextData, contextTab, onTabChange }) {
+function downloadMemoryAsText(contextData, agentName) {
+  const sections = [
+    { title: 'Identity Context', content: contextData.identityContext },
+    { title: 'Memory - Raw Entries', content: contextData.memoryContext?.rawEntries
+      ? contextData.memoryContext.rawEntries.map(e => `[${e.timestamp || ''}] ${e.speaker || e.role || ''}: ${e.content || ''}`).join('\n---\n')
+      : null },
+    { title: 'Memory - Session Digests', content: contextData.memoryContext?.sessionDigests || contextData.memoryContext?.digestText },
+    { title: 'Memory - Daily Digests', content: contextData.memoryContext?.dailyDigests },
+    { title: 'Memory - Semantic Search', content: contextData.semanticMemoryText
+      || (contextData.memoryContext?.relevantMemory?.length
+        ? contextData.memoryContext.relevantMemory.map(c => `[${c.source || ''}] (score: ${c.score?.toFixed(3) || '?'})\n${c.text}`).join('\n---\n')
+        : null) },
+    { title: 'Agent DMs', content: contextData.agentDMContext },
+    { title: 'Skills / Capabilities', content: contextData.skillContext },
+  ]
+  const text = sections
+    .filter(s => s.content)
+    .map(s => `${'='.repeat(60)}\n${s.title}\n${'='.repeat(60)}\n\n${s.content}`)
+    .join('\n\n')
+  const blob = new Blob([text], { type: 'text/plain' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const now = new Date()
+  const date = now.toISOString().slice(0, 10)
+  const time = `${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`
+  const prefix = agentName ? `${agentName.toLowerCase().replace(/\s+/g, '-')}-` : ''
+  a.download = `${prefix}memory-${date}-${time}.txt`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function MemoryContent({ contextData, contextTab, onTabChange, agentName }) {
   return (
     <>
-      <p className="text-xs text-gray-500 mb-2">
-        Assembled at {contextData.timestamp || '?'} &middot; Full context: {contextData.fullContext ? (contextData.fullContext.length / 1024).toFixed(1) : '0'}K chars
-        {contextData.images?.length > 0 && ` \u00b7 ${contextData.images.length} image${contextData.images.length > 1 ? 's' : ''}`}
-        {contextData.subconsciousEnabled && contextData.subconsciousDuration != null && ` \u00b7 Subconscious: ${contextData.subconsciousDuration}ms`}
-        {contextData.subconsciousUsage && ` (${contextData.subconsciousUsage.input_tokens} in / ${contextData.subconsciousUsage.output_tokens} out)`}
-      </p>
+      <div className="flex items-center gap-2 mb-2">
+        <p className="text-xs text-gray-500">
+          Assembled at {contextData.timestamp || '?'} &middot; Full context: {contextData.fullContext ? (contextData.fullContext.length / 1024).toFixed(1) : '0'}K chars
+          {contextData.images?.length > 0 && ` \u00b7 ${contextData.images.length} image${contextData.images.length > 1 ? 's' : ''}`}
+          {contextData.subconsciousEnabled && contextData.subconsciousDuration != null && ` \u00b7 Subconscious: ${contextData.subconsciousDuration}ms`}
+          {contextData.subconsciousUsage && ` (${contextData.subconsciousUsage.input_tokens} in / ${contextData.subconsciousUsage.output_tokens} out)`}
+        </p>
+        {!contextData.subconsciousEnabled && (
+          <button
+            className="text-gray-400 hover:text-gray-200 ml-auto p-1 rounded hover:bg-gray-700/40 transition-colors shrink-0"
+            onClick={() => downloadMemoryAsText(contextData, agentName)}
+            title="Download memory as text file"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
+        )}
+      </div>
       {contextData.subconsciousEnabled && (
-        <div className="flex gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-3">
           <button
             className={`text-xs px-2.5 py-1 rounded transition-colors ${contextTab === 'conscious' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200 bg-gray-700/40'}`}
             onClick={() => onTabChange('conscious')}
@@ -27,6 +70,13 @@ function MemoryContent({ contextData, contextTab, onTabChange }) {
             className={`text-xs px-2.5 py-1 rounded transition-colors ${contextTab === 'raw' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-gray-200 bg-gray-700/40'}`}
             onClick={() => onTabChange('raw')}
           >Raw subconscious</button>
+          <button
+            className="text-gray-400 hover:text-gray-200 ml-auto p-1 rounded hover:bg-gray-700/40 transition-colors"
+            onClick={() => downloadMemoryAsText(contextData, agentName)}
+            title="Download memory as text file"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          </button>
         </div>
       )}
       {contextData.subconsciousEnabled && contextTab === 'conscious' && contextData.subconsciousClassification && (
@@ -199,7 +249,7 @@ function AgentLifePanel({ contextData, contextTab, onTabChange, isLoading, activ
           <p className="text-xs text-gray-500">Send a message to see memory context.</p>
         )}
         {!isLoading && contextData && activeTab === 'memory' && (
-          <MemoryContent contextData={contextData} contextTab={contextTab} onTabChange={onTabChange} />
+          <MemoryContent contextData={contextData} contextTab={contextTab} onTabChange={onTabChange} agentName={config?.assistantName} />
         )}
         {activeTab === 'myself' && (
           <AgentLifeMyself baseApiUrl={baseApiUrl} appId={appId} agentId={agentId} config={config} onConfigUpdated={onConfigUpdated} />

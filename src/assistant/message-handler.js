@@ -50,7 +50,7 @@ function getUserSpeakerLabel(db) {
 
 // Extracted modules
 const { findPartialInternalMatch, parseStreamJsonOutput } = require('./message-handler-parse');
-const { prepareAgentEnv, prepareClaudeEnv, storeChatImages } = require('./message-handler-helpers');
+const { prepareAgentEnv, prepareClaudeEnv, storeChatImages, persistContextCache } = require('./message-handler-helpers');
 const { handleSendPlanCommand, handleChatPlanCommand, _activePlanByAgent } = require('./message-handler-plan');
 
 /**
@@ -381,6 +381,7 @@ function handleSend(deps) {
           subconsciousUsage: subconsciousOutput.usage,
           subconsciousError: null,
         };
+        persistContextCache(db, assistant.id, getAgentState(assistant.id).lastContext);
       } catch (_e) { /* non-critical */ }
 
       // Send response via SSE (same pattern as CLI exit handler)
@@ -718,6 +719,7 @@ function handleSend(deps) {
         subconsciousUsage: subconsciousOutput?.usage || null,
         subconsciousError,
       };
+      persistContextCache(db, assistant.id, getAgentState(assistant.id).lastContext);
     } catch (_e) { /* non-critical */ }
 
     // Use spawn instead of PTY when we have images (need stdin control)
@@ -1557,6 +1559,7 @@ function handleChat(deps) {
           subconsciousDuration: chatSubconsciousDuration,
           subconsciousUsage: chatSubconsciousOutput?.usage || null,
         };
+        persistContextCache(db, assistant.id, getAgentState(assistant.id).lastContext);
       } catch (_e) { /* non-critical */ }
 
       const claude = spawn(chatBackend.command, args, {

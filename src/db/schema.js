@@ -309,6 +309,15 @@ function createSchema(db) {
     );
   `);
 
+  // Cached last-assembled memory context per agent (survives restart)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_context_cache (
+      agent_id TEXT PRIMARY KEY,
+      context_json TEXT NOT NULL,
+      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
   // Create agent-to-agent messaging tables
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_threads (

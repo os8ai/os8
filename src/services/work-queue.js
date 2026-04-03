@@ -506,6 +506,8 @@ const WorkQueue = {
           ].filter(Boolean),
           subconsciousEnabled: false,
         };
+        const { persistContextCache } = require('../assistant/message-handler-helpers');
+        persistContextCache(db, appId, getAgentState(appId).lastContext);
       } catch (_e) { /* non-critical */ }
     }
 

@@ -269,10 +269,19 @@ function createAssistantRouter(db, deps) {
       return res.status(404).json({ error: 'Assistant not found' });
     }
     const agentRaw = getAgentState(assistant.id);
-    if (!agentRaw.lastContext) {
-      return res.status(404).json({ error: 'No context cached yet. Send a message first.' });
+    if (agentRaw.lastContext) {
+      return res.json(agentRaw.lastContext);
     }
-    res.json(agentRaw.lastContext);
+    // Fall back to persisted cache from prior session
+    try {
+      const row = db.prepare('SELECT context_json FROM agent_context_cache WHERE agent_id = ?').get(assistant.id);
+      if (row) {
+        const cached = JSON.parse(row.context_json);
+        agentRaw.lastContext = cached;
+        return res.json(cached);
+      }
+    } catch (_e) { /* parse error — treat as no cache */ }
+    res.status(404).json({ error: 'No context cached yet. Send a message first.' });
   });
 
   // ============ Message Endpoints ============
