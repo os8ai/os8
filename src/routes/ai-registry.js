@@ -58,7 +58,15 @@ function createAIRegistryRouter(db) {
       for (const c of containers) {
         containerMap[c.id] = c;
       }
-      res.json(families.map(f => ({
+      // Only show families eligible for conversation (chat)
+      const chatFamilies = families.filter(f => {
+        if (f.eligible_tasks) {
+          const eligible = f.eligible_tasks.split(',').map(s => s.trim());
+          if (!eligible.includes('conversation')) return false;
+        }
+        return (f.cap_chat || 0) > 0;
+      });
+      res.json(chatFamilies.map(f => ({
         value: f.id,
         label: f.display_name,
         backend: f.container_id,
