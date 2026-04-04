@@ -34,67 +34,51 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     return findNpm();
   });
 
-  // Install all 4 CLI backends globally
-  ipcMain.handle('onboarding:install-clis', (event, npmPath) => {
-    return new Promise((resolve) => {
-      const packages = [
-        '@anthropic-ai/claude-code',
-        '@google-ai/gemini-cli',
-        '@vibe-kit/codex-cli',
-        '@vibe-kit/grok-cli'
-      ];
+  // Install all 4 CLI backends globally — each installed individually so one
+  // failure doesn't block the others (npm exits non-zero on any 404 in a batch)
+  ipcMain.handle('onboarding:install-clis', async (event, npmPath) => {
+    const { CLI_PACKAGES, findCli, getExpandedPath } = require('../utils/cli-path');
+    const { execSync } = require('child_process');
+    const npm = npmPath || 'npm';
+    const env = { ...process.env, PATH: getExpandedPath() };
 
-      const send = (data) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('onboarding:cli-progress', data);
-        }
-      };
+    const send = (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('onboarding:cli-progress', data);
+      }
+    };
 
-      send({ status: 'installing', message: 'Installing CLI backends...' });
+    send({ status: 'installing', message: 'Installing CLI backends...' });
 
-      const { getExpandedPath } = require('../utils/cli-path');
-      const child = spawn(npmPath || 'npm', ['install', '-g', ...packages], {
-        env: { ...process.env, PATH: getExpandedPath() },
-        shell: false
-      });
+    const results = {};
+    for (const [cmd, pkg] of Object.entries(CLI_PACKAGES)) {
+      // Skip if already installed
+      if (findCli(cmd)) {
+        results[cmd] = true;
+        continue;
+      }
 
-      let output = '';
+      send({ status: 'installing', message: `Installing ${cmd}...` });
+      try {
+        execSync(`${npm} install -g ${pkg}`, { encoding: 'utf-8', timeout: 120000, env });
+        results[cmd] = !!findCli(cmd);
+      } catch (e) {
+        console.warn(`[Onboarding] Failed to install ${cmd} (${pkg}):`, e.message);
+        results[cmd] = false;
+      }
+    }
 
-      child.stdout.on('data', (data) => {
-        output += data.toString();
-        send({ status: 'installing', message: data.toString().trim() });
-      });
+    const allInstalled = Object.values(results).every(Boolean);
 
-      child.stderr.on('data', (data) => {
-        output += data.toString();
-      });
+    if (allInstalled) {
+      send({ status: 'complete', message: 'CLI backends installed' });
+    } else {
+      const failed = Object.entries(results).filter(([, ok]) => !ok).map(([cmd]) => cmd);
+      console.warn('[Onboarding] CLI install results:', results);
+      send({ status: 'error', message: `Failed to install: ${failed.join(', ')}` });
+    }
 
-      child.on('close', (code) => {
-        // Verify which CLIs actually installed (using expanded PATH)
-        const { findCli } = require('../utils/cli-path');
-        const results = {};
-        for (const cmd of ['claude', 'gemini', 'codex', 'grok']) {
-          results[cmd] = !!findCli(cmd);
-        }
-
-        const allInstalled = Object.values(results).every(Boolean);
-
-        if (code === 0 && allInstalled) {
-          send({ status: 'complete', message: 'CLI backends installed' });
-        } else {
-          console.warn('[Onboarding] CLI install exited with code', code, 'results:', results);
-          send({ status: 'error', message: 'Some CLI backends may not have installed correctly' });
-        }
-
-        resolve({ success: code === 0, results, allInstalled });
-      });
-
-      child.on('error', (err) => {
-        console.error('[Onboarding] CLI install error:', err);
-        send({ status: 'error', message: err.message });
-        resolve({ success: false, error: err.message, results: {}, allInstalled: false });
-      });
-    });
+    return { success: allInstalled, results, allInstalled };
   });
 
   // Detect all provider statuses (logins + API keys)

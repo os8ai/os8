@@ -17,6 +17,12 @@ async function getEmbedder() {
 
   if (!pipeline) {
     const transformers = await import('@xenova/transformers');
+    // Redirect model cache to ~/os8/models/ — default .cache path is inside
+    // app.asar in packaged builds and not writable
+    const path = require('path');
+    const os = require('os');
+    const cacheDir = path.join(process.env.OS8_HOME || path.join(os.homedir(), 'os8'), 'models', 'transformers');
+    transformers.env.cacheDir = cacheDir;
     pipeline = transformers.pipeline;
   }
 

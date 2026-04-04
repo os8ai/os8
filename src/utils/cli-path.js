@@ -12,8 +12,8 @@ const { SEARCH_PATH, findNpm } = require('./npm-path');
 // CLI command -> npm package mapping
 const CLI_PACKAGES = {
   claude: '@anthropic-ai/claude-code',
-  gemini: '@google-ai/gemini-cli',
-  codex: '@vibe-kit/codex-cli',
+  gemini: '@google/gemini-cli',
+  codex: '@openai/codex',
   grok: '@vibe-kit/grok-cli',
 };
 
