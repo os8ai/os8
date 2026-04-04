@@ -81,7 +81,7 @@
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": "AppImage",
+      "target": ["AppImage", "deb"],
       "icon": "build/icon.png",
       "category": "Development"
     },
@@ -100,7 +100,8 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
       "node_modules/node-pty/**",
-      "node_modules/sharp/**"
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
     ],
     "extraMetadata": {
       "main": "main.js"

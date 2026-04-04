@@ -52,6 +52,7 @@ jobs:
             dist/*.dmg
             dist/*.exe
             dist/*.AppImage
+            dist/*.deb
           if-no-files-found: ignore
 
   release:

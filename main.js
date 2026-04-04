@@ -6,6 +6,11 @@ const { WhisperService, WhisperStreamService, TTSService, TunnelService, JobsFil
 const { startServer, stopServer, restartServer, getAppUrl, getPort, setOAuthCompleteCallback, setAppCreatedCallback, setAppUpdatedCallback, setAgentChangedCallback, setBuildStartedCallback, setBuildCompletedCallback, DEFAULT_PORT } = require('./src/server');
 const { registerAllHandlers, getCleanupFunctions } = require('./src/ipc');
 
+// AppImage sandbox fix: SUID chrome-sandbox is impossible inside FUSE mount
+if (process.env.APPIMAGE) {
+  app.commandLine.appendSwitch('no-sandbox');
+}
+
 // Auto-reload in development
 try {
   require('electron-reloader')(module, {
