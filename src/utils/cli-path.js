@@ -5,6 +5,7 @@
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const { SEARCH_PATH, findNpm } = require('./npm-path');
 
@@ -30,7 +31,10 @@ function getNpmGlobalBin() {
       env: { PATH: SEARCH_PATH }
     }).trim();
     if (npmRoot && !npmRoot.includes('not found')) {
-      _npmGlobalBin = path.join(npmRoot, '..', 'bin');
+      const candidate = path.join(npmRoot, '..', 'bin');
+      // Verify the directory exists — on apt-installed Node, npm root -g returns
+      // /usr/lib/node_modules and ../bin resolves to /usr/lib/bin which doesn't exist
+      _npmGlobalBin = fs.existsSync(candidate) ? candidate : null;
     } else {
       _npmGlobalBin = null;
     }
