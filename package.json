@@ -85,6 +85,9 @@
       "icon": "build/icon.png",
       "category": "Development"
     },
+    "deb": {
+      "depends": ["nodejs", "npm"]
+    },
     "files": [
       "main.js",
       "preload.js",

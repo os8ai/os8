@@ -196,9 +196,12 @@ async function showSplash() {
   const coreStatus = await window.os8.core.getStatus();
   splashState.core = coreStatus === 'ready';
 
-  const claudeInstalled = await window.os8.onboarding.checkCliInstalled('claude');
-  // If claude is installed, assume others may be too (they install together)
-  splashState.cli = claudeInstalled;
+  // Check all 4 CLIs individually — don't assume they install together
+  const cliChecks = {};
+  for (const cmd of ['claude', 'gemini', 'codex', 'grok']) {
+    cliChecks[cmd] = await window.os8.onboarding.checkCliInstalled(cmd);
+  }
+  splashState.cli = Object.values(cliChecks).every(Boolean);
 
   if (splashState.core) markSplashTask('splashTaskCore');
   if (splashState.cli) markSplashTask('splashTaskCli');
@@ -238,15 +241,19 @@ async function showSplash() {
       (async () => {
         try {
           const result = await window.os8.onboarding.installClis(npmPath);
-          if (!result.allInstalled) {
-            console.warn('[Onboarding] Some CLIs failed to install:', result.results);
+          if (result.allInstalled) {
+            splashState.cli = true;
+            markSplashTask('splashTaskCli');
+            checkSplashDone();
+          } else {
+            const failed = Object.entries(result.results)
+              .filter(([, ok]) => !ok).map(([cmd]) => cmd);
+            showSplashCliRetry(failed, npmPath);
           }
         } catch (e) {
           console.error('CLI install failed:', e);
+          showSplashCliRetry(['claude', 'gemini', 'codex', 'grok'], npmPath);
         }
-        splashState.cli = true;
-        markSplashTask('splashTaskCli');
-        checkSplashDone();
       })()
     );
   }
@@ -263,6 +270,54 @@ function checkSplashDone() {
   if (splashState.core && splashState.cli) {
     splashComplete();
   }
+}
+
+function showSplashCliRetry(failedClis, npmPath) {
+  const taskEl = document.getElementById('splashTaskCli');
+  if (!taskEl) return;
+
+  const names = failedClis.join(', ');
+  taskEl.classList.add('warning');
+  taskEl.innerHTML = `
+    <span class="task-icon" style="color: #f59e0b;">&#9888;</span>
+    <span>Failed to install: ${names}</span>
+    <button id="splashRetryBtn" style="margin-left: 12px; padding: 4px 12px; border-radius: 6px; border: 1px solid #475569; background: transparent; color: #e2e8f0; cursor: pointer; font-size: 13px;">Retry</button>
+    <a href="#" id="splashContinueAnyway" style="margin-left: 8px; color: #94a3b8; font-size: 12px; text-decoration: underline;">Continue anyway</a>
+  `;
+
+  document.getElementById('splashRetryBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('splashRetryBtn');
+    if (btn) { btn.textContent = 'Installing...'; btn.disabled = true; }
+    const link = document.getElementById('splashContinueAnyway');
+    if (link) link.style.display = 'none';
+
+    taskEl.innerHTML = `
+      <span class="task-icon">&#9675;</span>
+      <span>AI backends</span>
+    `;
+
+    try {
+      const result = await window.os8.onboarding.installClis(npmPath);
+      if (result.allInstalled) {
+        splashState.cli = true;
+        markSplashTask('splashTaskCli');
+        checkSplashDone();
+      } else {
+        const stillFailed = Object.entries(result.results)
+          .filter(([, ok]) => !ok).map(([cmd]) => cmd);
+        showSplashCliRetry(stillFailed, npmPath);
+      }
+    } catch (e) {
+      showSplashCliRetry(failedClis, npmPath);
+    }
+  });
+
+  document.getElementById('splashContinueAnyway')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    splashState.cli = true;
+    markSplashTask('splashTaskCli');
+    checkSplashDone();
+  });
 }
 
 async function splashComplete() {
@@ -349,16 +404,26 @@ function renderStep1Identity(container) {
 }
 
 // Step 2: AI Backend Setup
-function renderStep2Backend(container) {
+async function renderStep2Backend(container) {
   const providerOrder = ['anthropic', 'google', 'openai', 'xai'];
+
+  // Check CLI availability for each provider with login support
+  const cliStatus = {};
+  for (const id of providerOrder) {
+    const p = PROVIDERS[id];
+    if (p.hasLogin) {
+      cliStatus[id] = await window.os8.onboarding.checkCliInstalled(p.cliCommand);
+    }
+  }
+
   container.innerHTML = `
     <h2>Connect your AI providers</h2>
     <p class="onboarding-subtitle">You'll need at least one to get started.</p>
     <div class="onboarding-providers">
-      ${providerOrder.map(id => renderProviderCard(id, id === 'anthropic')).join('')}
+      ${providerOrder.map(id => renderProviderCard(id, id === 'anthropic', {}, cliStatus)).join('')}
     </div>
   `;
-  attachProviderCardListeners(container, providerOrder);
+  attachProviderCardListeners(container, providerOrder, cliStatus);
 }
 
 // Step 3: Image AI Setup
@@ -583,7 +648,7 @@ function renderStep6Handoff(container) {
 
 // --- Provider Card Rendering ---
 
-function renderProviderCard(providerId, isPrimary, options = {}) {
+function renderProviderCard(providerId, isPrimary, options = {}, cliStatus = {}) {
   const p = PROVIDERS[providerId];
   const status = providerStatuses[providerId] || {};
   const isConfigured = status.login || status.apiKey;
@@ -628,7 +693,12 @@ function renderProviderCard(providerId, isPrimary, options = {}) {
   } else if (!isConfigured || needsApiKey) {
     actionsHtml = '<div class="onboarding-provider-actions">';
     if (p.hasLogin && !status.login) {
-      actionsHtml += `<button class="btn btn-login" data-provider="${providerId}" data-action="login">${p.loginLabel}</button>`;
+      if (cliStatus[providerId] === false) {
+        // CLI not installed — show Install button
+        actionsHtml += `<button class="btn btn-login" data-provider="${providerId}" data-action="install-cli">Install ${p.cliCommand}</button>`;
+      } else {
+        actionsHtml += `<button class="btn btn-login" data-provider="${providerId}" data-action="login">${p.loginLabel}</button>`;
+      }
     }
     actionsHtml += `<button class="btn btn-apikey" data-provider="${providerId}" data-action="toggle-key">API Key</button>`;
     actionsHtml += '</div>';
@@ -663,7 +733,32 @@ function renderProviderCard(providerId, isPrimary, options = {}) {
   `;
 }
 
-function attachProviderCardListeners(container, providerIds) {
+function attachProviderCardListeners(container, providerIds, cliStatus = {}) {
+  // Install CLI buttons
+  container.querySelectorAll('[data-action="install-cli"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const providerId = btn.dataset.provider;
+      const p = PROVIDERS[providerId];
+      const originalText = btn.textContent;
+      btn.textContent = 'Installing...';
+      btn.disabled = true;
+      try {
+        const result = await window.os8.onboarding.installSingleCli(p.cliCommand);
+        if (result.installed) {
+          // Success — re-render to swap to Login button
+          cliStatus[providerId] = true;
+          renderStep2Backend(container.closest('#onboardingContent') || container);
+        } else {
+          btn.textContent = 'Install failed';
+          setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+        }
+      } catch (e) {
+        btn.textContent = 'Install failed';
+        setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
+      }
+    });
+  });
+
   // Login buttons
   container.querySelectorAll('[data-action="login"]').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -723,12 +818,18 @@ async function handleProviderLogin(providerId, btn) {
       providerStatuses = await window.os8.onboarding.detectProviders();
       renderStep();
     } else {
-      btn.textContent = 'Login failed - try API key';
-      btn.disabled = false;
-      // Show API key section as fallback
-      const section = btn.closest('.onboarding-provider-card')
-        ?.querySelector(`[data-provider-key="${providerId}"]`);
-      if (section) section.classList.add('visible');
+      const err = await response.json().catch(() => ({}));
+      if (err.installFailed) {
+        // CLI couldn't be found/installed — re-render to show Install button
+        renderStep();
+      } else {
+        btn.textContent = 'Login failed - try API key';
+        btn.disabled = false;
+        // Show API key section as fallback
+        const section = btn.closest('.onboarding-provider-card')
+          ?.querySelector(`[data-provider-key="${providerId}"]`);
+        if (section) section.classList.add('visible');
+      }
     }
   } catch (e) {
     console.error(`Login failed for ${providerId}:`, e);

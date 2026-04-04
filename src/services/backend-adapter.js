@@ -349,21 +349,10 @@ const BACKENDS = {
      * Prepare environment for Gemini CLI
      */
     prepareEnv(baseEnv = process.env) {
+      const { getExpandedPath } = require('../utils/cli-path');
       const env = { ...baseEnv };
       delete env.CLAUDECODE;
-      // Gemini is installed via npm globally, ensure node paths are available
-      try {
-        const npmRoot = require('child_process').execSync('npm root -g').toString().trim();
-        const npmBin = require('path').join(npmRoot, '..', 'bin');
-        if (env.PATH && !npmRoot.includes('not found') && !env.PATH.includes(npmBin)) {
-          env.PATH = `${npmBin}:${env.PATH}`;
-        }
-      } catch(e) {
-        console.error('Could not determine npm global root, falling back to /usr/local/bin', e);
-        if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-          env.PATH = `/usr/local/bin:${env.PATH}`;
-        }
-      }
+      env.PATH = getExpandedPath();
       return env;
     }
   },
@@ -548,19 +537,10 @@ const BACKENDS = {
      * Codex is installed via npm globally; auth is via ChatGPT login (no API key needed)
      */
     prepareEnv(baseEnv = process.env) {
+      const { getExpandedPath } = require('../utils/cli-path');
       const env = { ...baseEnv };
       delete env.CLAUDECODE;
-      try {
-        const npmRoot = require('child_process').execSync('npm root -g').toString().trim();
-        const npmBin = require('path').join(npmRoot, '..', 'bin');
-        if (env.PATH && !npmRoot.includes('not found') && !env.PATH.includes(npmBin)) {
-          env.PATH = `${npmBin}:${env.PATH}`;
-        }
-      } catch(e) {
-        if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-          env.PATH = `/usr/local/bin:${env.PATH}`;
-        }
-      }
+      env.PATH = getExpandedPath();
       return env;
     }
   },
@@ -704,17 +684,8 @@ const BACKENDS = {
       if (env.XAI_API_KEY && !env.GROK_API_KEY) {
         env.GROK_API_KEY = env.XAI_API_KEY;
       }
-      try {
-        const npmRoot = require('child_process').execSync('npm root -g').toString().trim();
-        const npmBin = require('path').join(npmRoot, '..', 'bin');
-        if (env.PATH && !npmRoot.includes('not found') && !env.PATH.includes(npmBin)) {
-          env.PATH = `${npmBin}:${env.PATH}`;
-        }
-      } catch(e) {
-        if (env.PATH && !env.PATH.includes('/usr/local/bin')) {
-          env.PATH = `/usr/local/bin:${env.PATH}`;
-        }
-      }
+      const { getExpandedPath } = require('../utils/cli-path');
+      env.PATH = getExpandedPath();
       return env;
     }
   }

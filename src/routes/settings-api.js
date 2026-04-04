@@ -301,7 +301,7 @@ function createSettingsApiRouter(db, deps) {
   });
 
   // Backend login — spawns `claude auth login` (or equivalent) which opens browser for OAuth
-  router.post('/backend/login/:backend', (req, res) => {
+  router.post('/backend/login/:backend', async (req, res) => {
     const { backend } = req.params;
     const container = AIRegistryService.getContainer(db, backend);
     if (!container || !container.has_login) {
@@ -314,19 +314,30 @@ function createSettingsApiRouter(db, deps) {
       : (container.login_command || '').split(' ').slice(1);
     const loginCmd = container.command;
 
-    // Check if CLI exists before spawning — prevents indefinite hang
-    const { execSync, spawn: spawnProcess } = require('child_process');
-    try {
-      execSync(`which ${loginCmd}`, { encoding: 'utf-8', timeout: 5000 });
-    } catch {
-      return res.status(400).json({ error: `${loginCmd} CLI not found. Please install it first.` });
+    // Resolve CLI path using expanded PATH (npm global bin + SEARCH_PATH)
+    const { findCli, installCli, getExpandedPath } = require('../utils/cli-path');
+    const { spawn: spawnProcess } = require('child_process');
+    let cliPath = findCli(loginCmd);
+
+    // Auto-install if missing
+    if (!cliPath) {
+      const result = await installCli(loginCmd);
+      if (result.success) {
+        cliPath = findCli(loginCmd);
+      }
+      if (!cliPath) {
+        return res.status(400).json({
+          error: `${loginCmd} CLI could not be found or installed.`,
+          installFailed: true
+        });
+      }
     }
 
     // Strip CLAUDECODE env var — OS8 runs inside Electron which may set it,
     // and Claude CLI refuses to launch if it detects a parent Claude session
-    const loginEnv = { ...process.env };
+    const loginEnv = { ...process.env, PATH: getExpandedPath() };
     delete loginEnv.CLAUDECODE;
-    const child = spawnProcess(loginCmd, loginArgs, {
+    const child = spawnProcess(cliPath, loginArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: loginEnv
     });

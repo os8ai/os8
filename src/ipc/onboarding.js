@@ -52,8 +52,9 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
 
       send({ status: 'installing', message: 'Installing CLI backends...' });
 
+      const { getExpandedPath } = require('../utils/cli-path');
       const child = spawn(npmPath || 'npm', ['install', '-g', ...packages], {
-        env: { ...process.env },
+        env: { ...process.env, PATH: getExpandedPath() },
         shell: false
       });
 
@@ -69,16 +70,11 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
       });
 
       child.on('close', (code) => {
-        // Verify which CLIs actually installed
-        const { execSync } = require('child_process');
+        // Verify which CLIs actually installed (using expanded PATH)
+        const { findCli } = require('../utils/cli-path');
         const results = {};
         for (const cmd of ['claude', 'gemini', 'codex', 'grok']) {
-          try {
-            execSync(`which ${cmd}`, { encoding: 'utf-8', timeout: 5000 });
-            results[cmd] = true;
-          } catch {
-            results[cmd] = false;
-          }
+          results[cmd] = !!findCli(cmd);
         }
 
         const allInstalled = Object.values(results).every(Boolean);
@@ -136,23 +132,17 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     return statuses;
   });
 
-  // Check if a specific CLI command is installed
-  ipcMain.handle('onboarding:check-cli-installed', async (event, command) => {
-    const { execSync } = require('child_process');
-    try {
-      execSync(`which ${command}`, { encoding: 'utf-8', timeout: 5000 });
-      return true;
-    } catch {
-      // Try npm global bin fallback
-      try {
-        const npmRoot = execSync('npm root -g', { encoding: 'utf-8', timeout: 5000 }).trim();
-        const binDir = path.join(npmRoot, '..', 'bin');
-        const fs = require('fs');
-        return fs.existsSync(path.join(binDir, command));
-      } catch {
-        return false;
-      }
-    }
+  // Check if a specific CLI command is installed (uses expanded PATH)
+  ipcMain.handle('onboarding:check-cli-installed', (event, command) => {
+    const { findCli } = require('../utils/cli-path');
+    return !!findCli(command);
+  });
+
+  // Install a single CLI package globally
+  ipcMain.handle('onboarding:install-single-cli', async (event, command) => {
+    const { installCli, findCli } = require('../utils/cli-path');
+    const result = await installCli(command);
+    return { ...result, installed: !!findCli(command) };
   });
 }
 
