@@ -20,6 +20,7 @@ import {
   createBuildStatusTab
 } from './terminal.js';
 import { createAgentInstance } from './agent-panel.js';
+import { initVault, openVaultTab } from './vault.js';
 import {
   getFileIcon, getFileIconClass, renderFileTreeItem, filterHiddenFiles,
   HIDDEN_FILES, loadFileTree, viewFile, switchStorageView, loadStorageView, loadBlobTree,
@@ -376,6 +377,12 @@ function init() {
     newAppName.focus();
     nextNewApp.disabled = true;
   });
+
+  // Vault button
+  document.getElementById('vaultBtn')?.addEventListener('click', () => openVaultTab());
+
+  // Vault init
+  initVault();
 
   // Agent button - opens the default agent
   document.getElementById('assistantBtn').addEventListener('click', () => {

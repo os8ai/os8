@@ -73,6 +73,9 @@ const AgentState = require('./agent-state');
 const PTYService = require('./pty');
 const PreviewService = require('./preview');
 const FileSystemService = require('./filesystem');
+const VaultService = require('./vault');
+const VaultIndexerService = require('./vault-indexer');
+const VaultGraphService = require('./vault-graph');
 
 module.exports = {
   ClaudeInstructionsService,
@@ -151,5 +154,8 @@ module.exports = {
   AgentState,
   PTYService,
   PreviewService,
-  FileSystemService
+  FileSystemService,
+  VaultService,
+  VaultIndexerService,
+  VaultGraphService
 };

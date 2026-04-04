@@ -73,4 +73,29 @@ export function initElements() {
   elements.addJobBtn = document.getElementById('addJobBtn');
   elements.todosContent = document.getElementById('todosContent');
   elements.jobsContentWrapper = document.getElementById('jobsContentWrapper');
+
+  // Vault
+  elements.vaultView = document.getElementById('vaultView');
+  elements.vaultPanel = document.getElementById('vaultPanel');
+  elements.vaultSidebar = document.getElementById('vaultSidebar');
+  elements.vaultSearchInput = document.getElementById('vaultSearchInput');
+  elements.vaultSearchMode = document.getElementById('vaultSearchMode');
+  elements.vaultNewNoteBtn = document.getElementById('vaultNewNoteBtn');
+  elements.vaultNav = document.getElementById('vaultNav');
+  elements.vaultNoteList = document.getElementById('vaultNoteList');
+  elements.vaultEditorArea = document.getElementById('vaultEditorArea');
+  elements.vaultEditorHeader = document.getElementById('vaultEditorHeader');
+  elements.vaultEditorBody = document.getElementById('vaultEditorBody');
+  elements.vaultEmptyState = document.getElementById('vaultEmptyState');
+  elements.vaultTitleInput = document.getElementById('vaultTitleInput');
+  elements.vaultInspector = document.getElementById('vaultInspector');
+  elements.vaultInspectorContent = document.getElementById('vaultInspectorContent');
+  elements.vaultToggleSidebar = document.getElementById('vaultToggleSidebar');
+  elements.vaultToggleInspector = document.getElementById('vaultToggleInspector');
+  elements.vaultDeleteNoteBtn = document.getElementById('vaultDeleteNoteBtn');
+  elements.vaultPinNoteBtn = document.getElementById('vaultPinNoteBtn');
+  elements.vaultSaveIndicator = document.getElementById('vaultSaveIndicator');
+  elements.vaultEmptyCreateBtn = document.getElementById('vaultEmptyCreateBtn');
+  elements.vaultImportBtn = document.getElementById('vaultImportBtn');
+  elements.vaultExportBtn = document.getElementById('vaultExportBtn');
 }

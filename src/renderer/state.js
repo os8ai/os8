@@ -392,6 +392,10 @@ export function hasMultipleAppTabs() {
   return state.tabs.filter(t => t.type === 'app').length > 1;
 }
 
+export function getVaultTab() {
+  return state.tabs.find(t => t.type === 'vault');
+}
+
 export function getEffectiveViewMode() {
   // In developer mode, view mode doesn't apply
   if (state.currentMode === 'developer') return 'focus';

@@ -8,6 +8,8 @@
   <script src="./node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="./node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
   <link rel="stylesheet" href="styles/index.css">
+  <script src="./vendor/codemirror.js"></script>
+  <script src="./vendor/d3.js"></script>
 </head>
 <body>
   <!-- Header -->
@@ -52,7 +54,15 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
         </svg>
       </button>
-      <button class="home-action-btn assistant" id="assistantBtn" title="Agent">
+      <button class="home-action-btn vault" id="vaultBtn" title="Vault">
+        <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="3" width="20" height="18" rx="2"/>
+          <circle cx="12" cy="12" r="4"/>
+          <circle cx="12" cy="12" r="1" fill="currentColor"/>
+          <line x1="16" y1="12" x2="20" y2="12"/>
+        </svg>
+      </button>
+      <button class="home-action-btn assistant" id="assistantBtn" title="Agents">
         <svg style="width: 20px; height: 20px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
         </svg>
@@ -320,6 +330,84 @@
         </svg>
       </button>
     </div>
+    </div>
+  </div>
+
+  <!-- Vault View -->
+  <div class="view vault-view" id="vaultView">
+    <div class="vault-panel" id="vaultPanel">
+      <div class="vault-sidebar" id="vaultSidebar">
+        <div class="vault-sidebar-header">
+          <div class="vault-search-wrapper">
+            <input type="text" class="vault-search-input" id="vaultSearchInput" placeholder="Search notes...">
+            <div class="vault-search-mode" id="vaultSearchMode">
+              <button class="vault-search-mode-btn active" data-mode="hybrid" title="Hybrid search">H</button>
+              <button class="vault-search-mode-btn" data-mode="keyword" title="Keyword search">K</button>
+              <button class="vault-search-mode-btn" data-mode="semantic" title="Semantic search">S</button>
+            </div>
+          </div>
+          <button class="icon-btn sm" id="vaultNewNoteBtn" title="New note">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+          <button class="icon-btn sm" id="vaultImportBtn" title="Import notes">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </button>
+          <button class="icon-btn sm" id="vaultExportBtn" title="Export vault">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+        </div>
+        <div class="vault-nav" id="vaultNav"></div>
+        <div class="vault-note-list scrollable" id="vaultNoteList"></div>
+      </div>
+      <div class="vault-editor-area" id="vaultEditorArea">
+        <div class="vault-editor-header" id="vaultEditorHeader" style="display:none;">
+          <button class="icon-btn sm" id="vaultToggleSidebar" title="Toggle sidebar">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 3h18v18H3zM9 3v18"/>
+            </svg>
+          </button>
+          <input type="text" class="vault-title-input" id="vaultTitleInput" placeholder="Note title...">
+          <div class="vault-editor-actions">
+            <span class="vault-save-indicator" id="vaultSaveIndicator"></span>
+            <button class="icon-btn sm" id="vaultPinNoteBtn" title="Pin note">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 17v5M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.89A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.89A2 2 0 0 0 5 15.24z"/>
+              </svg>
+            </button>
+            <button class="icon-btn sm" id="vaultToggleInspector" title="Toggle inspector">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 3h18v18H3zM15 3v18"/>
+              </svg>
+            </button>
+            <button class="icon-btn sm" id="vaultDeleteNoteBtn" title="Delete note">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="vault-editor-body" id="vaultEditorBody"></div>
+        <div class="vault-empty-state" id="vaultEmptyState">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.5">
+            <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+            <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+          </svg>
+          <p>No note selected</p>
+          <button class="vault-create-btn" id="vaultEmptyCreateBtn">Create your first note</button>
+        </div>
+      </div>
+      <div class="vault-inspector collapsed" id="vaultInspector">
+        <div class="vault-inspector-header">
+          <span>Inspector</span>
+        </div>
+        <div class="vault-inspector-content scrollable" id="vaultInspectorContent"></div>
+      </div>
     </div>
   </div>
 

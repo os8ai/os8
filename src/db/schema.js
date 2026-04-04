@@ -777,6 +777,248 @@ function createSchema(db) {
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // ================================================
+  // Vault system tables (knowledge layer)
+  // ================================================
+
+  db.exec(`
+    -- Folders (hierarchical containers for notes)
+    CREATE TABLE IF NOT EXISTS vault_folders (
+      id TEXT PRIMARY KEY,
+      parent_id TEXT REFERENCES vault_folders(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      icon TEXT,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Notes (the core entity)
+    CREATE TABLE IF NOT EXISTS vault_notes (
+      id TEXT PRIMARY KEY,
+      folder_id TEXT REFERENCES vault_folders(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      slug TEXT UNIQUE NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      content_plain TEXT,
+      is_daily INTEGER DEFAULT 0,
+      daily_date TEXT,
+      is_pinned INTEGER DEFAULT 0,
+      is_archived INTEGER DEFAULT 0,
+      word_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Tags (flat labels)
+    CREATE TABLE IF NOT EXISTS vault_tags (
+      id TEXT PRIMARY KEY,
+      name TEXT UNIQUE NOT NULL,
+      color TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Note-Tag junction
+    CREATE TABLE IF NOT EXISTS vault_note_tags (
+      note_id TEXT NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+      tag_id TEXT NOT NULL REFERENCES vault_tags(id) ON DELETE CASCADE,
+      PRIMARY KEY (note_id, tag_id)
+    );
+
+    -- Bidirectional links between notes
+    CREATE TABLE IF NOT EXISTS vault_links (
+      id TEXT PRIMARY KEY,
+      source_note_id TEXT NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+      target_note_id TEXT NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+      link_type TEXT NOT NULL DEFAULT 'reference',
+      context TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(source_note_id, target_note_id)
+    );
+
+    -- Version history (full snapshots)
+    CREATE TABLE IF NOT EXISTS vault_versions (
+      id TEXT PRIMARY KEY,
+      note_id TEXT NOT NULL REFERENCES vault_notes(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      content TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Filesystem index scopes (user-selected directories)
+    CREATE TABLE IF NOT EXISTS vault_scopes (
+      id TEXT PRIMARY KEY,
+      path TEXT UNIQUE NOT NULL,
+      label TEXT,
+      recursive INTEGER DEFAULT 1,
+      enabled INTEGER DEFAULT 1,
+      file_extensions TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Indexed file pointers (references, never copies)
+    CREATE TABLE IF NOT EXISTS vault_sources (
+      id TEXT PRIMARY KEY,
+      scope_id TEXT NOT NULL REFERENCES vault_scopes(id) ON DELETE CASCADE,
+      file_path TEXT UNIQUE NOT NULL,
+      filename TEXT NOT NULL,
+      file_extension TEXT NOT NULL,
+      mime_type TEXT,
+      size_bytes INTEGER NOT NULL,
+      content_hash TEXT NOT NULL,
+      file_modified_at TEXT NOT NULL,
+      extraction_status TEXT NOT NULL DEFAULT 'pending',
+      extracted_text TEXT,
+      extracted_word_count INTEGER DEFAULT 0,
+      thumbnail_path TEXT,
+      is_stale INTEGER DEFAULT 0,
+      indexed_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Semantic chunks (shared by notes and sources)
+    CREATE TABLE IF NOT EXISTS vault_chunks (
+      id TEXT PRIMARY KEY,
+      note_id TEXT REFERENCES vault_notes(id) ON DELETE CASCADE,
+      source_id TEXT REFERENCES vault_sources(id) ON DELETE CASCADE,
+      chunk_index INTEGER NOT NULL,
+      content TEXT NOT NULL,
+      token_count INTEGER,
+      embedding BLOB,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      CHECK (
+        (note_id IS NOT NULL AND source_id IS NULL) OR
+        (note_id IS NULL AND source_id IS NOT NULL)
+      )
+    );
+
+    -- Agent access audit log
+    CREATE TABLE IF NOT EXISTS vault_agent_reads (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      note_id TEXT REFERENCES vault_notes(id) ON DELETE CASCADE,
+      source_id TEXT REFERENCES vault_sources(id) ON DELETE CASCADE,
+      chunk_id TEXT REFERENCES vault_chunks(id) ON DELETE CASCADE,
+      conversation_id TEXT,
+      relevance_score REAL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Note templates
+    CREATE TABLE IF NOT EXISTS vault_templates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Knowledge graph: concepts (shared entities connecting documents)
+    CREATE TABLE IF NOT EXISTS vault_concepts (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'topic',
+      description TEXT,
+      embedding BLOB,
+      mention_count INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Knowledge graph: concept references (which documents mention which concepts)
+    CREATE TABLE IF NOT EXISTS vault_concept_refs (
+      id TEXT PRIMARY KEY,
+      concept_id TEXT NOT NULL REFERENCES vault_concepts(id) ON DELETE CASCADE,
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      relationship TEXT NOT NULL DEFAULT 'mentions',
+      context TEXT,
+      confidence REAL DEFAULT 1.0,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- Knowledge graph: edges between documents (semantic + concept-mediated)
+    CREATE TABLE IF NOT EXISTS vault_edges (
+      id TEXT PRIMARY KEY,
+      source_type TEXT NOT NULL,
+      source_id TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      edge_type TEXT NOT NULL,
+      score REAL,
+      label TEXT,
+      via_concept_id TEXT REFERENCES vault_concepts(id) ON DELETE SET NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(source_type, source_id, target_type, target_id, edge_type)
+    );
+
+    -- Knowledge graph: tracks which documents have been analyzed
+    CREATE TABLE IF NOT EXISTS vault_graph_status (
+      document_type TEXT NOT NULL,
+      document_id TEXT NOT NULL,
+      content_hash TEXT,
+      semantic_edges_at TEXT,
+      concepts_extracted_at TEXT,
+      PRIMARY KEY (document_type, document_id)
+    );
+
+    -- Vault indexes
+    CREATE INDEX IF NOT EXISTS idx_vault_notes_folder ON vault_notes(folder_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_notes_daily ON vault_notes(is_daily, daily_date);
+    CREATE INDEX IF NOT EXISTS idx_vault_notes_updated ON vault_notes(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_vault_notes_slug ON vault_notes(slug);
+    CREATE INDEX IF NOT EXISTS idx_vault_note_tags_note ON vault_note_tags(note_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_note_tags_tag ON vault_note_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_links_source ON vault_links(source_note_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_links_target ON vault_links(target_note_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_versions_note ON vault_versions(note_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_sources_scope ON vault_sources(scope_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_sources_path ON vault_sources(file_path);
+    CREATE INDEX IF NOT EXISTS idx_vault_sources_hash ON vault_sources(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_vault_sources_stale ON vault_sources(is_stale);
+    CREATE INDEX IF NOT EXISTS idx_vault_chunks_note ON vault_chunks(note_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_chunks_source ON vault_chunks(source_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_agent_reads_agent ON vault_agent_reads(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_concepts_name ON vault_concepts(name);
+    CREATE INDEX IF NOT EXISTS idx_vault_concepts_type ON vault_concepts(type);
+    CREATE INDEX IF NOT EXISTS idx_vault_concept_refs_concept ON vault_concept_refs(concept_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_concept_refs_document ON vault_concept_refs(document_type, document_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_edges_source ON vault_edges(source_type, source_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_edges_target ON vault_edges(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_vault_edges_type ON vault_edges(edge_type);
+  `);
+
+  // FTS5 full-text search index for vault notes
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vault_notes_fts USING fts5(
+        title, content_plain,
+        content='vault_notes',
+        content_rowid='rowid'
+      );
+    `);
+  } catch (e) {
+    if (!e.message.includes('already exists')) {
+      console.warn('vault_notes_fts setup warning:', e.message);
+    }
+  }
+
+  // FTS5 for vault concept search
+  try {
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS vault_concepts_fts USING fts5(
+        name, description,
+        content='vault_concepts',
+        content_rowid='rowid'
+      );
+    `);
+  } catch (e) {
+    if (!e.message.includes('already exists')) {
+      console.warn('vault_concepts_fts setup warning:', e.message);
+    }
+  }
 }
 
 module.exports = { createSchema };

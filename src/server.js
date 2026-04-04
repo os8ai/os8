@@ -537,6 +537,13 @@ async function createServer() {
   const SimService = require('./services/sim');
   app.use('/api/agent/:agentId/sim', (req, res, next) => { req.agentId = req.params.agentId; next(); }, createSimRouter(db, { SimService, SettingsService, getPort }));
 
+  // Vault routes (knowledge layer)
+  const createVaultRouter = require('./routes/vault');
+  const VaultService = require('./services/vault');
+  const VaultIndexerService = require('./services/vault-indexer');
+  const VaultGraphService = require('./services/vault-graph');
+  app.use('/api/vault', createVaultRouter(db, { VaultService, VaultIndexerService, VaultGraphService }));
+
   // Call page route - renders mobile-first call UI
   app.get('/call/:callId', (req, res) => {
     const { callId } = req.params;

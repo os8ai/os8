@@ -63,14 +63,14 @@
     }
 
     .home-action-btn.assistant {
-      background: rgba(var(--color-primary-rgb), 0.6);
+      background: var(--color-primary);
       color: var(--color-text);
       position: relative;
       transition: all 0.2s ease;
     }
 
     .home-action-btn.assistant::after {
-      content: 'Agent';
+      content: 'Agents';
       position: absolute;
       top: 100%;
       left: 50%;
@@ -93,7 +93,41 @@
     }
 
     .home-action-btn.assistant:hover {
-      background: rgba(var(--color-primary-rgb), 0.9);
+      background: var(--color-primary-hover);
+    }
+
+    .home-action-btn.vault {
+      background: var(--color-primary);
+      color: var(--color-text);
+      position: relative;
+      transition: all 0.2s ease;
+    }
+
+    .home-action-btn.vault::after {
+      content: 'Vault';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      margin-top: 8px;
+      background: var(--color-white);
+      color: var(--color-black);
+      padding: 6px 12px;
+      border-radius: var(--radius-md);
+      font-size: var(--text-base);
+      font-weight: 500;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+      pointer-events: none;
+    }
+
+    .home-action-btn.vault:hover::after {
+      opacity: 1;
+    }
+
+    .home-action-btn.vault:hover {
+      background: var(--color-primary-hover);
     }
 
     .home-action-btn.trash {

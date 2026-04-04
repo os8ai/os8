@@ -608,7 +608,7 @@ class MemoryService {
     const chunks = this.getChunksByIds(topCandidates.map(s => s.id));
 
     // Post-rerank with category boost and recency boost
-    const categoryBoost = { 'identity': 1.2, 'session_digest': 1.1, 'daily_digest': 1.05, 'curated': 1.15, 'daily': 1.0 };
+    const categoryBoost = { 'identity': 1.2, 'session_digest': 1.1, 'daily_digest': 1.05, 'curated': 1.15, 'daily': 1.0, 'vault': 1.3 };
     const now = Date.now();
     const recencyCutoff = now - (recencyBoostDays * 24 * 60 * 60 * 1000);
 
@@ -654,6 +654,38 @@ class MemoryService {
   // Legacy search method (now uses hybrid search)
   async search(query, topK = 5) {
     return this.searchHybrid(query, topK);
+  }
+
+  // Search vault chunks for relevant knowledge (runs in parallel with memory search)
+  async _searchVault(query, topK = 5) {
+    try {
+      const VaultService = require('../services/vault');
+      const count = this.db.prepare(
+        'SELECT COUNT(*) as c FROM vault_chunks WHERE embedding IS NOT NULL'
+      ).get();
+      if (!count || count.c === 0) return [];
+
+      const results = await VaultService.searchForAgent(this.db, query, {
+        agent_id: this.appId,
+        limit: topK,
+        min_relevance: 0.40,
+        mode: 'passive',
+        graphExpand: true,
+        graphDepth: 1,
+      });
+
+      return results.map(r => ({
+        id: `vault:${r.chunk_id}`,
+        text: r.content,
+        source: `vault:${r.title || 'indexed file'}`,
+        category: 'vault',
+        score: r.score,
+      }));
+    } catch (err) {
+      // Vault search is non-critical — don't block memory pipeline
+      console.warn('[Memory] Vault search error:', err.message);
+      return [];
+    }
   }
 
   // Check if message is simple enough to skip semantic search
@@ -833,14 +865,25 @@ class MemoryService {
             ? `${keywords.join(' ')}\n\n${recentMessages}`
             : recentMessages || message;
 
-          const searchResults = await this.searchHybrid(searchQuery, 10, { excludeLast24Hours: true });
+          const [searchResults, vaultResults] = await Promise.all([
+            this.searchHybrid(searchQuery, 10, { excludeLast24Hours: true }),
+            this._searchVault(searchQuery, 5),
+          ]);
+
+          // Merge memory and vault results, then process
+          const allResults = [...searchResults, ...vaultResults];
 
           // Build drill-down context from search results
           let semanticChars = 0;
+          let vaultChars = 0;
+          const vaultBudget = Math.floor(semanticBudgetChars * 0.3);
           const semanticParts = [];
 
-          for (const hit of searchResults) {
+          for (const hit of allResults) {
             if (semanticChars >= semanticBudgetChars) break;
+
+            // Cap vault contribution to 30% of semantic budget
+            if (hit.category === 'vault' && vaultChars >= vaultBudget) continue;
 
             // Identity file hits: include as-is
             if (hit.source === 'MYSELF.md' || hit.source === 'USER.md') {
@@ -915,10 +958,11 @@ class MemoryService {
               continue;
             }
 
-            // Other chunks: include as-is
+            // Other chunks (including vault): include as-is
             if (semanticChars + hit.text.length <= semanticBudgetChars) {
               context.relevantMemory.push(hit);
               semanticChars += hit.text.length;
+              if (hit.category === 'vault') vaultChars += hit.text.length;
             }
           }
         }

@@ -79,6 +79,15 @@ function registerFilesHandlers({ db, services }) {
       return { error: err.message };
     }
   });
+
+  ipcMain.handle('files:pick-directory', async (event, defaultPath) => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      defaultPath: defaultPath || require('os').homedir(),
+    });
+    if (canceled || !filePaths.length) return { canceled: true };
+    return { path: filePaths[0] };
+  });
 }
 
 module.exports = registerFilesHandlers;

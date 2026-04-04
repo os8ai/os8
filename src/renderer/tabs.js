@@ -16,7 +16,8 @@ import {
   getTerminalIdCounter, setTerminalIdCounter,
   getShowHiddenFiles, setShowHiddenFiles,
   getPanelMode, setPanelMode, setJobsView, setSelectedJobId,
-  getJobsFilterView, setJobsFilterView
+  getJobsFilterView, setJobsFilterView,
+  getVaultTab
 } from './state.js';
 import { hideAllPreviews, hidePreviewForApp, loadPreview, updatePreviewBounds, destroyPreviewForApp } from './preview.js';
 import { switchStorageView, loadStorageView } from './file-tree.js';
@@ -49,8 +50,11 @@ export function renderTabBar() {
     const isHome = tab.type === 'home';
     const isDraggable = !isHome; // Home tab is not draggable
 
-    const tabColor = tab.app?.color || '#6366f1';
-    const tabIcon = tab.app?.icon || tab.title.charAt(0).toUpperCase();
+    const isVault = tab.type === 'vault';
+    const isAssistant = tab.app?.is_system === 1;
+    const tabColor = isVault ? '#3b82f6' : (tab.app?.color || '#6366f1');
+    const tabTitle = isAssistant ? 'Agents' : tab.title;
+    const tabIcon = isVault ? 'V' : isAssistant ? 'A' : (tab.app?.icon || tab.title.charAt(0).toUpperCase());
     return `
       <div class="tab ${isActive ? 'active' : ''}" data-tab-id="${tab.id}" ${isDraggable ? 'draggable="true"' : ''}>
         ${!isHome ? `
@@ -60,7 +64,7 @@ export function renderTabBar() {
             </span>
           </span>
         ` : ''}
-        <span class="tab-title">${tab.title}</span>
+        <span class="tab-title">${tabTitle}</span>
         ${tab.closable ? `
           <span class="tab-close" data-tab-id="${tab.id}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -224,6 +228,8 @@ export async function switchToTab(tabId) {
   // Hide all views
   homeView.classList.remove('active');
   workspaceView.classList.remove('active');
+  const vaultView = document.getElementById('vaultView');
+  if (vaultView) vaultView.classList.remove('active');
 
   if (targetTab.type === 'home') {
     // Show home view
@@ -231,6 +237,13 @@ export async function switchToTab(tabId) {
     setCurrentApp(null);
     await hideAllPreviews();
     await callbacks.loadApps();
+  } else if (targetTab.type === 'vault') {
+    // Show vault view
+    if (vaultView) vaultView.classList.add('active');
+    setCurrentApp(null);
+    await hideAllPreviews();
+    const { showVaultPanel } = await import('./vault.js');
+    showVaultPanel();
   } else if (targetTab.type === 'app') {
     // Restore app workspace
     await restoreTabState(targetTab);
@@ -272,6 +285,26 @@ export async function createAppTab(app, options = {}) {
   return tab;
 }
 
+export async function createVaultTab() {
+  const existing = getVaultTab();
+  if (existing) {
+    await switchToTab(existing.id);
+    return existing;
+  }
+
+  const tab = {
+    id: 'vault',
+    type: 'vault',
+    title: 'Vault',
+    closable: true
+  };
+
+  addTab(tab);
+  renderTabBar();
+  await switchToTab(tab.id);
+  return tab;
+}
+
 export async function closeTab(tabId) {
   if (tabId === 'home') return;
 
@@ -309,9 +342,9 @@ export async function closeTab(tabId) {
     else if (index > 1 && currentTabs[index - 1].type === 'app') {
       newActiveTab = currentTabs[index - 1];
     }
-    // Check if there's ANY other app tab
+    // Check if there's ANY other app or vault tab
     else {
-      newActiveTab = currentTabs.find(t => t.type === 'app');
+      newActiveTab = currentTabs.find(t => t.type === 'app' || t.type === 'vault');
     }
     // Fall back to home
     if (!newActiveTab) {
@@ -604,7 +637,15 @@ export async function restoreTabState(tab) {
 }
 
 export async function cleanupTabResources(tab) {
-  if (!tab || tab.type !== 'app') return;
+  if (!tab) return;
+
+  if (tab.type === 'vault') {
+    const { cleanupVault } = await import('./vault.js');
+    cleanupVault();
+    return;
+  }
+
+  if (tab.type !== 'app') return;
 
   // Destroy the BrowserView for this app
   if (tab.app?.id) {

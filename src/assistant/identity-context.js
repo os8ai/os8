@@ -640,7 +640,12 @@ function buildSemanticMemoryContext(memoryContext) {
     return '';
   }
 
-  let result = '<relevant_memory description="Semantically relevant past conversations and information retrieved from long-term memory">\n';
+  const hasVaultResults = memoryContext.relevantMemory.some(c => c.category === 'vault');
+  const vaultCitation = hasVaultResults
+    ? ' When citing information from vault knowledge sources, mention the source naturally (e.g., "Based on your notes about X..." or "From your document Y...").'
+    : '';
+
+  let result = `<relevant_memory description="Semantically relevant past conversations and information retrieved from long-term memory.${vaultCitation}">\n`;
   for (const chunk of memoryContext.relevantMemory) {
     // Label drill-down entries clearly
     let label = chunk.source;
@@ -650,6 +655,8 @@ function buildSemanticMemoryContext(memoryContext) {
       label = 'daily summary';
     } else if (chunk.category === 'session_digest') {
       label = 'session summary';
+    } else if (chunk.category === 'vault') {
+      label = `vault: ${chunk.source.replace(/^vault:/, '')}`;
     }
     result += `[${label}] ${chunk.text}\n\n`;
   }

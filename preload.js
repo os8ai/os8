@@ -196,6 +196,7 @@ contextBridge.exposeInMainWorld('os8', {
     getPaths: (appId, agentId) => ipcRenderer.invoke('files:get-paths', appId, agentId),
     read: (filePath) => ipcRenderer.invoke('files:read', filePath),
     download: (filePath) => ipcRenderer.invoke('files:download', filePath),
+    pickDirectory: (defaultPath) => ipcRenderer.invoke('files:pick-directory', defaultPath),
   },
 
   // Terminal (PTY)
