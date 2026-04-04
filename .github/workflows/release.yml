@@ -16,10 +16,16 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
+            arch_flag: ""
           - os: ubuntu-latest
             platform: linux
+            arch_flag: ""
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch_flag: "--arm64"
           - os: windows-latest
             platform: win
+            arch_flag: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -34,14 +40,14 @@ jobs:
         run: npm ci
 
       - name: Build for ${{ matrix.platform }}
-        run: npx electron-builder --${{ matrix.platform }} --publish never
+        run: npx electron-builder --${{ matrix.platform }} ${{ matrix.arch_flag }} --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: os8-${{ matrix.platform }}
+          name: os8-${{ matrix.os }}
           path: |
             dist/*.dmg
             dist/*.exe
