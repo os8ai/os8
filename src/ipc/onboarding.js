@@ -28,6 +28,30 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     SettingsService.set(db, 'onboarding_step', '6');
   });
 
+  // Check Node.js availability and download if needed
+  ipcMain.handle('onboarding:ensure-node', async () => {
+    const { checkNode, downloadNode } = require('../utils/node-setup');
+    const check = checkNode();
+
+    if (check.ok) {
+      return { ok: true, version: check.version, downloaded: false };
+    }
+
+    // Node missing or too old — download to ~/.os8/node/
+    const send = (data) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('onboarding:node-progress', data);
+      }
+    };
+
+    const result = await downloadNode(send);
+    if (result.success) {
+      const recheck = checkNode();
+      return { ok: recheck.ok, version: recheck.version, downloaded: true };
+    }
+    return { ok: false, version: check.version, downloaded: false, error: result.error };
+  });
+
   // Find npm binary — must succeed before CLI install or core setup
   ipcMain.handle('onboarding:find-npm', () => {
     const { findNpm } = require('../utils/npm-path');

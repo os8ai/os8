@@ -19,10 +19,11 @@ const CLI_PACKAGES = {
   grok:   { pkg: '@vibe-kit/grok-cli', minNode: 18 },
 };
 
-// OS8-managed CLI install prefix — user-writable, no sudo needed
+// OS8-managed directories — user-writable, no sudo needed
 const OS8_DIR = process.env.OS8_HOME || path.join(os.homedir(), 'os8');
 const CLI_PREFIX = path.join(OS8_DIR, 'cli');
 const CLI_BIN = path.join(CLI_PREFIX, 'bin');
+const NODE_BIN = path.join(OS8_DIR, 'node', 'bin');
 
 /**
  * Get the npm global bin directory. Cached after first successful call.
@@ -52,12 +53,14 @@ function getNpmGlobalBin() {
 }
 
 /**
- * Build a PATH string that includes OS8 CLI bin + npm global bin + SEARCH_PATH.
+ * Build a PATH string that includes OS8 Node + CLI bin + npm global bin + SEARCH_PATH.
  * Used for spawn env and `which` checks.
  */
 function getExpandedPath() {
   const parts = [];
-  // OS8-managed CLI bin first (highest priority)
+  // OS8-managed Node bin (highest priority — guarantees Node 20+)
+  if (fs.existsSync(NODE_BIN)) parts.push(NODE_BIN);
+  // OS8-managed CLI bin
   if (fs.existsSync(CLI_BIN)) parts.push(CLI_BIN);
   // npm global bin (may be null on some systems)
   const npmBin = getNpmGlobalBin();
@@ -93,21 +96,13 @@ function findCli(command) {
 }
 
 /**
- * Get the system Node.js major version. Returns number or null.
+ * Get the best available Node.js major version.
+ * Checks OS8-managed Node first, then system.
  */
 function getNodeMajorVersion() {
-  try {
-    const ver = execSync('node --version', {
-      encoding: 'utf-8',
-      timeout: 5000,
-      env: { PATH: SEARCH_PATH }
-    }).trim();
-    // e.g. "v18.19.1" -> 18
-    const match = ver.match(/^v(\d+)/);
-    return match ? parseInt(match[1], 10) : null;
-  } catch {
-    return null;
-  }
+  const { getNodeInfo } = require('./node-setup');
+  const info = getNodeInfo();
+  return info.version;
 }
 
 /**

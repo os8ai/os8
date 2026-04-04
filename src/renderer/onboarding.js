@@ -157,6 +157,10 @@ async function showSplash() {
       <div class="onboarding-splash-progress-bar indeterminate"></div>
     </div>
     <div class="onboarding-splash-tasks">
+      <div class="onboarding-splash-task" id="splashTaskNode">
+        <span class="task-icon">&#9675;</span>
+        <span>Node.js runtime</span>
+      </div>
       <div class="onboarding-splash-task" id="splashTaskCore">
         <span class="task-icon">&#9675;</span>
         <span>Development environment</span>
@@ -169,28 +173,36 @@ async function showSplash() {
     <div id="splashError" style="display:none;"></div>
   `;
 
-  // Step 0: Find npm — required for core setup and CLI install
-  const npmPath = await window.os8.onboarding.findNpm();
-  if (!npmPath) {
+  // Step 0: Ensure Node.js 20+ is available (downloads to ~/.os8/node/ if needed)
+  window.os8.onboarding.onNodeProgress?.((data) => {
+    const statusEl = document.getElementById('splashStatus');
+    if (statusEl && data.message) statusEl.textContent = data.message;
+  });
+
+  const nodeResult = await window.os8.onboarding.ensureNode();
+  if (!nodeResult.ok) {
     const statusEl = document.getElementById('splashStatus');
     const errorEl = document.getElementById('splashError');
-    if (statusEl) statusEl.textContent = 'Node.js is required';
+    if (statusEl) statusEl.textContent = 'Node.js setup failed';
     if (errorEl) {
       errorEl.style.display = 'block';
       errorEl.innerHTML = `
-        <p style="color: #94a3b8; margin: 16px 0 8px;">npm was not found on this system.</p>
-        <p style="color: #94a3b8;">Install Node.js from
+        <p style="color: #94a3b8; margin: 16px 0 8px;">${nodeResult.error || 'Could not install Node.js automatically.'}</p>
+        <p style="color: #94a3b8;">Install Node.js 20+ from
           <a href="#" style="color: #60a5fa;" onclick="window.os8.openExternal && window.os8.openExternal('https://nodejs.org'); return false;">nodejs.org</a>
           and restart OS8.</p>
       `;
     }
-    // Hide progress bar and tasks — they won't run
     const progress = splash.querySelector('.onboarding-splash-progress');
     const tasks = splash.querySelector('.onboarding-splash-tasks');
     if (progress) progress.style.display = 'none';
     if (tasks) tasks.style.display = 'none';
-    return; // Block here — onboarding gate never resolves until restart
+    return;
   }
+  markSplashTask('splashTaskNode');
+
+  // Step 1: Find npm — guaranteed to exist now (either system or ~/.os8/node/bin/npm)
+  const npmPath = await window.os8.onboarding.findNpm();
 
   // Check what's already done
   const coreStatus = await window.os8.core.getStatus();
