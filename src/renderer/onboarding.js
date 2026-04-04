@@ -7,6 +7,9 @@
 
 import { setCoreReady } from './state.js';
 
+// --- Onboarding gate (resolved when user finishes all steps) ---
+let _resolveOnboarding = null;
+
 // --- Constants ---
 const STEPS = [
   { num: 1, label: null },
@@ -110,28 +113,33 @@ export async function checkOnboarding() {
     const status = await window.os8.onboarding.getStatus();
     if (status.complete === '1') return;
 
+    // Promise that blocks init() until the user finishes all onboarding steps
+    const onboardingDone = new Promise(resolve => { _resolveOnboarding = resolve; });
+
     const { overlay } = els();
     if (overlay) overlay.style.display = 'flex';
 
     const step = parseInt(status.step) || 0;
 
     if (step === 0) {
-      await showSplash();
+      showSplash(); // fire-and-forget — completeOnboarding() resolves the gate
     } else {
       // Resume — skip splash, go to stored step
       currentStep = step;
-      // Load existing data
       const existing = await window.os8.settings.get('user_first_name');
       if (existing) userName = existing;
       providerStatuses = await window.os8.onboarding.detectProviders();
       showWizard(step);
     }
+
+    await onboardingDone;
   } catch (err) {
     console.error('[Onboarding] Failed to check status:', err);
     // Show onboarding anyway — better to show it than silently skip to home page
     const { overlay } = els();
     if (overlay) overlay.style.display = 'flex';
-    await showSplash();
+    showSplash();
+    // Don't block on error — let init continue so the app isn't permanently stuck
   }
 }
 
@@ -870,6 +878,12 @@ async function completeOnboarding() {
   // Hide overlay
   const { overlay } = els();
   overlay.style.display = 'none';
+
+  // Signal to checkOnboarding() that onboarding is done — unblocks init()
+  if (_resolveOnboarding) {
+    _resolveOnboarding();
+    _resolveOnboarding = null;
+  }
 
   // Enable New App button if core is ready
   const newAppBtn = document.getElementById('newAppBtn');

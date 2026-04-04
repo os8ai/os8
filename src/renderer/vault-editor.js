@@ -5,12 +5,26 @@
  * Provides a clean API for vault.js to mount, read, and control the editor.
  */
 
-const CM = window.CodeMirror;
+// Lazy-init: defer access to window.CodeMirror so a missing vendor bundle
+// doesn't crash the module at import time and take down the entire renderer.
+let _CM = null;
+function getCM() {
+  if (!_CM) {
+    _CM = window.CodeMirror;
+    if (!_CM) throw new Error('CodeMirror not loaded — vendor/codemirror.js may be missing');
+  }
+  return _CM;
+}
+
+let _readOnlyCompartment = null;
+function getReadOnlyCompartment() {
+  if (!_readOnlyCompartment) _readOnlyCompartment = new (getCM().Compartment)();
+  return _readOnlyCompartment;
+}
 
 let editorView = null;
 let onSaveCallback = null;
 let onChangeCallback = null;
-const readOnlyCompartment = new CM.Compartment();
 
 // Port cache for API calls
 let _port = null;
@@ -45,7 +59,10 @@ export async function refreshKnownTitles() {
 // OS8 dark theme
 // ============================================================
 
-const os8Theme = CM.EditorView.theme({
+// Theme and highlighting are built lazily (getCM() defers until first use)
+let _os8Theme = null;
+function getOs8Theme() {
+  if (!_os8Theme) _os8Theme = getCM().EditorView.theme({
   '&': {
     backgroundColor: 'transparent',
     color: '#e2e8f0',
@@ -132,25 +149,33 @@ const os8Theme = CM.EditorView.theme({
     color: '#64748b',
     borderBottom: '1px dashed #475569',
   },
-}, { dark: true });
+  }, { dark: true });
+  return _os8Theme;
+}
 
-// Markdown syntax highlighting styles
-const markdownHighlighting = CM.HighlightStyle.define([
-  { tag: CM.tags.heading1, fontWeight: '700', fontSize: '1.5em', color: '#e2e8f0' },
-  { tag: CM.tags.heading2, fontWeight: '600', fontSize: '1.3em', color: '#e2e8f0' },
-  { tag: CM.tags.heading3, fontWeight: '600', fontSize: '1.15em', color: '#e2e8f0' },
-  { tag: CM.tags.heading4, fontWeight: '600', color: '#e2e8f0' },
-  { tag: CM.tags.strong, fontWeight: '600', color: '#f8fafc' },
-  { tag: CM.tags.emphasis, fontStyle: 'italic', color: '#cbd5e1' },
-  { tag: CM.tags.link, color: '#60a5fa', textDecoration: 'underline' },
-  { tag: CM.tags.url, color: '#60a5fa' },
-  { tag: CM.tags.monospace, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '0.9em',
-    backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: '3px', padding: '1px 4px' },
-  { tag: CM.tags.quote, color: '#94a3b8', fontStyle: 'italic' },
-  { tag: CM.tags.strikethrough, textDecoration: 'line-through', color: '#64748b' },
-  { tag: CM.tags.processingInstruction, color: '#64748b' }, // Markdown markup chars
-  { tag: CM.tags.list, color: '#94a3b8' },
-]);
+let _markdownHighlighting = null;
+function getMarkdownHighlighting() {
+  if (!_markdownHighlighting) {
+    const CM = getCM();
+    _markdownHighlighting = CM.HighlightStyle.define([
+      { tag: CM.tags.heading1, fontWeight: '700', fontSize: '1.5em', color: '#e2e8f0' },
+      { tag: CM.tags.heading2, fontWeight: '600', fontSize: '1.3em', color: '#e2e8f0' },
+      { tag: CM.tags.heading3, fontWeight: '600', fontSize: '1.15em', color: '#e2e8f0' },
+      { tag: CM.tags.heading4, fontWeight: '600', color: '#e2e8f0' },
+      { tag: CM.tags.strong, fontWeight: '600', color: '#f8fafc' },
+      { tag: CM.tags.emphasis, fontStyle: 'italic', color: '#cbd5e1' },
+      { tag: CM.tags.link, color: '#60a5fa', textDecoration: 'underline' },
+      { tag: CM.tags.url, color: '#60a5fa' },
+      { tag: CM.tags.monospace, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '0.9em',
+        backgroundColor: 'rgba(255, 255, 255, 0.06)', borderRadius: '3px', padding: '1px 4px' },
+      { tag: CM.tags.quote, color: '#94a3b8', fontStyle: 'italic' },
+      { tag: CM.tags.strikethrough, textDecoration: 'line-through', color: '#64748b' },
+      { tag: CM.tags.processingInstruction, color: '#64748b' }, // Markdown markup chars
+      { tag: CM.tags.list, color: '#94a3b8' },
+    ]);
+  }
+  return _markdownHighlighting;
+}
 
 // ============================================================
 // Format helpers
@@ -286,8 +311,16 @@ async function fetchTagSuggestions(query) {
 
 const wikilinkRegex = /\[\[([^\]]+)\]\]/g;
 
-const resolvedDeco = CM.Decoration.mark({ class: 'cm-wikilink-resolved' });
-const unresolvedDeco = CM.Decoration.mark({ class: 'cm-wikilink-unresolved' });
+let _resolvedDeco = null;
+let _unresolvedDeco = null;
+function getResolvedDeco() {
+  if (!_resolvedDeco) _resolvedDeco = getCM().Decoration.mark({ class: 'cm-wikilink-resolved' });
+  return _resolvedDeco;
+}
+function getUnresolvedDeco() {
+  if (!_unresolvedDeco) _unresolvedDeco = getCM().Decoration.mark({ class: 'cm-wikilink-unresolved' });
+  return _unresolvedDeco;
+}
 
 function buildWikilinkDecos(view) {
   const builder = [];
@@ -300,29 +333,36 @@ function buildWikilinkDecos(view) {
     const start = from + m.index;
     const end = start + m[0].length;
     const title = m[1].trim().toLowerCase();
-    const deco = knownTitles.has(title) ? resolvedDeco : unresolvedDeco;
+    const deco = knownTitles.has(title) ? getResolvedDeco() : getUnresolvedDeco();
     builder.push(deco.range(start, end));
   }
 
-  return CM.Decoration.set(builder, true);
+  return getCM().Decoration.set(builder, true);
 }
 
-const wikilinkDecoPlugin = CM.ViewPlugin.fromClass(class {
-  constructor(view) {
-    this.decorations = buildWikilinkDecos(view);
+let _wikilinkDecoPlugin = null;
+function getWikilinkDecoPlugin() {
+  if (!_wikilinkDecoPlugin) {
+    _wikilinkDecoPlugin = getCM().ViewPlugin.fromClass(class {
+      constructor(view) {
+        this.decorations = buildWikilinkDecos(view);
+      }
+      update(update) {
+        if (update.docChanged || update.viewportChanged || update.transactions.length) {
+          this.decorations = buildWikilinkDecos(update.view);
+        }
+      }
+    }, { decorations: v => v.decorations });
   }
-  update(update) {
-    if (update.docChanged || update.viewportChanged || update.transactions.length) {
-      this.decorations = buildWikilinkDecos(update.view);
-    }
-  }
-}, { decorations: v => v.decorations });
+  return _wikilinkDecoPlugin;
+}
 
 // ============================================================
 // Build extensions
 // ============================================================
 
 function buildExtensions() {
+  const CM = getCM();
   const vaultKeymap = CM.keymap.of([
     { key: 'Mod-s', run: () => { if (onSaveCallback) onSaveCallback(); return true; } },
     { key: 'Mod-b', run: toggleBold },
@@ -341,8 +381,8 @@ function buildExtensions() {
     CM.bracketMatching(),
     CM.highlightSelectionMatches(),
     CM.markdown({ base: CM.markdownLanguage }),
-    CM.syntaxHighlighting(markdownHighlighting),
-    os8Theme,
+    CM.syntaxHighlighting(getMarkdownHighlighting()),
+    getOs8Theme(),
     CM.keymap.of([
       ...CM.defaultKeymap,
       ...CM.historyKeymap,
@@ -356,7 +396,7 @@ function buildExtensions() {
       activateOnTyping: true,
       closeOnBlur: true,
     }),
-    wikilinkDecoPlugin,
+    getWikilinkDecoPlugin(),
     CM.EditorView.updateListener.of(update => {
       if (update.docChanged && onChangeCallback) {
         onChangeCallback();
@@ -364,7 +404,7 @@ function buildExtensions() {
     }),
     CM.placeholder('Start writing...'),
     CM.EditorView.lineWrapping,
-    readOnlyCompartment.of(CM.EditorState.readOnly.of(false)),
+    getReadOnlyCompartment().of(CM.EditorState.readOnly.of(false)),
   ];
 }
 
@@ -377,6 +417,7 @@ export function createEditor(container, { content = '', onChange = () => {}, onS
   onSaveCallback = onSave;
   onChangeCallback = onChange;
 
+  const CM = getCM();
   editorView = new CM.EditorView({
     state: CM.EditorState.create({
       doc: content,
@@ -434,8 +475,8 @@ export function destroyEditor() {
 export function setReadOnly(readOnly) {
   if (!editorView) return;
   editorView.dispatch({
-    effects: readOnlyCompartment.reconfigure(
-      CM.EditorState.readOnly.of(readOnly)
+    effects: getReadOnlyCompartment().reconfigure(
+      getCM().EditorState.readOnly.of(readOnly)
     ),
   });
 }

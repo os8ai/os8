@@ -1,6 +1,6 @@
 {
   "name": "os8",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OS8 - Desktop workspace for AI-assisted development",
   "main": "main.js",
   "scripts": {
@@ -95,6 +95,7 @@
       "backgrounds/**/*",
       "build/**/*",
       "skills/**/*",
+      "vendor/**/*",
       "node_modules/**/*"
     ],
     "asarUnpack": [

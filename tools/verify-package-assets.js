@@ -57,6 +57,8 @@ function getRequiredAssets() {
     'main.js',
     'preload.js',
     'src/renderer/main.js',
+    'vendor/codemirror.js',
+    'vendor/d3.js',
     'node_modules/@xterm/xterm/css/xterm.css',
     'node_modules/@xterm/xterm/lib/xterm.js',
     'node_modules/@xterm/addon-fit/lib/addon-fit.js',

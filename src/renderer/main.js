@@ -1037,6 +1037,9 @@ async function init() {
   // to prevent race condition where home page flashes before overlay appears
   await checkOnboarding();
 
+  // Activate home view only after onboarding completes (not hardcoded in HTML)
+  document.getElementById('homeView').classList.add('active');
+
   renderTabBar();
   loadApps();
   loadBackgroundSetting();
