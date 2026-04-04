@@ -239,10 +239,7 @@ async function showSplash() {
           await window.os8.core.setup();
         } catch (e) {
           console.error('Core setup failed:', e);
-          // Mark as done anyway — user can retry from settings
-          splashState.core = true;
-          markSplashTask('splashTaskCore');
-          checkSplashDone();
+          showSplashCoreRetry();
         }
       })()
     );
@@ -289,6 +286,49 @@ const ERROR_LABELS = {
   npm_not_found: 'npm not found',
   install_failed: 'install failed',
 };
+
+function showSplashCoreRetry() {
+  const taskEl = document.getElementById('splashTaskCore');
+  if (!taskEl) return;
+
+  taskEl.classList.add('warning');
+  taskEl.innerHTML = `
+    <span class="task-icon" style="color: #f59e0b;">&#9888;</span>
+    <span>Development environment setup failed</span>
+    <button id="splashCoreRetryBtn" style="margin-left: 12px; padding: 4px 12px; border-radius: 6px; border: 1px solid #475569; background: transparent; color: #e2e8f0; cursor: pointer; font-size: 13px;">Retry</button>
+    <a href="#" id="splashCoreContinueAnyway" style="margin-left: 8px; color: #94a3b8; font-size: 12px; text-decoration: underline;">Continue anyway</a>
+  `;
+
+  document.getElementById('splashCoreRetryBtn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('splashCoreRetryBtn');
+    if (btn) { btn.textContent = 'Setting up...'; btn.disabled = true; }
+    const link = document.getElementById('splashCoreContinueAnyway');
+    if (link) link.style.display = 'none';
+
+    taskEl.classList.remove('warning');
+    taskEl.innerHTML = `
+      <span class="task-icon">&#9675;</span>
+      <span>Development environment</span>
+    `;
+
+    try {
+      await window.os8.core.setup();
+      splashState.core = true;
+      markSplashTask('splashTaskCore');
+      checkSplashDone();
+    } catch (e) {
+      console.error('Core setup retry failed:', e);
+      showSplashCoreRetry();
+    }
+  });
+
+  document.getElementById('splashCoreContinueAnyway')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    splashState.core = true;
+    markSplashTask('splashTaskCore');
+    checkSplashDone();
+  });
+}
 
 function showSplashCliRetry(failedClis, npmPath, errors = {}) {
   const taskEl = document.getElementById('splashTaskCli');

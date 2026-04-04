@@ -300,7 +300,7 @@ function createSettingsApiRouter(db, deps) {
     });
   });
 
-  // Backend login — spawns `claude auth login` (or equivalent) which opens browser for OAuth
+  // Backend login — opens browser for OAuth (Gemini uses direct OAuth, others spawn CLI)
   router.post('/backend/login/:backend', async (req, res) => {
     const { backend } = req.params;
     const container = AIRegistryService.getContainer(db, backend);
@@ -308,7 +308,25 @@ function createSettingsApiRouter(db, deps) {
       return res.status(400).json({ error: 'Backend does not support login' });
     }
 
-    // Determine login command and args
+    // Gemini: direct OAuth flow (CLI doesn't support headless auth)
+    if (backend === 'gemini') {
+      try {
+        const { loginWithGoogle } = require('../services/gemini-auth');
+        const result = await loginWithGoogle();
+        if (result.success) {
+          RoutingService.updateAccountStatus(db, container.provider_id, {
+            login_status: 'active',
+            last_checked_at: new Date().toISOString()
+          });
+          return res.json({ success: true });
+        }
+        return res.status(500).json({ error: result.error || 'Google login failed' });
+      } catch (e) {
+        return res.status(500).json({ error: `Google login error: ${e.message}` });
+      }
+    }
+
+    // Other backends: spawn CLI for login
     const loginArgs = container.login_trigger_args
       ? JSON.parse(container.login_trigger_args)
       : (container.login_command || '').split(' ').slice(1);
@@ -348,7 +366,7 @@ function createSettingsApiRouter(db, deps) {
     child.stderr.on('data', (d) => { stderr += d.toString(); });
 
     child.on('close', (exitCode) => {
-      // Check file-based auth as fallback (e.g. Gemini exit code 1 can still mean success)
+      // Check file-based auth as fallback (e.g. exit code 1 can still mean success)
       const fileAuthOk = container.auth_file_path &&
         fs.existsSync(path.join(os.homedir(), container.auth_file_path));
 

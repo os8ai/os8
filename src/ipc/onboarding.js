@@ -106,7 +106,7 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
   ipcMain.handle('onboarding:detect-providers', async () => {
     // Run billing checks to populate ai_account_status
     try {
-      await BillingService.checkAll(db);
+      if (BillingService) await BillingService.checkAll(db);
     } catch (e) {
       console.warn('[Onboarding] Billing check error:', e.message);
     }
