@@ -28,8 +28,14 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     SettingsService.set(db, 'onboarding_step', '6');
   });
 
+  // Find npm binary — must succeed before CLI install or core setup
+  ipcMain.handle('onboarding:find-npm', () => {
+    const { findNpm } = require('../utils/npm-path');
+    return findNpm();
+  });
+
   // Install all 4 CLI backends globally
-  ipcMain.handle('onboarding:install-clis', () => {
+  ipcMain.handle('onboarding:install-clis', (event, npmPath) => {
     return new Promise((resolve) => {
       const packages = [
         '@anthropic-ai/claude-code',
@@ -46,9 +52,9 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
 
       send({ status: 'installing', message: 'Installing CLI backends...' });
 
-      const child = spawn('npm', ['install', '-g', ...packages], {
+      const child = spawn(npmPath || 'npm', ['install', '-g', ...packages], {
         env: { ...process.env },
-        shell: true
+        shell: false
       });
 
       let output = '';
@@ -63,21 +69,34 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
       });
 
       child.on('close', (code) => {
-        if (code === 0) {
-          send({ status: 'complete', message: 'CLI backends installed' });
-          resolve({ success: true });
-        } else {
-          console.warn('[Onboarding] CLI install exited with code', code);
-          send({ status: 'error', message: 'Some CLI backends may not have installed correctly' });
-          // Resolve (not reject) — partial installs are OK, detection handles gaps
-          resolve({ success: false, output });
+        // Verify which CLIs actually installed
+        const { execSync } = require('child_process');
+        const results = {};
+        for (const cmd of ['claude', 'gemini', 'codex', 'grok']) {
+          try {
+            execSync(`which ${cmd}`, { encoding: 'utf-8', timeout: 5000 });
+            results[cmd] = true;
+          } catch {
+            results[cmd] = false;
+          }
         }
+
+        const allInstalled = Object.values(results).every(Boolean);
+
+        if (code === 0 && allInstalled) {
+          send({ status: 'complete', message: 'CLI backends installed' });
+        } else {
+          console.warn('[Onboarding] CLI install exited with code', code, 'results:', results);
+          send({ status: 'error', message: 'Some CLI backends may not have installed correctly' });
+        }
+
+        resolve({ success: code === 0, results, allInstalled });
       });
 
       child.on('error', (err) => {
         console.error('[Onboarding] CLI install error:', err);
         send({ status: 'error', message: err.message });
-        resolve({ success: false, error: err.message });
+        resolve({ success: false, error: err.message, results: {}, allInstalled: false });
       });
     });
   });

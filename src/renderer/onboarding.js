@@ -27,7 +27,7 @@ const PROVIDERS = {
     envKey: 'ANTHROPIC_API_KEY',
     hasLogin: true,
     cliCommand: 'claude',
-    loginLabel: 'Log in with Claude Code',
+    loginLabel: 'Login',
     imageCapable: false,
     placeholder: 'sk-ant-...',
     url: 'https://console.anthropic.com/settings/keys',
@@ -38,7 +38,7 @@ const PROVIDERS = {
     envKey: 'GOOGLE_API_KEY',
     hasLogin: true,
     cliCommand: 'gemini',
-    loginLabel: 'Log in with Gemini CLI',
+    loginLabel: 'Login',
     imageCapable: true,
     placeholder: 'AIza...',
     url: 'https://aistudio.google.com/apikey',
@@ -49,7 +49,7 @@ const PROVIDERS = {
     envKey: 'OPENAI_API_KEY',
     hasLogin: true,
     cliCommand: 'codex',
-    loginLabel: 'Log in with Codex CLI',
+    loginLabel: 'Login',
     imageCapable: true,
     placeholder: 'sk-...',
     url: 'https://platform.openai.com/api-keys',
@@ -152,7 +152,7 @@ async function showSplash() {
 
   splash.innerHTML = `
     <div class="onboarding-splash-logo">OS8</div>
-    <div class="onboarding-splash-status">Setting up your environment...</div>
+    <div class="onboarding-splash-status" id="splashStatus">Setting up your environment...</div>
     <div class="onboarding-splash-progress">
       <div class="onboarding-splash-progress-bar indeterminate"></div>
     </div>
@@ -166,7 +166,31 @@ async function showSplash() {
         <span>AI backends</span>
       </div>
     </div>
+    <div id="splashError" style="display:none;"></div>
   `;
+
+  // Step 0: Find npm — required for core setup and CLI install
+  const npmPath = await window.os8.onboarding.findNpm();
+  if (!npmPath) {
+    const statusEl = document.getElementById('splashStatus');
+    const errorEl = document.getElementById('splashError');
+    if (statusEl) statusEl.textContent = 'Node.js is required';
+    if (errorEl) {
+      errorEl.style.display = 'block';
+      errorEl.innerHTML = `
+        <p style="color: #94a3b8; margin: 16px 0 8px;">npm was not found on this system.</p>
+        <p style="color: #94a3b8;">Install Node.js from
+          <a href="#" style="color: #60a5fa;" onclick="window.os8.openExternal && window.os8.openExternal('https://nodejs.org'); return false;">nodejs.org</a>
+          and restart OS8.</p>
+      `;
+    }
+    // Hide progress bar and tasks — they won't run
+    const progress = splash.querySelector('.onboarding-splash-progress');
+    const tasks = splash.querySelector('.onboarding-splash-tasks');
+    if (progress) progress.style.display = 'none';
+    if (tasks) tasks.style.display = 'none';
+    return; // Block here — onboarding gate never resolves until restart
+  }
 
   // Check what's already done
   const coreStatus = await window.os8.core.getStatus();
@@ -185,10 +209,10 @@ async function showSplash() {
   }
 
   // Start installations in parallel
-  const tasks = [];
+  const installTasks = [];
 
   if (!splashState.core) {
-    tasks.push(
+    installTasks.push(
       (async () => {
         window.os8.core.onReady(() => {
           splashState.core = true;
@@ -210,10 +234,13 @@ async function showSplash() {
   }
 
   if (!splashState.cli) {
-    tasks.push(
+    installTasks.push(
       (async () => {
         try {
-          await window.os8.onboarding.installClis();
+          const result = await window.os8.onboarding.installClis(npmPath);
+          if (!result.allInstalled) {
+            console.warn('[Onboarding] Some CLIs failed to install:', result.results);
+          }
         } catch (e) {
           console.error('CLI install failed:', e);
         }

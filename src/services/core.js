@@ -173,21 +173,19 @@ export {};
       // binary crashes (SIGILL/SIGKILL) when npm runs postinstall scripts like
       // esbuild's binary validation. Use --ignore-scripts to bypass this — the
       // binaries are valid and work fine at runtime without the validation step.
-      const { execSync } = require('child_process');
       const os = require('os');
-
-      let systemNpm;
-      try {
-        systemNpm = execSync('which npm', { encoding: 'utf-8', env: { PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin' } }).trim();
-      } catch {
-        systemNpm = '/usr/local/bin/npm';
+      const { findNpm, SEARCH_PATH } = require('../utils/npm-path');
+      const systemNpm = findNpm();
+      if (!systemNpm) {
+        reject(new Error('npm not found. Please install Node.js (https://nodejs.org) and ensure npm is on your PATH.'));
+        return;
       }
 
       const cleanEnv = {
-        PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+        PATH: SEARCH_PATH,
         HOME: os.homedir(),
         USER: os.userInfo().username,
-        SHELL: process.env.SHELL || '/bin/zsh',
+        SHELL: process.env.SHELL || '/bin/sh',
         TMPDIR: os.tmpdir(),
         LANG: process.env.LANG || 'en_US.UTF-8',
       };

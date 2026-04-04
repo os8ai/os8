@@ -348,7 +348,8 @@ contextBridge.exposeInMainWorld('os8', {
     getStatus: () => ipcRenderer.invoke('onboarding:status'),
     setStep: (step) => ipcRenderer.invoke('onboarding:set-step', step),
     complete: () => ipcRenderer.invoke('onboarding:complete'),
-    installClis: () => ipcRenderer.invoke('onboarding:install-clis'),
+    findNpm: () => ipcRenderer.invoke('onboarding:find-npm'),
+    installClis: (npmPath) => ipcRenderer.invoke('onboarding:install-clis', npmPath),
     detectProviders: () => ipcRenderer.invoke('onboarding:detect-providers'),
     checkCliInstalled: (cmd) => ipcRenderer.invoke('onboarding:check-cli-installed', cmd),
     onCliProgress: (cb) => {

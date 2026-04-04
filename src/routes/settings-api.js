@@ -314,7 +314,14 @@ function createSettingsApiRouter(db, deps) {
       : (container.login_command || '').split(' ').slice(1);
     const loginCmd = container.command;
 
-    const { spawn: spawnProcess } = require('child_process');
+    // Check if CLI exists before spawning — prevents indefinite hang
+    const { execSync, spawn: spawnProcess } = require('child_process');
+    try {
+      execSync(`which ${loginCmd}`, { encoding: 'utf-8', timeout: 5000 });
+    } catch {
+      return res.status(400).json({ error: `${loginCmd} CLI not found. Please install it first.` });
+    }
+
     // Strip CLAUDECODE env var — OS8 runs inside Electron which may set it,
     // and Claude CLI refuses to launch if it detects a parent Claude session
     const loginEnv = { ...process.env };
@@ -341,16 +348,25 @@ function createSettingsApiRouter(db, deps) {
           last_checked_at: new Date().toISOString()
         });
 
-        res.json({ success: true });
+        if (!res.headersSent) res.json({ success: true });
       } else {
-        res.status(500).json({ error: 'Login failed', stderr: stderr.trim(), stdout: stdout.trim() });
+        if (!res.headersSent) res.status(500).json({ error: 'Login failed', stderr: stderr.trim(), stdout: stdout.trim() });
       }
     });
 
-    // Timeout after 5 minutes
+    child.on('error', (err) => {
+      if (!res.headersSent) {
+        res.status(500).json({ error: `Failed to start ${loginCmd}: ${err.message}` });
+      }
+    });
+
+    // Timeout after 90 seconds
     setTimeout(() => {
       try { child.kill(); } catch (e) {}
-    }, 5 * 60 * 1000);
+      if (!res.headersSent) {
+        res.status(504).json({ error: 'Login timed out. Try using an API key instead.' });
+      }
+    }, 90 * 1000);
   });
 
   return router;
