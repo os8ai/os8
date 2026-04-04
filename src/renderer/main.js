@@ -250,7 +250,7 @@ function renderArchivedApps() {
 }
 
 // ===== Main Initialization =====
-function init() {
+async function init() {
   // Start system clock
   startClock();
 
@@ -1032,14 +1032,15 @@ function init() {
   });
 
   // ===== Final Init =====
+
+  // Onboarding (first-run experience) — must complete before rendering home page
+  // to prevent race condition where home page flashes before overlay appears
+  await checkOnboarding();
+
   renderTabBar();
   loadApps();
   loadBackgroundSetting();
   loadProviders();
-
-  // Onboarding (first-run experience) — checks and shows overlay if needed
-  // Must run before core services to control the install experience
-  checkOnboarding();
 
   // Core Services setup (no-ops if already done by onboarding splash)
   initCoreServices(newAppBtn);

@@ -106,24 +106,32 @@ const els = () => ({
  * Called from main.js init().
  */
 export async function checkOnboarding() {
-  const status = await window.os8.onboarding.getStatus();
-  if (status.complete === '1') return;
+  try {
+    const status = await window.os8.onboarding.getStatus();
+    if (status.complete === '1') return;
 
-  const { overlay } = els();
-  overlay.style.display = 'flex';
+    const { overlay } = els();
+    if (overlay) overlay.style.display = 'flex';
 
-  const step = parseInt(status.step) || 0;
+    const step = parseInt(status.step) || 0;
 
-  if (step === 0) {
+    if (step === 0) {
+      await showSplash();
+    } else {
+      // Resume — skip splash, go to stored step
+      currentStep = step;
+      // Load existing data
+      const existing = await window.os8.settings.get('user_first_name');
+      if (existing) userName = existing;
+      providerStatuses = await window.os8.onboarding.detectProviders();
+      showWizard(step);
+    }
+  } catch (err) {
+    console.error('[Onboarding] Failed to check status:', err);
+    // Show onboarding anyway — better to show it than silently skip to home page
+    const { overlay } = els();
+    if (overlay) overlay.style.display = 'flex';
     await showSplash();
-  } else {
-    // Resume — skip splash, go to stored step
-    currentStep = step;
-    // Load existing data
-    const existing = await window.os8.settings.get('user_first_name');
-    if (existing) userName = existing;
-    providerStatuses = await window.os8.onboarding.detectProviders();
-    showWizard(step);
   }
 }
 

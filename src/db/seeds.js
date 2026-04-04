@@ -466,12 +466,18 @@ This file defines who you are. You can evolve it over time as you learn and grow
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_step', '0')").run();
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_complete', '0')").run();
 
-  // Auto-complete onboarding for existing users (already have agents set up)
+  // One-time migration: auto-complete onboarding for users who existed before
+  // onboarding was added (they already have agents). Gated by migration key so it
+  // runs once and never interferes with fresh installs on subsequent startups.
   try {
-    const agentCount = db.prepare('SELECT COUNT(*) as c FROM agents').get().c;
-    if (agentCount > 0) {
-      db.prepare("UPDATE settings SET value = '1' WHERE key = 'onboarding_complete' AND value = '0'").run();
-      db.prepare("UPDATE settings SET value = '6' WHERE key = 'onboarding_step' AND value = '0'").run();
+    const migrated = db.prepare("SELECT value FROM settings WHERE key = 'onboarding_v1_migrated'").get();
+    if (!migrated) {
+      const agentCount = db.prepare('SELECT COUNT(*) as c FROM agents').get().c;
+      if (agentCount > 0) {
+        db.prepare("UPDATE settings SET value = '1' WHERE key = 'onboarding_complete' AND value = '0'").run();
+        db.prepare("UPDATE settings SET value = '6' WHERE key = 'onboarding_step' AND value = '0'").run();
+      }
+      db.prepare("INSERT INTO settings (key, value) VALUES ('onboarding_v1_migrated', '1')").run();
     }
   } catch (e) {
     console.warn('[DB] Onboarding migration:', e.message);
