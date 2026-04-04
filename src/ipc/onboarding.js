@@ -34,13 +34,10 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     return findNpm();
   });
 
-  // Install all 4 CLI backends globally — each installed individually so one
-  // failure doesn't block the others (npm exits non-zero on any 404 in a batch)
+  // Install all 4 CLI backends — each installed individually to OS8-managed
+  // prefix (~/.os8/cli/) so no sudo is needed and one failure doesn't block others
   ipcMain.handle('onboarding:install-clis', async (event, npmPath) => {
-    const { CLI_PACKAGES, findCli, getExpandedPath } = require('../utils/cli-path');
-    const { execSync } = require('child_process');
-    const npm = npmPath || 'npm';
-    const env = { ...process.env, PATH: getExpandedPath() };
+    const { CLI_PACKAGES, findCli, installCli } = require('../utils/cli-path');
 
     const send = (data) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -51,7 +48,8 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
     send({ status: 'installing', message: 'Installing CLI backends...' });
 
     const results = {};
-    for (const [cmd, pkg] of Object.entries(CLI_PACKAGES)) {
+    const errors = {};
+    for (const cmd of Object.keys(CLI_PACKAGES)) {
       // Skip if already installed
       if (findCli(cmd)) {
         results[cmd] = true;
@@ -59,12 +57,11 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
       }
 
       send({ status: 'installing', message: `Installing ${cmd}...` });
-      try {
-        execSync(`${npm} install -g ${pkg}`, { encoding: 'utf-8', timeout: 120000, env });
-        results[cmd] = !!findCli(cmd);
-      } catch (e) {
-        console.warn(`[Onboarding] Failed to install ${cmd} (${pkg}):`, e.message);
-        results[cmd] = false;
+      const result = await installCli(cmd);
+      results[cmd] = result.success || !!findCli(cmd);
+      if (!results[cmd]) {
+        errors[cmd] = result.reason || 'install_failed';
+        console.warn(`[Onboarding] Failed to install ${cmd}: ${result.error}`);
       }
     }
 
@@ -74,11 +71,11 @@ function registerOnboardingHandlers({ db, mainWindow, services }) {
       send({ status: 'complete', message: 'CLI backends installed' });
     } else {
       const failed = Object.entries(results).filter(([, ok]) => !ok).map(([cmd]) => cmd);
-      console.warn('[Onboarding] CLI install results:', results);
+      console.warn('[Onboarding] CLI install results:', results, 'errors:', errors);
       send({ status: 'error', message: `Failed to install: ${failed.join(', ')}` });
     }
 
-    return { success: allInstalled, results, allInstalled };
+    return { success: allInstalled, results, allInstalled, errors };
   });
 
   // Detect all provider statuses (logins + API keys)

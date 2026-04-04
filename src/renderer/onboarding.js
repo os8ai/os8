@@ -248,7 +248,7 @@ async function showSplash() {
           } else {
             const failed = Object.entries(result.results)
               .filter(([, ok]) => !ok).map(([cmd]) => cmd);
-            showSplashCliRetry(failed, npmPath);
+            showSplashCliRetry(failed, npmPath, result.errors);
           }
         } catch (e) {
           console.error('CLI install failed:', e);
@@ -272,15 +272,26 @@ function checkSplashDone() {
   }
 }
 
-function showSplashCliRetry(failedClis, npmPath) {
+const ERROR_LABELS = {
+  node_too_old: 'requires newer Node.js',
+  npm_not_found: 'npm not found',
+  install_failed: 'install failed',
+};
+
+function showSplashCliRetry(failedClis, npmPath, errors = {}) {
   const taskEl = document.getElementById('splashTaskCli');
   if (!taskEl) return;
 
-  const names = failedClis.join(', ');
+  // Build per-CLI failure details
+  const details = failedClis.map(cmd => {
+    const reason = errors[cmd];
+    return reason ? `${cmd} (${ERROR_LABELS[reason] || reason})` : cmd;
+  }).join(', ');
+
   taskEl.classList.add('warning');
   taskEl.innerHTML = `
     <span class="task-icon" style="color: #f59e0b;">&#9888;</span>
-    <span>Failed to install: ${names}</span>
+    <span>Failed to install: ${details}</span>
     <button id="splashRetryBtn" style="margin-left: 12px; padding: 4px 12px; border-radius: 6px; border: 1px solid #475569; background: transparent; color: #e2e8f0; cursor: pointer; font-size: 13px;">Retry</button>
     <a href="#" id="splashContinueAnyway" style="margin-left: 8px; color: #94a3b8; font-size: 12px; text-decoration: underline;">Continue anyway</a>
   `;
@@ -305,10 +316,10 @@ function showSplashCliRetry(failedClis, npmPath) {
       } else {
         const stillFailed = Object.entries(result.results)
           .filter(([, ok]) => !ok).map(([cmd]) => cmd);
-        showSplashCliRetry(stillFailed, npmPath);
+        showSplashCliRetry(stillFailed, npmPath, result.errors);
       }
     } catch (e) {
-      showSplashCliRetry(failedClis, npmPath);
+      showSplashCliRetry(failedClis, npmPath, errors);
     }
   });
 

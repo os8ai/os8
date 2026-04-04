@@ -1,21 +1,28 @@
 /**
  * Shared CLI resolution — finds CLI binaries and npm global bin directory.
- * Replaces ad-hoc `npm root -g` logic scattered across backend-adapter.js and settings-api.js.
+ * Installs to ~/.os8/cli/ (user-writable) instead of system global prefix
+ * to avoid EACCES on systems where /usr/local is root-owned.
  * Used by: backend-adapter.js (prepareEnv), settings-api.js (login route), onboarding IPC.
  */
 
 const { execSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { SEARCH_PATH, findNpm } = require('./npm-path');
 
-// CLI command -> npm package mapping
+// CLI command -> npm package mapping + minimum Node version
 const CLI_PACKAGES = {
-  claude: '@anthropic-ai/claude-code',
-  gemini: '@google/gemini-cli',
-  codex: '@openai/codex',
-  grok: '@vibe-kit/grok-cli',
+  claude: { pkg: '@anthropic-ai/claude-code', minNode: 18 },
+  gemini: { pkg: '@google/gemini-cli', minNode: 20 },
+  codex:  { pkg: '@openai/codex', minNode: 18 },
+  grok:   { pkg: '@vibe-kit/grok-cli', minNode: 18 },
 };
+
+// OS8-managed CLI install prefix — user-writable, no sudo needed
+const OS8_DIR = process.env.OS8_HOME || path.join(os.homedir(), 'os8');
+const CLI_PREFIX = path.join(OS8_DIR, 'cli');
+const CLI_BIN = path.join(CLI_PREFIX, 'bin');
 
 /**
  * Get the npm global bin directory. Cached after first successful call.
@@ -45,12 +52,19 @@ function getNpmGlobalBin() {
 }
 
 /**
- * Build a PATH string that includes the npm global bin dir + SEARCH_PATH.
+ * Build a PATH string that includes OS8 CLI bin + npm global bin + SEARCH_PATH.
  * Used for spawn env and `which` checks.
  */
 function getExpandedPath() {
+  const parts = [];
+  // OS8-managed CLI bin first (highest priority)
+  if (fs.existsSync(CLI_BIN)) parts.push(CLI_BIN);
+  // npm global bin (may be null on some systems)
   const npmBin = getNpmGlobalBin();
-  return npmBin ? `${npmBin}:${SEARCH_PATH}` : SEARCH_PATH;
+  if (npmBin) parts.push(npmBin);
+  // Standard system paths
+  parts.push(SEARCH_PATH);
+  return parts.join(':');
 }
 
 /**
@@ -79,17 +93,50 @@ function findCli(command) {
 }
 
 /**
- * Attempt to install a CLI package globally. Returns { success, error }.
+ * Get the system Node.js major version. Returns number or null.
+ */
+function getNodeMajorVersion() {
+  try {
+    const ver = execSync('node --version', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      env: { PATH: SEARCH_PATH }
+    }).trim();
+    // e.g. "v18.19.1" -> 18
+    const match = ver.match(/^v(\d+)/);
+    return match ? parseInt(match[1], 10) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Attempt to install a CLI package to OS8-managed prefix.
+ * Returns { success, error, reason }.
+ * reason: 'node_too_old' | 'npm_not_found' | 'install_failed' | 'unknown_cli'
  */
 async function installCli(command) {
-  const pkg = CLI_PACKAGES[command];
-  if (!pkg) return { success: false, error: `Unknown CLI: ${command}` };
+  const entry = CLI_PACKAGES[command];
+  if (!entry) return { success: false, error: `Unknown CLI: ${command}`, reason: 'unknown_cli' };
+
+  // Check Node version requirement
+  const nodeVersion = getNodeMajorVersion();
+  if (nodeVersion && nodeVersion < entry.minNode) {
+    return {
+      success: false,
+      error: `${command} requires Node ${entry.minNode}+, system has ${nodeVersion}`,
+      reason: 'node_too_old'
+    };
+  }
 
   const npmPath = findNpm();
-  if (!npmPath) return { success: false, error: 'npm not found' };
+  if (!npmPath) return { success: false, error: 'npm not found', reason: 'npm_not_found' };
+
+  // Ensure prefix directory exists
+  fs.mkdirSync(CLI_PREFIX, { recursive: true });
 
   try {
-    execSync(`${npmPath} install -g ${pkg}`, {
+    execSync(`${npmPath} install --prefix ${CLI_PREFIX} -g ${entry.pkg}`, {
       encoding: 'utf-8',
       timeout: 120000,
       env: { ...process.env, PATH: getExpandedPath() }
@@ -98,8 +145,8 @@ async function installCli(command) {
     _npmGlobalBin = undefined;
     return { success: true };
   } catch (e) {
-    return { success: false, error: e.message };
+    return { success: false, error: e.message, reason: 'install_failed' };
   }
 }
 
-module.exports = { findCli, installCli, getExpandedPath, getNpmGlobalBin, CLI_PACKAGES };
+module.exports = { findCli, installCli, getExpandedPath, getNpmGlobalBin, getNodeMajorVersion, CLI_PACKAGES, CLI_PREFIX, CLI_BIN };
