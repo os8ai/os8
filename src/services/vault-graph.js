@@ -241,6 +241,7 @@ const VaultGraphService = {
 
     let edgesCreated = 0;
     let processed = 0;
+    let compCount = 0;
 
     for (let i = 0; i < docList.length; i++) {
       const doc = docList[i];
@@ -253,6 +254,11 @@ const VaultGraphService = {
         if (score >= threshold) {
           candidates.push({ type: other.type, id: other.id, score });
         }
+        // Yield every 500 comparisons to keep the event loop responsive
+        compCount++;
+        if (compCount % 500 === 0) {
+          await new Promise(r => setImmediate(r));
+        }
       }
 
       candidates.sort((a, b) => b.score - a.score);
@@ -264,10 +270,8 @@ const VaultGraphService = {
       statusInsert.run(doc.type, doc.id);
       processed++;
 
-      // Yield between batches
       if (processed % 50 === 0) {
         if (onProgress) onProgress({ processed, total });
-        await new Promise(r => setTimeout(r, 10));
       }
     }
 

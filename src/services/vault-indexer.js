@@ -4,6 +4,7 @@
  */
 
 const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
 const { generateId } = require('../utils');
@@ -42,15 +43,16 @@ const BATCH_DELAY_MS = 50;
 
 /**
  * Recursively walk a directory, returning supported file entries.
+ * Async to avoid blocking the event loop on large trees.
  */
-function walkDirectory(dirPath, { recursive = true, fileExtensions = null } = {}) {
+async function walkDirectory(dirPath, { recursive = true, fileExtensions = null } = {}) {
   const results = [];
   const allowedExts = fileExtensions ? new Set(fileExtensions) : null;
 
-  function walk(dir) {
+  async function walk(dir) {
     let entries;
     try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
+      entries = await fsp.readdir(dir, { withFileTypes: true });
     } catch {
       return; // Permission denied or gone — skip
     }
@@ -61,7 +63,7 @@ function walkDirectory(dirPath, { recursive = true, fileExtensions = null } = {}
       if (entry.isDirectory()) {
         if (DEFAULT_IGNORE_DIRS.has(entry.name)) continue;
         if (entry.name.startsWith('.')) continue;
-        if (recursive) walk(fullPath);
+        if (recursive) await walk(fullPath);
         continue;
       }
 
@@ -73,7 +75,7 @@ function walkDirectory(dirPath, { recursive = true, fileExtensions = null } = {}
       if (allowedExts && !allowedExts.has(ext)) continue;
 
       try {
-        const stat = fs.statSync(fullPath);
+        const stat = await fsp.stat(fullPath);
         results.push({
           filePath: fullPath,
           filename: entry.name,
@@ -84,29 +86,28 @@ function walkDirectory(dirPath, { recursive = true, fileExtensions = null } = {}
       } catch {
         // stat failed — skip
       }
+
+      // Yield periodically to keep the event loop responsive
+      if (results.length % 100 === 0) {
+        await new Promise(r => setImmediate(r));
+      }
     }
   }
 
-  walk(dirPath);
+  await walk(dirPath);
   return results;
 }
 
 /**
  * SHA-256 hash of file content. For large files (>10MB), hash first 10MB only.
+ * Stream-based to avoid blocking the event loop.
  */
-function computeFileHash(filePath) {
-  const hash = crypto.createHash('sha256');
+async function computeFileHash(filePath) {
   const MAX_BYTES = 10 * 1024 * 1024;
-
-  const fd = fs.openSync(filePath, 'r');
-  try {
-    const stat = fs.fstatSync(fd);
-    const readSize = Math.min(stat.size, MAX_BYTES);
-    const buffer = Buffer.alloc(readSize);
-    fs.readSync(fd, buffer, 0, readSize, 0);
-    hash.update(buffer);
-  } finally {
-    fs.closeSync(fd);
+  const hash = crypto.createHash('sha256');
+  const stream = fs.createReadStream(filePath, { start: 0, end: MAX_BYTES - 1 });
+  for await (const chunk of stream) {
+    hash.update(chunk);
   }
   return hash.digest('hex');
 }
@@ -152,10 +153,10 @@ async function extractText(filePath, extension) {
 
   if (category === 'text' || category === 'code') {
     try {
-      const stat = fs.statSync(filePath);
+      const stat = await fsp.stat(filePath);
       if (stat.size > 5 * 1024 * 1024) return null; // Skip files > 5MB
 
-      const text = fs.readFileSync(filePath, 'utf-8');
+      const text = await fsp.readFile(filePath, 'utf-8');
       const wordCount = text.split(/\s+/).filter(Boolean).length;
       return { text, wordCount };
     } catch (err) {
@@ -174,7 +175,7 @@ async function extractText(filePath, extension) {
 async function extractPdfText(filePath) {
   try {
     const pdfParse = require('pdf-parse');
-    const buffer = fs.readFileSync(filePath);
+    const buffer = await fsp.readFile(filePath);
     const data = await pdfParse(buffer);
     const text = data.text || '';
     const wordCount = text.split(/\s+/).filter(Boolean).length;
@@ -255,7 +256,9 @@ const VaultIndexerService = {
     const scope = db.prepare('SELECT * FROM vault_scopes WHERE id = ?').get(scopeId);
     if (!scope || !scope.enabled) return;
 
-    if (!fs.existsSync(scope.path)) {
+    try {
+      await fsp.access(scope.path);
+    } catch {
       throw new Error(`Scope path does not exist: ${scope.path}`);
     }
 
@@ -271,8 +274,8 @@ const VaultIndexerService = {
     };
 
     try {
-      // Walk directory
-      const files = walkDirectory(scope.path, {
+      // Walk directory (async — yields to event loop periodically)
+      const files = await walkDirectory(scope.path, {
         recursive: scope.recursive === 1,
         fileExtensions,
       });
@@ -307,7 +310,7 @@ const VaultIndexerService = {
               }
 
               // Mtime differs — check content hash
-              const hash = computeFileHash(file.filePath);
+              const hash = await computeFileHash(file.filePath);
               if (hash === existing.content_hash) {
                 db.prepare(
                   "UPDATE vault_sources SET file_modified_at = ?, updated_at = datetime('now') WHERE id = ?"
@@ -321,7 +324,7 @@ const VaultIndexerService = {
             } else {
               // New file
               const sourceId = generateId();
-              const hash = computeFileHash(file.filePath);
+              const hash = await computeFileHash(file.filePath);
 
               db.prepare(`
                 INSERT INTO vault_sources (id, scope_id, file_path, filename, file_extension, mime_type, size_bytes, content_hash, file_modified_at, extraction_status)
@@ -385,7 +388,7 @@ const VaultIndexerService = {
   async _extractAndStore(db, sourceId, file) {
     try {
       const result = await extractText(file.filePath, file.extension);
-      const hash = computeFileHash(file.filePath);
+      const hash = await computeFileHash(file.filePath);
 
       if (result) {
         db.prepare(`

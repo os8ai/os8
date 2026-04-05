@@ -279,6 +279,16 @@ function renderNav() {
     }
   });
 
+  // Scope refresh button clicks
+  nav.querySelectorAll('.vault-scope-refresh-btn[data-scope-id]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const scopeId = btn.dataset.scopeId;
+      scopeFilesCache.delete(scopeId);
+      rescanScope(scopeId);
+    });
+  });
+
   // Scope file item clicks
   nav.querySelectorAll('.vault-scope-file-item[data-source-id]').forEach(item => {
     item.addEventListener('click', (e) => {
@@ -359,6 +369,9 @@ function renderIndexedChildren() {
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" opacity="0.5"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11z"/><path d="M12 11v6" stroke="currentColor" stroke-width="2" fill="none"/><path d="M9 14l3-3 3 3" stroke="currentColor" stroke-width="2" fill="none"/></svg>
           <span class="vault-folder-name">${escapeHtml(s.label || pathBasename(s.path))}</span>
           ${statusBadge}
+          <span class="vault-scope-refresh-btn" data-scope-id="${s.id}" title="Refresh directory">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+          </span>
         </button>
         <div class="vault-scope-children">${filesHtml}</div>
       </div>
@@ -1136,12 +1149,28 @@ function pollIndexProgress() {
 
   indexPollInterval = setInterval(async () => {
     await loadIndexStatus();
-    renderNav();
+
+    // Update only the progress bar instead of rebuilding the entire sidebar
+    const progressContainer = document.querySelector('.vault-index-progress');
+    if (progressContainer && indexStatus?.isIndexing) {
+      const pct = indexStatus.total > 0 ? Math.round((indexStatus.processed / indexStatus.total) * 100) : 0;
+      const bar = progressContainer.querySelector('.vault-index-progress-bar');
+      const text = progressContainer.querySelector('.vault-index-progress-text');
+      if (bar) bar.style.width = `${pct}%`;
+      if (text) text.textContent = `${indexStatus.processed}/${indexStatus.total} files (${pct}%)`;
+    } else if (!progressContainer && indexStatus?.isIndexing) {
+      // Progress bar not yet in DOM — do a full render once to create it
+      renderNav();
+    }
 
     if (!indexStatus || !indexStatus.isIndexing) {
       clearInterval(indexPollInterval);
       indexPollInterval = null;
-      if (activeScopeId) await loadSources();
+      // Full refresh only when done
+      if (activeScopeId) {
+        scopeFilesCache.delete(activeScopeId);
+        await loadSources();
+      }
       await loadScopes();
       renderNav();
     }
@@ -2363,23 +2392,23 @@ async function startImport(type, dirPath) {
 }
 
 function showImportProgress() {
-  // Create progress overlay inside vault editor area
-  let overlay = elements.vaultEditorArea.querySelector('.vault-import-overlay');
-  if (!overlay) {
-    overlay = document.createElement('div');
-    overlay.className = 'vault-import-overlay';
-    elements.vaultEditorArea.appendChild(overlay);
+  // Create non-blocking inline banner at top of editor area
+  let banner = elements.vaultEditorArea.querySelector('.vault-import-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.className = 'vault-import-banner';
+    elements.vaultEditorArea.prepend(banner);
   }
 
-  overlay.innerHTML = `
-    <div class="vault-import-status">
-      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.5">
+  banner.innerHTML = `
+    <div class="vault-import-banner-content">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
       </svg>
-      <div class="vault-import-phase">Scanning files...</div>
-      <div class="vault-import-progress"><div class="vault-import-progress-bar" style="width: 0%"></div></div>
-      <div class="vault-import-detail"></div>
+      <span class="vault-import-phase">Scanning files...</span>
+      <span class="vault-import-detail"></span>
     </div>
+    <div class="vault-import-progress"><div class="vault-import-progress-bar" style="width: 0%"></div></div>
   `;
 
   // Poll for status
@@ -2392,10 +2421,10 @@ function showImportProgress() {
       if (!status.isImporting) {
         clearInterval(importPollInterval);
         importPollInterval = null;
-        // Show result briefly, then remove overlay
+        // Show result briefly, then remove banner
         setTimeout(() => {
-          const ol = elements.vaultEditorArea.querySelector('.vault-import-overlay');
-          if (ol) ol.remove();
+          const el = elements.vaultEditorArea.querySelector('.vault-import-banner');
+          if (el) el.remove();
           // Refresh data
           Promise.all([loadNotes(), loadFolders(), loadTags()]).then(() => {
             renderNav();
@@ -2407,16 +2436,16 @@ function showImportProgress() {
       clearInterval(importPollInterval);
       importPollInterval = null;
     }
-  }, 500);
+  }, 2000);
 }
 
 function updateImportProgress(status) {
-  const overlay = elements.vaultEditorArea.querySelector('.vault-import-overlay');
-  if (!overlay) return;
+  const banner = elements.vaultEditorArea.querySelector('.vault-import-banner');
+  if (!banner) return;
 
-  const phaseEl = overlay.querySelector('.vault-import-phase');
-  const barEl = overlay.querySelector('.vault-import-progress-bar');
-  const detailEl = overlay.querySelector('.vault-import-detail');
+  const phaseEl = banner.querySelector('.vault-import-phase');
+  const barEl = banner.querySelector('.vault-import-progress-bar');
+  const detailEl = banner.querySelector('.vault-import-detail');
 
   const phaseLabels = {
     scanning: 'Scanning files...',

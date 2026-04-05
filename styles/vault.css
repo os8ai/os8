@@ -1079,6 +1079,28 @@
   padding-left: 4px;
 }
 
+.vault-scope-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+  flex-shrink: 0;
+}
+
+.vault-nav-sub-item:hover .vault-scope-refresh-btn {
+  opacity: 0.5;
+}
+
+.vault-scope-refresh-btn:hover {
+  opacity: 1 !important;
+  background: var(--color-bg-hover);
+}
+
 .vault-scope-file-item {
   font-size: var(--text-xs) !important;
   opacity: 0.8;
@@ -1124,32 +1146,28 @@
   background: var(--hover-bg);
 }
 
-.vault-import-overlay {
-  position: absolute;
-  inset: 0;
-  background: var(--color-bg-dark);
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.vault-import-banner {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--color-surface-secondary);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.vault-import-status {
+.vault-import-banner-content {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  text-align: center;
-}
-
-.vault-import-phase {
-  font-size: var(--font-sm);
+  gap: 8px;
   color: var(--color-text-secondary);
 }
 
-.vault-import-progress {
-  width: 260px;
-  height: 4px;
+.vault-import-phase {
+  font-size: var(--font-xs);
+  color: var(--color-text-secondary);
+}
+
+.vault-import-banner .vault-import-progress {
+  height: 3px;
+  margin-top: 4px;
   background: rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-sm);
   overflow: hidden;
@@ -1165,10 +1183,10 @@
 .vault-import-detail {
   font-size: var(--font-xs);
   color: var(--color-text-muted);
-  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  margin-left: auto;
 }
 
 /* --- Toast --- */
