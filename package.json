@@ -1,6 +1,6 @@
 {
   "name": "os8",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "OS8 - Desktop workspace for AI-assisted development",
   "main": "main.js",
   "scripts": {
@@ -81,12 +81,18 @@
       "icon": "build/icon.png"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
+      "target": [
+        "AppImage",
+        "deb"
+      ],
       "icon": "build/icon.png",
       "category": "Development"
     },
     "deb": {
-      "depends": ["nodejs", "npm"]
+      "depends": [
+        "nodejs",
+        "npm"
+      ]
     },
     "files": [
       "main.js",
