@@ -34,6 +34,7 @@ const createJournalRouter = require('./routes/journal');
 const createImagesRouter = require('./routes/images');
 const createSimRouter = require('./routes/sim');
 const createYouTubeRouter = require('./routes/youtube');
+const createXRouter = require('./routes/x');
 const createTelegramRouter = require('./routes/telegram');
 const createAppDbRouter = require('./routes/app-db');
 const createAppBlobRouter = require('./routes/app-blob');
@@ -403,13 +404,16 @@ async function createServer() {
     }
   }));
 
-  // App inspection (screenshot + console capture)
+  // App verification: /inspect (runtime, headless browser) + /check (compile, Vite graph walk)
   const createInspectRouter = require('./routes/inspect');
   const AppInspectorService = require('./services/app-inspector');
+  const AppCheckerService = require('./services/app-checker');
   app.use('/api/apps', createInspectRouter(db, {
     AppService,
     AppInspectorService,
-    getPort
+    AppCheckerService,
+    getPort,
+    getViteServer
   }));
 
   // Per-app SQLite database
@@ -501,6 +505,7 @@ async function createServer() {
   app.use('/api/voice', createVoiceRouter(db, { EnvService, SettingsService }));
   app.use('/api/transcribe', createTranscribeRouter(db, {}));
   app.use('/api/youtube', createYouTubeRouter(db, {}));
+  app.use('/api/x', createXRouter(db, {}));
   app.use('/api/speak', createSpeakRouter(db, { AgentService }));
   app.use('/api/imagegen', createImageGenRouter(db, {}));
   app.use('/api/telegram', createTelegramRouter(db, {
@@ -1173,6 +1178,10 @@ function getPort() {
   return currentPort;
 }
 
+function getViteServer() {
+  return viteServer;
+}
+
 module.exports = {
   startServer,
   stopServer,
@@ -1180,6 +1189,7 @@ module.exports = {
   getAppUrl,
   getCallUrl,
   getPort,
+  getViteServer,
   setOAuthCompleteCallback,
   setAppCreatedCallback,
   setAppUpdatedCallback,

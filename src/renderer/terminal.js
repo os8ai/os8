@@ -85,6 +85,42 @@ export function fitTerminal() {
   fitAllTerminals(getTerminalInstances());
 }
 
+/**
+ * Attach copy/paste/select-all key handling to an xterm instance.
+ * By default xterm.js swallows Cmd+C / Cmd+V and sends them as ^C / ^V to the PTY,
+ * so we intercept them and route through the system clipboard instead.
+ */
+function attachCopyPasteHandler(terminal) {
+  const isMac = typeof navigator !== 'undefined' && /Mac/i.test(navigator.platform);
+  terminal.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    const mod = isMac ? e.metaKey : e.ctrlKey;
+    if (!mod) return true;
+    const key = e.key.toLowerCase();
+    // Cmd/Ctrl+C: copy selection (fall through to ^C if nothing selected)
+    if (key === 'c' && terminal.hasSelection()) {
+      const text = terminal.getSelection();
+      if (text) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+      return false;
+    }
+    // Cmd/Ctrl+V: paste from clipboard
+    if (key === 'v') {
+      navigator.clipboard.readText().then((text) => {
+        if (text) terminal.paste(text);
+      }).catch(() => {});
+      return false;
+    }
+    // Cmd/Ctrl+A: select all terminal content
+    if (key === 'a') {
+      terminal.selectAll();
+      return false;
+    }
+    return true;
+  });
+}
+
 export function initPtyHandlers() {
   if (getPtyHandlersInitialized()) return;
   setPtyHandlersInitialized(true);
@@ -334,6 +370,7 @@ export async function createTerminalInstance(type = 'claude') {
   const fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(container);
+  attachCopyPasteHandler(terminal);
 
   // Create instance object
   const instance = {
@@ -485,6 +522,7 @@ export async function reconnectTerminalInstance(savedInst) {
   const fitAddon = new FitAddon.FitAddon();
   terminal.loadAddon(fitAddon);
   terminal.open(container);
+  attachCopyPasteHandler(terminal);
 
   // Create instance object
   const instance = {

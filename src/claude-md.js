@@ -500,7 +500,7 @@ This is a **React** app with **Tailwind CSS**, powered by **Vite**.
 | Vite | 5.x | Dev server, JSX transform, HMR |
 | react-router-dom | 6.x | Client-side routing |
 
-**Important:** All dependencies are pre-installed and shared across OS8 apps. You do NOT need to run \`npm install\` or add a \`package.json\`.
+**Important:** Vite runs as **middleware inside the OS8 server** — one shared instance for every app in OS8. There is no \`vite\` binary on your PATH, no \`node_modules\` in your app directory, and no build-output folder. Saving a file **is** the deploy step — HMR picks it up automatically. You do NOT need to run \`npm install\` or add a \`package.json\`.
 
 ---
 
@@ -540,8 +540,9 @@ ${appPath}/
 - Store uploaded files in the blob directory
 
 ### DON'T:
-- Run \`npm install\` (dependencies are shared from OS8 Core)
-- Add a \`package.json\` (not needed)
+- Run \`vite\`, \`vite build\`, \`npm\`, \`npx\`, \`pnpm\`, or \`yarn\` — there is no build step, and none of these tools are available in your app directory
+- Create a \`package.json\`, \`node_modules\`, or any dependency manifest in this app
+- Symlink, copy, or touch anything under \`~/os8/core/\` — that directory is shared by every app in OS8; mutating it breaks the dev server for all of them
 - Edit \`index.html\` script tags or \`main.jsx\` BrowserRouter setup
 - Use absolute imports starting with \`/\` (use relative imports)
 
@@ -611,6 +612,48 @@ Use utility classes directly in JSX:
 Add custom CSS in \`src/index.css\` below the Tailwind imports if needed.
 
 Tailwind docs: https://tailwindcss.com/docs
+
+---
+
+## Verifying Your Work
+
+There is **no per-app build command** — do not run \`vite\`, \`vite build\`, \`npm\`, or \`npx\`. Instead, OS8 provides two HTTP endpoints that verify your work. Both are scoped to this app only.
+
+### Compile check — fast (~50ms)
+
+Walks your app's import graph through the running Vite middleware and reports any syntax errors, JSX parse failures, or unresolvable imports.
+
+\`\`\`bash
+curl -X POST http://localhost:${port}/api/apps/${app.id}/check
+\`\`\`
+
+Response shape:
+\`\`\`json
+{
+  "ok": true,
+  "errors": [],
+  "checkedCount": 12,
+  "elapsedMs": 47
+}
+\`\`\`
+
+On failure, each entry in \`errors[]\` has \`{ file, line, column, message, frame, plugin }\` pointing at the exact problem. Catches: syntax errors, JSX parse failures, unresolvable imports, missing files.
+
+### Runtime check — slower (~3s)
+
+Loads the app in a headless browser, lets React mount, and reports any runtime errors or warnings from the browser console.
+
+\`\`\`bash
+curl -X POST http://localhost:${port}/api/apps/${app.id}/inspect
+\`\`\`
+
+Returns \`{ screenshot, consoleErrors, consoleWarnings, loadTimeMs }\`. Catches: runtime errors, missing components, React warnings, failed \`fetch\` calls.
+
+### Workflow
+
+- Use \`/check\` as your **inner loop** — hit it after every meaningful edit. It's cheap enough to run constantly.
+- Use \`/inspect\` when you believe you're done — confirms the app actually renders.
+- **Do not declare the build complete** until \`/check\` returns \`ok: true\` **and** \`/inspect\` returns an empty \`consoleErrors\` array.
 
 ---
 
@@ -797,9 +840,9 @@ See the **Available Skills** section below for the full list of APIs.
 ### What Apps CANNOT Do
 
 - **No server-side code** — apps are client-side React SPAs (but have server-side storage via the Database and Blob Storage APIs above)
-- **No \`npm install\`** — must use the pre-installed packages listed above
+- **No \`npm install\`, \`npx\`, or \`vite\` commands** — there is no per-app build step; use \`/api/apps/${app.id}/check\` and \`/api/apps/${app.id}/inspect\` to verify your work (see the "Verifying Your Work" section above)
 - **No Node.js APIs** — no \`fs\`, \`path\`, \`child_process\`, etc. at runtime
-- **No package.json** — dependencies are shared from OS8 Core
+- **No package.json, no node_modules** — dependencies are shared from OS8 Core and must not be duplicated per-app
 
 ---
 

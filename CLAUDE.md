@@ -64,6 +64,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | `ai-registry.js` | AI provider/container/model management |
 | `anthropic-sdk.js` | Direct Anthropic API calls (no tool use, supports utility mode with null appPath) |
 | `app-builder.js` | AppBuilderService (headless app builds via CLI backends) |
+| `app-checker.js` | AppCheckerService (per-app compile check via Vite transformRequest graph walk) |
 | `app-inspector.js` | AppInspectorService (BrowserView screenshots + console errors) |
 | `backend-adapter.js` | Backend adapter (maps backend ID → CLI command, flags, parsers) |
 | `billing.js` | BillingService (login detection, API balance checks) |
@@ -122,6 +123,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | `work-queue-prompts.js` | Prompt builders and job message formatting (pure text generators) |
 | `work-queue-validators.js` | Job/plan completion parsing and validation (pure functions) |
 | `youtube.js` | YouTubeService (video info and transcript extraction) |
+| `x.js` | XService (search X/Twitter posts via xAI Grok API, reuses XAI_API_KEY) |
 | `pty.js` | PTYService (PTY session lifecycle, env assembly, event forwarding) |
 | `preview.js` | PreviewService (BrowserView lifecycle, console buffer, navigation) |
 | `filesystem.js` | FileSystemService (file tree, binary detection, image handling) |
@@ -155,13 +157,14 @@ See `src/services/README.md` for patterns and conventions.
 | `apps.js` | `/api/apps/*` | App CRUD, build dispatch, build status |
 | `app-db.js` | `/api/apps/:appId/db/*` | Per-app SQLite database (query, execute, batch, schema) |
 | `app-blob.js` | `/api/apps/:appId/blob/*` | Per-app file storage (upload, read, list, delete) |
-| `inspect.js` | `/api/apps/:id/inspect` | App screenshot + console error capture |
+| `inspect.js` | `/api/apps/:id/inspect`, `/api/apps/:id/check` | App verification: runtime inspect (headless browser + console) + compile check (Vite graph walk) |
 | `agents.js` | `/api/agents/*` | Agent CRUD, config, voice selection, visibility |
 | `agent-chat.js` | `/api/agent/*` | Agent chat threads, messages, SSE streaming |
 | `ai-registry.js` | `/api/ai/*` | AI provider/model management, routing cascades, account status |
 | `sim.js` | `/api/agent/:id/sim/*` | Agent life and simulation (reverie, journal, snapshot, portrait, life items CRUD) |
 | `embodiment.js` | `/api/embodiment/*` | Humanoid body embodiment toggle |
 | `youtube.js` | `/api/youtube/*` | YouTube video info and transcript extraction |
+| `x.js` | `/api/x/*` | Search X (Twitter) posts via Grok API (search, user-posts, summarize-topic) |
 | `telegram.js` | `/api/telegram/*` | Telegram send text/photo/document |
 | `buzz.js` | `/api/buzz/*` | Simulated drinking system (drink, status, sober) |
 | `mcp.js` | `/api/mcp/*` | MCP server management, tool proxy, catalog |
@@ -184,6 +187,7 @@ Unified system for APIs, skills, and MCP tools. `CapabilityService` manages the 
 | api | voicemessage | `/api/voicemessage/*` |
 | api | imagegen | `/api/imagegen/*` |
 | api | youtube | `/api/youtube/*` |
+| api | x | `/api/x/*` (search X posts via Grok) |
 | api | transcribe | `/api/transcribe/*` |
 | api | google | `/api/google/*` (Calendar, Drive, Gmail) |
 | api | telegram | `/api/telegram/*` |

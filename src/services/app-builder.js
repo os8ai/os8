@@ -18,7 +18,15 @@ const MAX_CONCURRENT_BUILDS = 3;
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 const CLEANUP_AGE_MS = 60 * 60 * 1000; // 1 hour
 
-const BUILDER_PROMPT = `Read CLAUDE.md and claude-user.md in this directory. Build the app described in claude-user.md. The project is already scaffolded with React, Tailwind CSS, and Vite. Edit src/App.jsx and create components in src/components/ as needed. Do not modify index.html or src/main.jsx. When finished, verify the app renders without errors.`;
+const BUILDER_PROMPT = `Read CLAUDE.md and claude-user.md in this directory. Build the app described in claude-user.md. The project is already scaffolded with React, Tailwind CSS, and Vite. Edit src/App.jsx and create components in src/components/ as needed. Do not modify index.html or src/main.jsx.
+
+IMPORTANT — there is no per-app build step. OS8 serves your app live through a shared Vite middleware. Do NOT run vite, vite build, npm, npx, pnpm, or yarn. Do NOT create package.json or node_modules in this directory. Do NOT symlink to or modify anything under ~/os8/core/ — that directory is shared by every app in OS8 and touching it will break the dev server for all of them.
+
+When you believe the app is complete, verify it using the two HTTP endpoints documented in CLAUDE.md's "Verifying Your Work" section:
+  1. Compile check (fast): POST /api/apps/{this app's id}/check — fix any entries in the response's errors[] array
+  2. Runtime check (slower): POST /api/apps/{this app's id}/inspect — fix any entries in the response's consoleErrors[] array
+
+Only declare the build complete when /check returns ok:true and /inspect returns an empty consoleErrors array. The full curl commands with the correct port and app ID are in CLAUDE.md.`;
 
 // In-memory build state
 const builds = new Map();

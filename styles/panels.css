@@ -1698,6 +1698,14 @@
   font-size: var(--text-sm);
   line-height: 1.5;
   padding: 4px 0;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.build-status-output * {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .build-stdout-line {

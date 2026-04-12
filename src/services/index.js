@@ -42,8 +42,10 @@ const ModeratorService = require('./moderator');
 const { ThreadOrchestrator, PRIORITY_THREAD } = require('./thread-orchestrator');
 const AppBuilderService = require('./app-builder');
 const AppInspectorService = require('./app-inspector');
+const AppCheckerService = require('./app-checker');
 const SimService = require('./sim');
 const YouTubeService = require('./youtube');
+const XService = require('./x');
 const { CapabilityService } = require('./capability');
 const CapabilitySyncService = require('./capability-sync');
 const SkillCatalogService = require('./skill-catalog');
@@ -121,8 +123,10 @@ module.exports = {
   PRIORITY_THREAD,
   AppBuilderService,
   AppInspectorService,
+  AppCheckerService,
   SimService,
   YouTubeService,
+  XService,
   SkillCatalogService,
   AIRegistryService,
   ModelDiscoveryService,
