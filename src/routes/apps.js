@@ -1,5 +1,6 @@
 /**
  * Apps API Routes
+ * GET  /api/apps                          — List active apps (id, name, slug, icon, color)
  * POST /api/apps                          — Create a new app (plan-step context → direct, spec → auto-propose)
  * POST /api/apps/propose                  — Propose a new app build (pending approval)
  * POST /api/apps/propose/:id/approve      — Approve proposal → create app + start build
@@ -35,6 +36,20 @@ function createAppsRouter(db, deps) {
   } = deps;
 
   const router = express.Router();
+
+  // GET /api/apps — List active apps
+  router.get('/', (req, res) => {
+    try {
+      const apps = AppService.getActive(db);
+      const q = req.query.q ? req.query.q.toLowerCase() : null;
+      const results = (q ? apps.filter(a => a.name.toLowerCase().includes(q)) : apps)
+        .map(a => ({ id: a.id, name: a.name, slug: a.slug, icon: a.icon, color: a.color, textColor: a.textColor, iconMode: a.iconMode }));
+      res.json(results);
+    } catch (err) {
+      console.error('[Apps API] List error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // POST /api/apps — Create a new app
   // With planId+stepId: direct creation (plan step already approved by user)
@@ -339,3 +354,27 @@ function createAppsRouter(db, deps) {
 }
 
 module.exports = createAppsRouter;
+
+module.exports.meta = {
+  name: 'apps',
+  description: `App lookup and management — list apps, find an app by name, update app properties.
+
+Use this API to find an app's ID when you know its name, or to list all apps the user has.
+
+**List all apps:** GET /api/apps — returns every active app with its id, name, slug, icon, color, textColor, and iconMode.
+
+**Search by name:** GET /api/apps?q=contacts — filters apps whose name contains the query (case-insensitive).
+
+**Update app properties:** PATCH /api/apps/{id} with JSON body containing any of: icon, name, color, textColor, iconImage, iconMode.
+
+**Example — find an app by name:**
+curl http://localhost:8888/api/apps?q=contacts
+
+**Example — update an app's icon:**
+curl -X PATCH http://localhost:8888/api/apps/{id} -H "Content-Type: application/json" -d '{"icon": "📇"}'`,
+  basePath: '/api/apps',
+  endpoints: [
+    { method: 'GET', path: '/api/apps', description: 'List active apps (optional ?q= to filter by name)' },
+    { method: 'PATCH', path: '/api/apps/:id', description: 'Update app properties (icon, name, color, textColor, iconImage, iconMode)' }
+  ]
+};
