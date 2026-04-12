@@ -779,6 +779,7 @@ function handleSend(deps) {
     let fullResponse = '';
     let buffer = '';
     let responded = false;
+    let doneSent = false; // Track if SSE "done" event has been sent (prevent duplicates)
 
     // Buffer for internal notes filtering in streaming mode
     // Accumulates text while inside [internal: ...] to avoid partial matches
@@ -978,10 +979,13 @@ function handleSend(deps) {
             const noFileTags = stripFileAttachments(displayResponse);
             const reaction = extractReaction(noFileTags);
             const cleanResponse = stripReaction(noFileTags);
-            const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
-            state.getResponseClients().forEach(client => {
-              client.write(`data: ${doneData}\n\n`);
-            });
+            if (!doneSent) {
+              doneSent = true;
+              const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
+              state.getResponseClients().forEach(client => {
+                client.write(`data: ${doneData}\n\n`);
+              });
+            }
           }
         } catch (e) {
           // Not valid JSON
@@ -1027,7 +1031,8 @@ function handleSend(deps) {
 
       // Send "done" SSE event if we have a response but it wasn't sent during streaming
       // (happens when the result line was in the buffer or was never received)
-      if (fullResponse) {
+      if (fullResponse && !doneSent) {
+        doneSent = true;
         const displayResponse = stripToolCallXml(stripInternalNotes(fullResponse));
         const responseAttachments = extractFileAttachments(displayResponse);
         const noFileTags = stripFileAttachments(displayResponse);

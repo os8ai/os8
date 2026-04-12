@@ -76,6 +76,7 @@ const AppBuilderService = {
       appColor: plan.color || null,
       appIcon: plan.icon || null,
       appTextColor: plan.textColor || null,
+      iconPrompt: plan.iconPrompt || null,
       spec: plan.spec.trim(),
       backend: backendId,
       model: model || null,
@@ -135,6 +136,45 @@ const AppBuilderService = {
     if (proposal.planFile && fs.existsSync(proposal.planFile)) {
       fs.unlinkSync(proposal.planFile);
       console.log(`[AppBuilder] Deleted plan file: ${proposal.planFile}`);
+    }
+
+    // 3b. Generate icon image from iconPrompt (fire-and-forget)
+    if (proposal.iconPrompt) {
+      (async () => {
+        try {
+          const ImageGenService = require('./imagegen');
+          const sharp = require('sharp');
+          const { ICONS_DIR, BLOB_DIR } = require('../config');
+          const IMAGEGEN_DIR = path.join(BLOB_DIR, 'imagegen');
+
+          const enhancedPrompt = `App icon, square, clean minimal design, no text: ${proposal.iconPrompt}`;
+          console.log(`[AppBuilder] Generating icon for ${app.id}: "${proposal.iconPrompt.slice(0, 60)}"`);
+
+          const result = await ImageGenService.generate(db, enhancedPrompt);
+          if (result.images && result.images.length > 0) {
+            const genPath = path.join(IMAGEGEN_DIR, result.images[0].filename);
+            const buffer = fs.readFileSync(genPath);
+            const metadata = await sharp(buffer).metadata();
+            const hasAlpha = metadata.hasAlpha;
+
+            let processed, ext;
+            if (hasAlpha) {
+              processed = await sharp(buffer).resize(128, 128, { fit: 'cover' }).png().toBuffer();
+              ext = 'png';
+            } else {
+              processed = await sharp(buffer).resize(128, 128, { fit: 'cover' }).jpeg({ quality: 85 }).toBuffer();
+              ext = 'jpg';
+            }
+
+            const filename = `${app.id}.${ext}`;
+            fs.writeFileSync(path.join(ICONS_DIR, filename), processed);
+            AppService.update(db, app.id, { iconImage: filename, iconMode: 'cover' });
+            console.log(`[AppBuilder] Icon generated: ${filename}`);
+          }
+        } catch (err) {
+          console.error(`[AppBuilder] Icon generation failed for ${app.id}:`, err.message);
+        }
+      })();
     }
 
     // Notify renderer — app created (triggers tab switch + agent panel)

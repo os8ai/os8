@@ -43,7 +43,7 @@ import {
   attachSplitPanelListeners, loadSecondaryPreviews, attachPrimaryPanelListeners
 } from './view-mode.js';
 import {
-  setAppsCallbacks, renderApps, saveAppOrder, loadApps, updateAssistantButton,
+  setAppsCallbacks, renderApps, renderIconHtml, saveAppOrder, loadApps, updateAssistantButton,
   createApp, showHome, openWorkspace
 } from './apps.js';
 import {
@@ -96,7 +96,8 @@ import {
   getWizardState,
   getPanelMode, setPanelMode, setJobsView, setSelectedJobId,
   getJobsFilterView,
-  getRightPanelCollapsed, setRightPanelCollapsed
+  getRightPanelCollapsed, setRightPanelCollapsed,
+  getServerPort, setServerPort
 } from './state.js';
 
 // Helper to save assistant app UI settings
@@ -158,12 +159,29 @@ function openEditAppModal(app) {
   const editAppModal = document.getElementById('editAppModal');
   const editAppName = document.getElementById('editAppName');
   const editAppIcon = document.getElementById('editAppIcon');
+  const editIconPreview = document.getElementById('editAppIconPreview');
+  const editIconFile = document.getElementById('editAppIconFile');
 
   setEditingAppId(app.id);
   editAppName.value = app.name;
   editAppIcon.value = app.icon || app.name.charAt(0).toUpperCase();
   setEditSelectedColor(app.color || '#6366f1');
   setEditSelectedFontColor(app.text_color || '#ffffff');
+
+  // Reset upload state
+  editIconFile.value = '';
+
+  // Show existing icon image or text input
+  if (app.icon_image) {
+    editIconPreview.style.display = 'block';
+    document.getElementById('editAppIconPreviewImg').src = `http://localhost:${getServerPort()}/api/icons/${app.id}?v=${Date.now()}`;
+    editAppIcon.style.display = 'none';
+    document.getElementById('editFontColorPicker').style.display = 'none';
+  } else {
+    editIconPreview.style.display = 'none';
+    editAppIcon.style.display = '';
+    document.getElementById('editFontColorPicker').style.display = '';
+  }
 
   const colorPicker = document.getElementById('editAppColorPicker');
   colorPicker.querySelectorAll('.color-option').forEach(opt => {
@@ -177,6 +195,10 @@ function openEditAppModal(app) {
 
   editAppIcon.style.background = getEditSelectedColor();
   editAppIcon.style.color = getEditSelectedFontColor();
+
+  // Auto-shrink text
+  const len = editAppIcon.value.length;
+  editAppIcon.style.fontSize = (len <= 2 ? 28 : len === 3 ? 20 : len === 4 ? 16 : 12) + 'px';
 
   editAppModal.classList.add('active');
   editAppName.focus();
@@ -201,9 +223,19 @@ function renderArchivedApps() {
     const textColor = app.text_color || '#ffffff';
     const icon = app.icon || app.name.charAt(0).toUpperCase();
     const archivedDate = app.archived_at ? new Date(app.archived_at).toLocaleDateString() : '';
+    let archivedIconHtml;
+    if (app.icon_image) {
+      const imgUrl = `http://localhost:${getServerPort()}/api/icons/${app.id}?v=${encodeURIComponent(app.updated_at || '')}`;
+      const bgStyle = app.icon_mode === 'cover' ? '' : ` background: ${color};`;
+      archivedIconHtml = `<div class="archived-app-icon" style="overflow: hidden;${bgStyle}"><img src="${imgUrl}" style="width: 100%; height: 100%; object-fit: cover; display: block;"></div>`;
+    } else {
+      const len = icon.length;
+      const fs = len <= 2 ? 16 : len === 3 ? 12 : 10;
+      archivedIconHtml = `<div class="archived-app-icon" style="background: ${color}; color: ${textColor}; font-size: ${fs}px;">${icon}</div>`;
+    }
     return `
       <div class="archived-app-item" data-id="${app.id}">
-        <div class="archived-app-icon" style="background: ${color}; color: ${textColor};">${icon}</div>
+        ${archivedIconHtml}
         <div class="archived-app-info">
           <div class="archived-app-name">${app.name}</div>
           <div class="archived-app-date">Archived ${archivedDate}</div>
@@ -251,6 +283,9 @@ function renderArchivedApps() {
 
 // ===== Main Initialization =====
 async function init() {
+  // Cache server port for use in image URLs etc.
+  try { setServerPort(await window.os8.server.getPort()); } catch(e) {}
+
   // Start system clock
   startClock();
 
@@ -414,9 +449,51 @@ async function init() {
   nextNewApp.addEventListener('click', () => {
     if (!newAppName.value.trim()) return;
     newAppIcon.value = newAppName.value.trim().charAt(0).toUpperCase();
+    // Reset icon upload state
+    const newIconFile = document.getElementById('newAppIconFile');
+    const newIconPreview = document.getElementById('newAppIconPreview');
+    newIconFile.value = '';
+    newIconPreview.style.display = 'none';
+    newAppIcon.style.display = '';
     selectColor(getDefaultColor(), newAppIcon);
     newAppStep1.style.display = 'none';
     newAppStep2.style.display = 'block';
+  });
+
+  // New app icon upload wiring
+  document.getElementById('newAppUploadBtn').addEventListener('click', () => {
+    document.getElementById('newAppIconFile').click();
+  });
+
+  document.getElementById('newAppIconFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      document.getElementById('newAppIconPreviewImg').src = reader.result;
+      document.getElementById('newAppIconPreview').style.display = 'block';
+      newAppIcon.style.display = 'none';
+      document.getElementById('fontColorPicker').style.display = 'none';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('newAppIconRemove').addEventListener('click', () => {
+    document.getElementById('newAppIconFile').value = '';
+    document.getElementById('newAppIconPreview').style.display = 'none';
+    newAppIcon.style.display = '';
+    document.getElementById('fontColorPicker').style.display = '';
+  });
+
+  // Text auto-shrink for create modal
+  newAppIcon.addEventListener('input', () => {
+    const len = newAppIcon.value.length;
+    let fontSize;
+    if (len <= 2) fontSize = 36;
+    else if (len === 3) fontSize = 26;
+    else if (len === 4) fontSize = 20;
+    else fontSize = 16;
+    newAppIcon.style.fontSize = fontSize + 'px';
   });
 
   backNewApp.addEventListener('click', () => {
@@ -459,9 +536,32 @@ async function init() {
     const name = newAppName.value.trim();
     if (name) {
       newAppModal.classList.remove('active');
-      const icon = newAppIcon.value.trim() || null;
+      const iconFile = document.getElementById('newAppIconFile').files[0];
+      const icon = iconFile ? null : (newAppIcon.value.trim() || null);
       try {
-        const app = await createApp(name, getSelectedAppColor(), icon, getSelectedFontColor());
+        let app = await createApp(name, getSelectedAppColor(), icon, getSelectedFontColor());
+        // Upload icon image if selected
+        if (iconFile) {
+          try {
+            const formData = new FormData();
+            formData.append('file', iconFile);
+            const res = await fetch(`http://localhost:${getServerPort()}/api/icons/${app.id}/upload`, { method: 'POST', body: formData });
+            if (res.ok) {
+              const result = await res.json();
+              // Update local app state with icon_image
+              const currentApps = [...getApps()];
+              const idx = currentApps.findIndex(a => a.id === app.id);
+              if (idx !== -1) {
+                currentApps[idx] = result.app;
+                setApps(currentApps);
+              }
+              app = result.app;
+              renderApps();
+            }
+          } catch (uploadErr) {
+            console.error('Icon upload failed:', uploadErr);
+          }
+        }
         console.log('App created:', app);
         await createAppTab(app);
       } catch (err) {
@@ -514,6 +614,44 @@ async function init() {
     }
   });
 
+  // Edit icon upload wiring
+  document.getElementById('editAppUploadBtn').addEventListener('click', () => {
+    document.getElementById('editAppIconFile').click();
+  });
+
+  document.getElementById('editAppIconFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      document.getElementById('editAppIconPreviewImg').src = reader.result;
+      document.getElementById('editAppIconPreview').style.display = 'block';
+      editAppIcon.style.display = 'none';
+      document.getElementById('editFontColorPicker').style.display = 'none';
+    };
+    reader.readAsDataURL(file);
+  });
+
+  document.getElementById('editAppIconRemove').addEventListener('click', () => {
+    document.getElementById('editAppIconFile').value = '';
+    document.getElementById('editAppIconPreview').style.display = 'none';
+    editAppIcon.style.display = '';
+    document.getElementById('editFontColorPicker').style.display = '';
+    // Mark for deletion on save
+    document.getElementById('editAppIconPreview').dataset.removed = 'true';
+  });
+
+  // Text auto-shrink for edit modal
+  editAppIcon.addEventListener('input', () => {
+    const len = editAppIcon.value.length;
+    let fontSize;
+    if (len <= 2) fontSize = 28;
+    else if (len === 3) fontSize = 20;
+    else if (len === 4) fontSize = 16;
+    else fontSize = 12;
+    editAppIcon.style.fontSize = fontSize + 'px';
+  });
+
   cancelEditApp.addEventListener('click', () => {
     editAppModal.classList.remove('active');
     setEditingAppId(null);
@@ -531,20 +669,49 @@ async function init() {
   saveEditApp.addEventListener('click', async () => {
     const name = editAppName.value.trim();
     if (name && getEditingAppId()) {
-      const icon = editAppIcon.value.trim() || null;
-      const updatedApp = await window.os8.apps.update(getEditingAppId(), {
+      const appId = getEditingAppId();
+      const editIconFile = document.getElementById('editAppIconFile');
+      const editIconPreview = document.getElementById('editAppIconPreview');
+      const iconFile = editIconFile.files[0];
+      const iconRemoved = editIconPreview.dataset.removed === 'true';
+
+      const icon = (iconFile || (!iconRemoved && editIconPreview.style.display !== 'none')) ? undefined : (editAppIcon.value.trim() || null);
+      let updatedApp = await window.os8.apps.update(appId, {
         name,
-        icon,
+        ...(icon !== undefined ? { icon } : {}),
         color: getEditSelectedColor(),
         textColor: getEditSelectedFontColor()
       });
+
+      // Handle icon image upload or removal
+      if (iconFile) {
+        try {
+          const formData = new FormData();
+          formData.append('file', iconFile);
+          const res = await fetch(`http://localhost:${getServerPort()}/api/icons/${appId}/upload`, { method: 'POST', body: formData });
+          if (res.ok) updatedApp = (await res.json()).app;
+        } catch (err) {
+          console.error('Icon upload failed:', err);
+        }
+      } else if (iconRemoved) {
+        try {
+          const res = await fetch(`http://localhost:${getServerPort()}/api/icons/${appId}`, { method: 'DELETE' });
+          if (res.ok) updatedApp = (await res.json()).app;
+        } catch (err) {
+          console.error('Icon delete failed:', err);
+        }
+      }
+
+      // Clean up state
+      editIconPreview.dataset.removed = '';
+
       const currentApps = [...getApps()];
-      const appIndex = currentApps.findIndex(a => a.id === getEditingAppId());
+      const appIndex = currentApps.findIndex(a => a.id === appId);
       if (appIndex !== -1) {
         currentApps[appIndex] = updatedApp;
         setApps(currentApps);
       }
-      const openTab = getAppTabByAppId(getEditingAppId());
+      const openTab = getAppTabByAppId(appId);
       if (openTab) {
         openTab.app = updatedApp;
         openTab.title = updatedApp.name;

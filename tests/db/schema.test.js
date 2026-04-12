@@ -79,7 +79,7 @@ const EXPECTED_TABLES = [
 // Key columns per table — not exhaustive, but covers columns added by migrations
 // (the ones most likely to break during a split)
 const EXPECTED_COLUMNS = {
-  apps: ['id', 'name', 'slug', 'status', 'display_order', 'color', 'icon', 'text_color', 'archived_at', 'app_type'],
+  apps: ['id', 'name', 'slug', 'status', 'display_order', 'color', 'icon', 'text_color', 'archived_at', 'app_type', 'icon_image', 'icon_mode'],
   agents: [
     'id', 'app_id', 'name', 'slug', 'backend', 'model', 'status',
     // Migration-added columns

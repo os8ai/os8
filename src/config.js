@@ -11,11 +11,12 @@ const CORE_DIR = path.join(OS8_DIR, 'core');
 const SKILLS_DIR = path.join(OS8_DIR, 'skills');
 const MODELS_DIR = path.join(OS8_DIR, 'models');
 const AVATARS_DIR = path.join(MODELS_DIR, 'avatars');
+const ICONS_DIR = path.join(BLOB_DIR, 'icons');
 const DB_PATH = path.join(CONFIG_DIR, 'os8.db');
 
 // Ensure all OS8 directories exist
 function ensureDirectories() {
-  [OS8_DIR, CONFIG_DIR, APPS_DIR, BLOB_DIR, CORE_DIR, SKILLS_DIR, MODELS_DIR, AVATARS_DIR].forEach(dir => {
+  [OS8_DIR, CONFIG_DIR, APPS_DIR, BLOB_DIR, CORE_DIR, SKILLS_DIR, MODELS_DIR, AVATARS_DIR, ICONS_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
@@ -36,6 +37,7 @@ module.exports = {
   SKILLS_DIR,
   MODELS_DIR,
   AVATARS_DIR,
+  ICONS_DIR,
   DB_PATH,
   ensureDirectories
 };

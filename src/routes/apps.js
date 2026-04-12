@@ -215,9 +215,9 @@ function createAppsRouter(db, deps) {
         return res.status(404).json({ error: 'App not found' });
       }
 
-      const { icon, name, color, textColor } = req.body;
-      if (icon === undefined && name === undefined && color === undefined && textColor === undefined) {
-        return res.status(400).json({ error: 'No updatable fields provided. Supported: icon, name, color, textColor' });
+      const { icon, name, color, textColor, iconImage, iconMode } = req.body;
+      if (icon === undefined && name === undefined && color === undefined && textColor === undefined && iconImage === undefined && iconMode === undefined) {
+        return res.status(400).json({ error: 'No updatable fields provided. Supported: icon, name, color, textColor, iconImage, iconMode' });
       }
 
       const updates = {};
@@ -225,6 +225,8 @@ function createAppsRouter(db, deps) {
       if (name !== undefined) updates.name = name;
       if (color !== undefined) updates.color = color;
       if (textColor !== undefined) updates.textColor = textColor;
+      if (iconImage !== undefined) updates.iconImage = iconImage;
+      if (iconMode !== undefined) updates.iconMode = iconMode;
 
       const updated = AppService.update(db, req.params.id, updates);
 

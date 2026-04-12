@@ -203,6 +203,10 @@ const cbLimitSetting = db.prepare('SELECT * FROM settings WHERE key = ?').get('a
   try { db.exec("UPDATE memory_sources SET source = 'MYSELF.md' WHERE source = 'SOUL.md'"); } catch(e) {}
   try { db.exec("UPDATE memory_chunks SET source = 'MYSELF.md' WHERE source = 'SOUL.md'"); } catch(e) {}
 
+  // Add icon image columns to apps table (image-based app icons)
+  try { db.exec('ALTER TABLE apps ADD COLUMN icon_image TEXT'); } catch(e) {}
+  try { db.exec('ALTER TABLE apps ADD COLUMN icon_mode TEXT'); } catch(e) {}
+
   // Initialize default Claude instructions if not exists
   const claudeInstructions = db.prepare('SELECT * FROM claude_instructions WHERE id = 1').get();
   if (!claudeInstructions) {

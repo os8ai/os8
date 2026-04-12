@@ -17,7 +17,8 @@ import {
   getShowHiddenFiles, setShowHiddenFiles,
   getPanelMode, setPanelMode, setJobsView, setSelectedJobId,
   getJobsFilterView, setJobsFilterView,
-  getVaultTab
+  getVaultTab,
+  getServerPort
 } from './state.js';
 import { hideAllPreviews, hidePreviewForApp, loadPreview, updatePreviewBounds, destroyPreviewForApp } from './preview.js';
 import { switchStorageView, loadStorageView } from './file-tree.js';
@@ -55,13 +56,15 @@ export function renderTabBar() {
     const tabColor = isVault ? '#3b82f6' : (tab.app?.color || '#6366f1');
     const tabTitle = isAssistant ? 'Agents' : tab.title;
     const tabIcon = isVault ? 'V' : isAssistant ? 'A' : (tab.app?.icon || tab.title.charAt(0).toUpperCase());
+    const hasIconImage = !isVault && !isAssistant && tab.app?.icon_image;
+    const tabIconHtml = hasIconImage
+      ? `<img src="http://localhost:${getServerPort()}/api/icons/${tab.app.id}?v=${encodeURIComponent(tab.app.updated_at || '')}" style="width: 18px; height: 18px; border-radius: 4px; object-fit: cover; display: block;">`
+      : `<span style="font-size: ${tabIcon.length > 2 ? 8 : 14}px; font-weight: 600; color: #fff; background: ${tabColor}; width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center;">${tabIcon}</span>`;
     return `
       <div class="tab ${isActive ? 'active' : ''}" data-tab-id="${tab.id}" ${isDraggable ? 'draggable="true"' : ''}>
         ${!isHome ? `
           <span class="tab-icon">
-            <span style="font-size: 14px; font-weight: 600; color: #fff; background: ${tabColor}; width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
-              ${tabIcon}
-            </span>
+            ${tabIconHtml}
           </span>
         ` : ''}
         <span class="tab-title">${tabTitle}</span>

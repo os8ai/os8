@@ -435,6 +435,34 @@
       font-weight: 600;
       color: var(--color-text);
       box-shadow: 0 4px 12px rgba(var(--color-indigo-rgb), 0.3);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Inset border overlay — sits on top of image content via z-index */
+    .app-icon-img::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* Stronger border for image icons */
+    .app-icon-img.has-image::after {
+      box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.35);
+    }
+
+    .app-icon-img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      border: none;
+      outline: none;
+      border-radius: inherit;
     }
 
     .app-icon-name {

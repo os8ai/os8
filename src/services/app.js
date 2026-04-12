@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { APPS_DIR, BLOB_DIR } = require('../config');
+const { APPS_DIR, BLOB_DIR, ICONS_DIR } = require('../config');
 const { generateId, generateSlug } = require('../utils');
 const { scaffoldFromTemplate } = require('../templates/loader');
 const {
@@ -167,6 +167,16 @@ const AppService = {
       values.push(updates.textColor);
     }
 
+    if (updates.iconImage !== undefined) {
+      fields.push('icon_image = ?');
+      values.push(updates.iconImage);
+    }
+
+    if (updates.iconMode !== undefined) {
+      fields.push('icon_mode = ?');
+      values.push(updates.iconMode);
+    }
+
     if (fields.length > 0) {
       fields.push('updated_at = CURRENT_TIMESTAMP');
       values.push(id);
@@ -246,6 +256,12 @@ const AppService = {
       }
       if (fs.existsSync(blobPath)) {
         fs.rmSync(blobPath, { recursive: true });
+      }
+
+      // Remove icon image if present
+      for (const ext of ['png', 'jpg']) {
+        const iconPath = path.join(ICONS_DIR, `${id}.${ext}`);
+        if (fs.existsSync(iconPath)) fs.unlinkSync(iconPath);
       }
 
       // Remove from database

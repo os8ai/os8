@@ -648,6 +648,14 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
         }
       }
 
+      // The SSE `done` event normally clears the progress bubble, but the HTTP
+      // response is also authoritative. Clear loading here so a missed/racy SSE
+      // event cannot leave the "Timed out" bubble counting forever.
+      setStreamingText('')
+      setIsLoading(false)
+      setActiveSteps([])
+      loadingStartRef.current = null
+
     } catch (err) {
       console.error('Chat error:', err)
       setIsLoading(false)

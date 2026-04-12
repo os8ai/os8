@@ -7,9 +7,43 @@ import {
   getApps, setApps, addApp, getAppById,
   getAssistantApp, setAssistantApp,
   getDraggedAppIcon, setDraggedAppIcon,
-  getDraggedAppIndex, setDraggedAppIndex
+  getDraggedAppIndex, setDraggedAppIndex,
+  getServerPort
 } from './state.js';
 import { showContextMenu } from './tasks.js';
+
+/**
+ * Render an app icon as HTML (image or text with auto-shrink).
+ * @param {object} app - App record from DB
+ * @param {number} size - Icon size in px (64 for grid, 18 for tabs)
+ */
+export function renderIconHtml(app, size = 64) {
+  const color = app.color || '#6366f1';
+  const textColor = app.text_color || '#ffffff';
+  const textIcon = app.icon || app.name.charAt(0).toUpperCase();
+
+  if (app.icon_image) {
+    const port = getServerPort();
+    const imgUrl = `http://localhost:${port}/api/icons/${app.id}?v=${encodeURIComponent(app.updated_at || '')}`;
+    // Image already resized to 128x128 by processIconImage — render full-size.
+    // For transparent PNGs, the background color shows through naturally.
+    const bgStyle = app.icon_mode === 'cover' ? '' : `background: ${color};`;
+    return `<div class="app-icon-img has-image" style="${bgStyle}"><img src="${imgUrl}"></div>`;
+  }
+
+  // Text icon with auto-shrink based on character count
+  let fontSize;
+  if (size <= 20) {
+    fontSize = textIcon.length <= 2 ? 12 : 8;
+  } else {
+    if (textIcon.length <= 2) fontSize = 28;
+    else if (textIcon.length === 3) fontSize = 20;
+    else if (textIcon.length === 4) fontSize = 16;
+    else fontSize = 12;
+  }
+
+  return `<div class="app-icon-img" style="background: ${color}; color: ${textColor}; font-size: ${fontSize}px;">${textIcon}</div>`;
+}
 
 // Callbacks for functions in other modules or index.html
 let callbacks = {
@@ -41,15 +75,12 @@ export function renderApps() {
   }
 
   appsGrid.innerHTML = getApps().map((app, index) => {
-    const color = app.color || '#6366f1';
-    const textColor = app.text_color || '#ffffff';
-    const icon = app.icon || app.name.charAt(0).toUpperCase();
     const isSystem = app.app_type === 'system';
     const systemClass = isSystem ? ' system-app' : '';
     const draggable = isSystem ? 'false' : 'true'; // System apps can't be reordered
     return `
       <div class="app-icon${systemClass}" data-id="${app.id}" data-index="${index}" data-system="${isSystem}" draggable="${draggable}">
-        <div class="app-icon-img" style="background: ${color}; color: ${textColor};">${icon}</div>
+        ${renderIconHtml(app, 64)}
         <div class="app-icon-name">${app.name}</div>
       </div>
     `;

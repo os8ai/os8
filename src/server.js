@@ -38,6 +38,7 @@ const createXRouter = require('./routes/x');
 const createTelegramRouter = require('./routes/telegram');
 const createAppDbRouter = require('./routes/app-db');
 const createAppBlobRouter = require('./routes/app-blob');
+const createIconRouter = require('./routes/icons');
 const createAIRegistryRouter = require('./routes/ai-registry');
 const AIRegistryService = require('./services/ai-registry');
 const BillingService = require('./services/billing');
@@ -421,6 +422,10 @@ async function createServer() {
 
   // Per-app blob storage (file uploads, reads, listing)
   app.use('/api/apps/:appId/blob', createAppBlobRouter(db, { AppService }));
+
+  // App icon images (upload, AI generation, serving)
+  const ImageGenService = require('./services/imagegen');
+  app.use('/api/icons', createIconRouter(db, { AppService, ImageGenService }));
 
   // Agent management
   const { generateAssistantClaudeMd, scaffoldAssistantApp } = require('./services/app');

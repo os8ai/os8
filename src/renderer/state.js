@@ -10,6 +10,7 @@ export const state = {
   showHiddenFiles: false,
   assistantApp: null,
   coreReady: false,
+  serverPort: 8888, // default, updated at init
 
   // Multi-Agent State
   agents: [],           // All agents [{id, name, emoji, backend, model, isDefault}]
@@ -121,6 +122,7 @@ export function getCurrentApp() { return state.currentApp; }
 export function getShowHiddenFiles() { return state.showHiddenFiles; }
 export function getAssistantApp() { return state.assistantApp; }
 export function getCoreReady() { return state.coreReady; }
+export function getServerPort() { return state.serverPort; }
 export function getAgents() { return state.agents; }
 export function getActiveAgentId() { return state.activeAgentId; }
 export function getActiveAgent() { return state.agents.find(a => a.id === state.activeAgentId); }
@@ -209,6 +211,7 @@ export function setCurrentApp(app) { state.currentApp = app; }
 export function setShowHiddenFiles(value) { state.showHiddenFiles = value; }
 export function setAssistantApp(app) { state.assistantApp = app; }
 export function setCoreReady(value) { state.coreReady = value; }
+export function setServerPort(port) { state.serverPort = port; }
 export function setAgents(agents) { state.agents = agents; }
 export function setActiveAgentId(id) {
   state.activeAgentId = id;

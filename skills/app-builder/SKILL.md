@@ -40,8 +40,9 @@ Write to `~/os8/plans/YYYYMMDDHHMM-app-name.json`:
 {
   "name": "Weather Dashboard",
   "color": "#3b82f6",
-  "icon": "cloud-sun",
+  "icon": "W",
   "textColor": "#ffffff",
+  "iconPrompt": "A minimal weather app icon, sun partially behind a cloud, flat design, blue and yellow on white background",
   "spec": "Build a weather dashboard that shows current conditions and a 5-day forecast.\n\nLayout:\n- Search bar at top for city lookup\n- Current weather card: temperature, humidity, wind speed, weather icon\n- Below: horizontal row of 5 day-forecast cards\n\nInteractions:\n- Search triggers API fetch (OpenWeatherMap free tier)\n- Loading spinner during fetch\n- Error state for invalid cities\n\nData:\n- Cache results in localStorage for 30 minutes\n- Remember last searched city\n\nStyle:\n- Dark UI with blue accents (#3b82f6)\n- Rounded cards with subtle shadows\n- Responsive — works on narrow preview pane"
 }
 ```
@@ -52,8 +53,9 @@ Write to `~/os8/plans/YYYYMMDDHHMM-app-name.json`:
 
 **Optional fields:**
 - `color` — hex background for the home screen icon
-- `icon` — Lucide icon name (e.g. "cloud-sun", "check-circle", "calendar") or 1-2 character emoji
+- `icon` — 1-4 character text or emoji for the icon (1-2 chars recommended). Used as fallback before image icon is generated.
 - `textColor` — hex text color on the icon (default `#ffffff`)
+- `iconPrompt` — text description for AI-generated icon image (recommended). Describe the icon visually: shapes, colors, style. Don't include text in the icon — it won't be readable at small sizes.
 
 **Writing good specs:** The spec is the most important input. A vague spec produces a vague app.
 
@@ -142,6 +144,26 @@ Returns a screenshot (base64 PNG) and any console errors. Review both:
 - **Screenshot**: Does the UI match the spec? Is it rendering correctly?
 - **Console errors**: Any React errors, missing imports, or runtime failures?
 
+### 5b. Generate app icon (recommended)
+
+If your plan includes an `iconPrompt`, generate a proper app icon after a successful build:
+
+```bash
+curl -X POST http://localhost:PORT/api/icons/APP_ID/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "A minimal weather app icon, sun behind a cloud, flat design, blue and yellow"
+  }'
+```
+
+This uses AI image generation to create a 128x128 icon and attaches it to the app. The icon replaces the default letter icon on the home screen.
+
+**Icon prompt tips:**
+- Describe the icon visually: "a blue calendar with a checkmark", "a red heart with a pulse line"
+- Keep it simple — icons are small (128x128)
+- Don't include text in the icon — it won't be readable at small sizes
+- Reference the app's purpose, not its name
+
 ### 6. Fix issues (if needed)
 
 If the inspection reveals problems, dispatch a fix build on the **existing** app:
@@ -183,3 +205,4 @@ If running as a timed job, end with:
 - Always inspect after building — never assume success
 - Keep specs concrete — layout, data, interactions, style
 - Don't add `package.json` to apps — they use Core's shared dependencies
+- **Always include `iconPrompt` in your plan** and generate an icon after build — letter icons are fallbacks, not the goal

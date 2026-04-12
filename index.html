@@ -441,14 +441,20 @@
       <!-- Step 2: Icon & Color -->
       <div class="new-app-step" id="newAppStep2" style="display: none;">
         <h2>Customize Icon</h2>
-        <div class="icon-picker-centered">
-          <input type="text" class="icon-editable" id="newAppIcon" maxlength="2" value="M">
+        <div class="icon-picker-centered" id="newAppIconPicker">
+          <input type="text" class="icon-editable" id="newAppIcon" value="M">
+          <div class="icon-upload-preview" id="newAppIconPreview" style="display: none;">
+            <img id="newAppIconPreviewImg">
+            <button class="icon-upload-remove" id="newAppIconRemove">&times;</button>
+          </div>
           <div class="font-color-picker" id="fontColorPicker">
             <span class="font-color-option selected" data-color="#ffffff" style="background: #ffffff;"></span>
             <span class="font-color-option" data-color="#18181b" style="background: #18181b;"></span>
           </div>
+          <button class="icon-upload-btn" id="newAppUploadBtn">Upload Image</button>
+          <input type="file" id="newAppIconFile" accept=".jpg,.jpeg,.png,.gif,.webp,.svg" hidden>
         </div>
-        <div class="icon-hint" style="text-align: center; margin-bottom: 20px;">Press <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
+        <div class="icon-hint" style="text-align: center; margin-bottom: 20px;">1-4 characters recommended &middot; <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
         <div class="color-picker" id="newAppColorPicker">
           <div class="color-option selected" data-color="#991b1b" style="background: #991b1b;"></div>
           <div class="color-option" data-color="#ec4899" style="background: #ec4899;"></div>
@@ -498,13 +504,19 @@
         <div class="color-option" data-color="#64748b" style="background: #64748b;"></div>
         <div class="color-option" data-color="#18181b" style="background: #18181b;"></div>
       </div>
-      <div class="icon-picker">
-        <input type="text" class="icon-editable" id="editAppIcon" maxlength="2">
+      <div class="icon-picker" id="editAppIconPicker">
+        <input type="text" class="icon-editable" id="editAppIcon">
+        <div class="icon-upload-preview" id="editAppIconPreview" style="display: none;">
+          <img id="editAppIconPreviewImg">
+          <button class="icon-upload-remove" id="editAppIconRemove">&times;</button>
+        </div>
         <div class="font-color-picker" id="editFontColorPicker">
           <span class="font-color-option" data-color="#ffffff" style="background: #ffffff;"></span>
           <span class="font-color-option" data-color="#18181b" style="background: #18181b;"></span>
         </div>
-        <div class="icon-hint">Press <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
+        <div class="icon-hint">1-4 chars &middot; <kbd>Ctrl</kbd>+<kbd>Cmd</kbd>+<kbd>Space</kbd> for emoji</div>
+        <button class="icon-upload-btn" id="editAppUploadBtn">Upload Image</button>
+        <input type="file" id="editAppIconFile" accept=".jpg,.jpeg,.png,.gif,.webp,.svg" hidden>
       </div>
       <div class="modal-actions">
         <button class="modal-btn cancel" id="cancelEditApp">Cancel</button>
