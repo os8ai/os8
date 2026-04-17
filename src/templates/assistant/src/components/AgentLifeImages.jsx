@@ -31,9 +31,15 @@ export default function AgentLifeImages({ baseApiUrl, appId, agentId }) {
         return res.json()
       })
       .then(data => {
+        const seen = new Set()
         const imgs = (data.images || [])
           .filter(img => img.filename && img.timestamp && !img.filename.startsWith('telegram-'))
           .reverse()
+          .filter(img => {
+            if (seen.has(img.filename)) return false
+            seen.add(img.filename)
+            return true
+          })
           .map(img => ({
             url: `${baseApiUrl}/blob/${agentId}/current-image/${img.filename}`,
             timestamp: img.timestamp,

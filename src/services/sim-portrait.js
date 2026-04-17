@@ -198,6 +198,9 @@ function findSimpleRefs(agentBlobDir) {
 async function storeImageInDb(db, agentId, filePath, filename, imageView, now) {
   if (!fs.existsSync(filePath)) return null;
 
+  // Skip if this image already exists in the DB (prevents duplicate entries)
+  if (ConversationService.imageExists(db, agentId, filename)) return null;
+
   try {
     const { compressImageBuffer, shouldCompress } = require('../utils/image-compress');
     const buffer = fs.readFileSync(filePath);
