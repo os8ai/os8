@@ -23,6 +23,13 @@ const multer = require('multer');
 const PlanCommandService = require('../services/plan-command');
 const ConversationService = require('../services/conversation');
 const AccountService = require('../services/account');
+const {
+  broadcast,
+  emit,
+  MESSAGES_SNAPSHOT,
+  STATE_SNAPSHOT,
+  CUSTOM
+} = require('../shared/agui-events');
 
 // Module-level SSE client tracking: Map<threadId, Set<res>>
 const threadSSEClients = new Map();
@@ -78,10 +85,12 @@ function createAgentChatRouter(db, deps) {
       const msg = AgentChatService.sendMessage(db, thread.id, sender.id, sender.name, message);
 
       // Broadcast SSE
-      broadcastToThread(thread.id, {
-        type: 'thread-message',
-        message: { ...msg, sender_name: sender.name }
-      });
+      const dmMsg = { ...msg, sender_name: sender.name };
+      broadcastToThread(
+        thread.id,
+        MESSAGES_SNAPSHOT,
+        { threadId: thread.id, messages: [dmMsg] }
+      );
 
       // Trigger response from recipient via orchestrator
       if (ThreadOrchestrator) {
@@ -94,14 +103,12 @@ function createAgentChatRouter(db, deps) {
         const { getAgentState } = deps;
         const state = getAgentState ? getAgentState(recipient.id) : null;
         if (state && state.sseClients) {
-          const sseData = JSON.stringify({
-            type: 'agent-dm',
-            threadId: thread.id,
-            from: sender.name,
-            message: message
-          });
           state.sseClients.forEach(client => {
-            client.write(`data: ${sseData}\n\n`);
+            emit(
+              client,
+              CUSTOM,
+              { name: 'agent-dm', value: { threadId: thread.id, from: sender.name, message } }
+            );
           });
         }
       } catch (e) {
@@ -356,10 +363,12 @@ function createAgentChatRouter(db, deps) {
       AgentChatService.resetCircuitBreaker(db, thread.id);
 
       // Broadcast user message SSE
-      broadcastToThread(thread.id, {
-        type: 'thread-message',
-        message: { ...msg, sender_name: senderName }
-      });
+      const userThreadMsg = { ...msg, sender_name: senderName };
+      broadcastToThread(
+        thread.id,
+        MESSAGES_SNAPSHOT,
+        { threadId: thread.id, messages: [userThreadMsg] }
+      );
 
       // --- Plan commands: /plan, /approve, /cancel, /reject, /modify ---
       const trimmedMsg = message.trim();
@@ -377,10 +386,12 @@ function createAgentChatRouter(db, deps) {
             const replyMsg = AgentChatService.sendMessage(
               db, thread.id, agent.id, agent.name, text, 'chat', 'assistant'
             );
-            broadcastToThread(thread.id, {
-              type: 'thread-message',
-              message: { ...replyMsg, sender_name: agent.name }
-            });
+            const replyWithName = { ...replyMsg, sender_name: agent.name };
+            broadcastToThread(
+              thread.id,
+              MESSAGES_SNAPSHOT,
+              { threadId: thread.id, messages: [replyWithName] }
+            );
           };
 
           try {
@@ -389,7 +400,11 @@ function createAgentChatRouter(db, deps) {
               case 'plan':
                 result = await PlanCommandService.handlePlan(db, { agentId: agent.id, request: planCmd.argument });
                 sendAgentReply(result.displayText);
-                broadcastToThread(thread.id, { type: 'plan', ...result.planSSEData });
+                broadcastToThread(
+                  thread.id,
+                  STATE_SNAPSHOT,
+                  { threadId: thread.id, snapshot: { plan: result.planSSEData } }
+                );
                 break;
 
               case 'approve':
@@ -432,10 +447,12 @@ function createAgentChatRouter(db, deps) {
             const replyMsg = AgentChatService.sendMessage(
               db, thread.id, agent.id, agent.name, `Plan error: ${err.message}`, 'chat', 'assistant'
             );
-            broadcastToThread(thread.id, {
-              type: 'thread-message',
-              message: { ...replyMsg, sender_name: agent.name }
-            });
+            const errorReply = { ...replyMsg, sender_name: agent.name };
+            broadcastToThread(
+              thread.id,
+              MESSAGES_SNAPSHOT,
+              { threadId: thread.id, messages: [errorReply] }
+            );
           }
           return res.json({ success: true, messageId: msg.id });
         }
@@ -545,20 +562,12 @@ function createAgentChatRouter(db, deps) {
 }
 
 /**
- * Broadcast SSE event to all clients of a thread
+ * Broadcast an ag-ui SSE event to all clients of a thread.
  */
-function broadcastToThread(threadId, data) {
+function broadcastToThread(threadId, aguiType, aguiPayload) {
   const clients = threadSSEClients.get(threadId);
   if (!clients || clients.size === 0) return;
-
-  const sseData = JSON.stringify(data);
-  clients.forEach(client => {
-    try {
-      client.write(`data: ${sseData}\n\n`);
-    } catch (e) {
-      // Client may have disconnected
-    }
-  });
+  broadcast(clients, aguiType, aguiPayload);
 }
 
 module.exports = { createAgentChatRouter, getThreadSSEClients, threadSSEClients };

@@ -555,6 +555,14 @@ export async function restoreTabState(tab) {
   // Switch storage view
   switchStorageView(storageSelect.value);
 
+  // Clean up agent panel EventSource connections before clearing DOM
+  // (prevents orphaned SSE connections that keep running server-side)
+  for (const inst of getTerminalInstances()) {
+    if (inst.isAgentPanel && inst._cleanup) {
+      inst._cleanup();
+    }
+  }
+
   // Clear existing terminal instances from DOM (they belong to another tab)
   terminalsContainer.innerHTML = '';
 

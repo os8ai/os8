@@ -6,6 +6,7 @@
  */
 
 const express = require('express');
+const { emit, STATE_SNAPSHOT } = require('../shared/agui-events');
 
 /**
  * @param {object} db
@@ -236,7 +237,11 @@ function createPlansRouter(db, { PlanService, PlanExecutorService, AgentService 
     });
 
     // Send current state
-    res.write(`data: ${JSON.stringify({ type: 'plan-status', plan })}\n\n`);
+    emit(
+      res,
+      STATE_SNAPSHOT,
+      { snapshot: { plan } }
+    );
 
     // Register for updates if executor is available
     if (PlanExecutorService) {

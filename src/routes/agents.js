@@ -9,6 +9,7 @@ const express = require('express');
 const { getAgentState, removeAgentState, setDefaultAgentId, getDefaultAgentId } = require('../services/agent-state');
 const { generateMyselfMd, generateUserMd } = require('../assistant/config-handler');
 const { SKILLS_DIR } = require('../config');
+const { broadcast, CUSTOM } = require('../shared/agui-events');
 
 function createAgentsRouter(db, deps) {
   const { AgentService, AppService, scaffoldAssistantApp, generateAssistantClaudeMd, onAgentChanged, onTelegramConfigChange, SimService, JobsFileService } = deps;
@@ -168,6 +169,13 @@ function createAgentsRouter(db, deps) {
       console.error('Voice preview error:', err.message);
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // GET /api/agents/:id/status — Lightweight status check (is agent currently working?)
+  // Used by agent-panel and Chat.jsx to recover loading state after tab switch.
+  router.get('/:id/status', (req, res) => {
+    const state = getAgentState(req.params.id);
+    res.json({ working: !!state.working });
   });
 
   // GET /api/agents/:id/self — Self-info endpoint for agents to look up their own config
@@ -496,10 +504,7 @@ function createAgentsRouter(db, deps) {
       // Notify agent's SSE clients so UI updates immediately
       const state = getAgentState(agent.id);
       if (state.responseClients) {
-        const event = JSON.stringify({ type: 'config-changed' });
-        state.responseClients.forEach(client => {
-          try { client.write(`data: ${event}\n\n`); } catch {}
-        });
+        broadcast(state.responseClients, CUSTOM, { name: 'config-changed', value: {} });
       }
 
       return res.json({ success: true, model: 'auto', label: 'Auto (system selects best available)' });
@@ -519,10 +524,7 @@ function createAgentsRouter(db, deps) {
     // Notify agent's SSE clients so UI updates immediately
     const state = getAgentState(agent.id);
     if (state.responseClients) {
-      const event = JSON.stringify({ type: 'config-changed' });
-      state.responseClients.forEach(client => {
-        try { client.write(`data: ${event}\n\n`); } catch {}
-      });
+      broadcast(state.responseClients, CUSTOM, { name: 'config-changed', value: {} });
     }
 
     res.json({ success: true, model: match.id, label: match.name });

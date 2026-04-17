@@ -7,6 +7,15 @@
 const ConversationService = require('../services/conversation');
 const PlanCommandService = require('../services/plan-command');
 const PlanService = require('../services/plan');
+const {
+  broadcast,
+  RUN_FINISHED,
+  TEXT_MESSAGE_CONTENT,
+  STATE_SNAPSHOT,
+  CUSTOM,
+  newRunId,
+  newMessageId
+} = require('../shared/agui-events');
 
 /**
  * Handle plan commands for the streaming /send endpoint.
@@ -14,16 +23,40 @@ const PlanService = require('../services/plan');
  * @param {object} opts - { db, assistant, agentName, state, message }
  * @returns {{ handled: boolean, response?: object }}
  */
-async function handleSendPlanCommand(trimmedMsg, { db, assistant, agentName, state, message }) {
+async function handleSendPlanCommand(trimmedMsg, { db, assistant, agentName, state, message, runId, messageId }) {
   if (!db) return { handled: false };
 
   const planCmd = PlanCommandService.parseCommand(trimmedMsg);
   if (!planCmd.command) return { handled: false };
 
+  // Fall back to fresh IDs if caller didn't supply them (keeps this function self-contained).
+  const effRunId = runId || newRunId();
+  const effMessageId = messageId || newMessageId();
+
+  // Map a legacy-shaped payload to its ag-ui equivalent and emit ag-ui only.
+  // Callers still construct `{type:'plan'|'done'|'stream', ...}` objects for code clarity;
+  // this helper translates them to ag-ui types at the wire boundary.
   const sendSSE = (data) => {
-    state.getResponseClients().forEach(client => {
-      try { client.write(`data: ${JSON.stringify(data)}\n\n`); } catch {}
-    });
+    let aguiType;
+    let aguiPayload;
+    switch (data.type) {
+      case 'plan':
+        aguiType = STATE_SNAPSHOT;
+        aguiPayload = { snapshot: { plan: data } };
+        break;
+      case 'done':
+        aguiType = RUN_FINISHED;
+        aguiPayload = { runId: effRunId, messageId: effMessageId, result: data.text };
+        break;
+      case 'stream':
+        aguiType = TEXT_MESSAGE_CONTENT;
+        aguiPayload = { runId: effRunId, messageId: effMessageId, delta: data.text };
+        break;
+      default:
+        aguiType = CUSTOM;
+        aguiPayload = { name: data.type, runId: effRunId, value: data };
+    }
+    broadcast(state.getResponseClients(), aguiType, aguiPayload);
   };
 
   const recordUserMessage = () => {

@@ -40,6 +40,19 @@ const AccountService = require('../services/account');
 const { CapabilityService } = require('../services/capability');
 const { StreamStateTracker, extractStepsFromResponse } = require('../services/stream-tracker');
 const PlanService = require('../services/plan');
+const {
+  broadcast,
+  RUN_FINISHED,
+  TEXT_MESSAGE_START,
+  TEXT_MESSAGE_CONTENT,
+  TEXT_MESSAGE_END,
+  STEP_STARTED,
+  STEP_FINISHED,
+  CUSTOM,
+  newRunId,
+  newMessageId
+} = require('../shared/agui-events');
+const { createTranslator } = require('../services/backend-events');
 
 function getUserSpeakerLabel(db) {
   if (!db) return 'user';
@@ -80,17 +93,24 @@ function handleSend(deps) {
       return res.status(400).json({ error: 'Message is required' });
     }
 
+    // Track working state so UI can recover loading indicator after tab switch
+    state.working = true;
+
     const assistant = db ? (req.agentId ? AgentService.getById(db, req.agentId) : AgentService.getDefault(db)) : null;
     if (!assistant) {
+      state.working = false;
       return res.status(404).json({ error: 'Assistant not found' });
     }
 
     const { agentDir: appPath, agentBlobDir } = AgentService.getPaths(assistant.app_id, assistant.id);
     const agentName = ConversationService.getAgentName(assistant.id);
 
+    const runId = newRunId();
+    const messageId = newMessageId();
+
     // --- Plan commands: /plan, /approve, /reject, /modify ---
     const trimmedMsg = message.trim();
-    const planResult = await handleSendPlanCommand(trimmedMsg, { db, assistant, agentName, state, message });
+    const planResult = await handleSendPlanCommand(trimmedMsg, { db, assistant, agentName, state, message, runId, messageId });
     if (planResult.handled) {
       return res.json(planResult.response);
     }
@@ -320,10 +340,11 @@ function handleSend(deps) {
 
       // Notify terminal of model switch
       if (prevFamily !== resolved.familyId) {
-        const switchNotice = JSON.stringify({ type: 'model-switch', from: prevFamily, to: resolved.familyId, cascade: cliTaskType, reason });
-        state.getResponseClients().forEach(client => {
-          try { client.write(`data: ${switchNotice}\n\n`); } catch {}
-        });
+        broadcast(
+          state.getResponseClients(),
+          CUSTOM,
+          { name: 'model-switch', runId, value: { from: prevFamily, to: resolved.familyId, cascade: cliTaskType, reason } }
+        );
       }
     }
 
@@ -398,16 +419,19 @@ function handleSend(deps) {
       const clients = state.getResponseClients();
       for (let i = 0; i < cleanResponse.length; i += CHUNK_SIZE) {
         const chunk = cleanResponse.slice(i, i + CHUNK_SIZE);
-        const streamData = JSON.stringify({ type: 'stream', text: chunk });
-        clients.forEach(client => {
-          client.write(`data: ${streamData}\n\n`);
-        });
+        broadcast(
+          clients,
+          TEXT_MESSAGE_CONTENT,
+          { runId, messageId, delta: chunk }
+        );
       }
 
-      const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
-      clients.forEach(client => {
-        client.write(`data: ${doneData}\n\n`);
-      });
+      broadcast(
+        clients,
+        RUN_FINISHED,
+        { runId, messageId, result: cleanResponse, reaction, attachments: responseAttachments }
+      );
+      state.working = false;
 
       // Record to conversation DB
       if (db) {
@@ -531,10 +555,11 @@ function handleSend(deps) {
             }
 
             if (safeText) {
-              const streamData = JSON.stringify({ type: 'stream', text: safeText });
-              state.getResponseClients().forEach(client => {
-                client.write(`data: ${streamData}\n\n`);
-              });
+              broadcast(
+                state.getResponseClients(),
+                TEXT_MESSAGE_CONTENT,
+                { runId, messageId, delta: safeText }
+              );
             }
           }
           // message_complete is handled after loop
@@ -546,10 +571,12 @@ function handleSend(deps) {
         const noFileTags = stripFileAttachments(displayResponse);
         const reaction = extractReaction(noFileTags);
         const cleanResponse = stripReaction(noFileTags);
-        const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
-        state.getResponseClients().forEach(client => {
-          client.write(`data: ${doneData}\n\n`);
-        });
+        broadcast(
+          state.getResponseClients(),
+          RUN_FINISHED,
+          { runId, messageId, result: cleanResponse, reaction, attachments: responseAttachments }
+        );
+        state.working = false;
 
         // Record assistant response to conversation DB
         if (db && fullResponse) {
@@ -793,32 +820,61 @@ function handleSend(deps) {
       const now = Date.now();
       if (now - lastActivityBroadcast > 2000 && state.getResponseClients().length > 0) {
         lastActivityBroadcast = now;
-        const activityEvent = JSON.stringify({ type: 'activity' });
-        state.getResponseClients().forEach(client => client.write(`data: ${activityEvent}\n\n`));
+        broadcast(
+          state.getResponseClients(),
+          CUSTOM,
+          { name: 'activity-pulse', runId, value: {} }
+        );
       }
     };
 
-    // Stream transparency: track execution steps for Claude backends
+    // Stream transparency: track execution steps for Claude backends.
+    // ClaudeTranslator emits REASONING_START/END with proper messageId, so the
+    // thinking callbacks here are no-ops (kept for symmetry with the tracker shape).
     const tracker = (backendId === 'claude' && state.getResponseClients().length > 0)
       ? new StreamStateTracker({
           onStepStart: ({ blockIndex, blockType, toolName, toolInput, label, stepIndex }) => {
-            const event = JSON.stringify({ type: 'step-start', blockIndex, label, toolName, stepIndex });
-            state.getResponseClients().forEach(client => client.write(`data: ${event}\n\n`));
+            broadcast(
+              state.getResponseClients(),
+              STEP_STARTED,
+              { runId, stepName: label, blockIndex, toolName, stepIndex }
+            );
           },
           onStepComplete: ({ blockIndex, durationMs, stepIndex }) => {
-            const event = JSON.stringify({ type: 'step-complete', blockIndex, durationMs, stepIndex });
-            state.getResponseClients().forEach(client => client.write(`data: ${event}\n\n`));
+            broadcast(
+              state.getResponseClients(),
+              STEP_FINISHED,
+              { runId, blockIndex, durationMs, stepIndex }
+            );
           },
-          onThinkingStart: ({ blockIndex }) => {
-            const event = JSON.stringify({ type: 'thinking-start', blockIndex });
-            state.getResponseClients().forEach(client => client.write(`data: ${event}\n\n`));
-          },
-          onThinkingEnd: ({ blockIndex }) => {
-            const event = JSON.stringify({ type: 'thinking-end', blockIndex });
-            state.getResponseClients().forEach(client => client.write(`data: ${event}\n\n`));
-          }
+          onThinkingStart: () => {},
+          onThinkingEnd: () => {}
         })
       : null;
+
+    // Backend translator emits the rich ag-ui event stream alongside the tracker.
+    // Skipped types are already emitted by other paths to avoid duplication:
+    //   - TEXT_MESSAGE_*: emitted post-filter from the safeText path (translator sees raw deltas)
+    //   - RUN_FINISHED: emitted from the done path with the full clean response
+    // createTranslator returns null for unsupported backends (e.g. grok).
+    const backendTranslator = (state.getResponseClients().length > 0)
+      ? createTranslator(backendId, { runId })
+      : null;
+    const TRANSLATOR_SKIP = new Set([
+      TEXT_MESSAGE_START,
+      TEXT_MESSAGE_CONTENT,
+      TEXT_MESSAGE_END,
+      RUN_FINISHED
+    ]);
+    const emitTranslated = (json) => {
+      if (!backendTranslator) return;
+      const events = backendTranslator.translate(json);
+      const clients = state.getResponseClients();
+      for (const ev of events) {
+        if (TRANSLATOR_SKIP.has(ev.type)) continue;
+        broadcast(clients, ev.type, ev);
+      }
+    };
 
     const { SettingsService } = deps;
     const rawTimeout = (db && SettingsService) ? SettingsService.get(db, 'responseTimeoutMs') : null;
@@ -828,6 +884,7 @@ function handleSend(deps) {
     const timeout = claudeTimeout > 0 ? setTimeout(() => {
       if (!responded) {
         responded = true;
+        state.working = false;
         ptyProcess.kill();
         res.status(504).json({ error: `${backend.label} took too long to respond.` });
       }
@@ -850,6 +907,9 @@ function handleSend(deps) {
 
           // Feed stream events to tracker for step transparency
           if (tracker) tracker.processEvent(json);
+
+          // Feed to ag-ui translator for rich event emission with native IDs
+          emitTranslated(json);
 
           // Extract streaming text — Claude uses stream_event, Gemini uses message+delta,
           // Codex uses item events, Grok uses {role:"assistant",content:"..."}
@@ -961,10 +1021,11 @@ function handleSend(deps) {
 
               // Send safe text to clients (for display/TTS)
               if (safeText) {
-                const streamData = JSON.stringify({ type: 'stream', text: safeText });
-                state.getResponseClients().forEach(client => {
-                  client.write(`data: ${streamData}\n\n`);
-                });
+                broadcast(
+                  state.getResponseClients(),
+                  TEXT_MESSAGE_CONTENT,
+                  { runId, messageId, delta: safeText }
+                );
               }
             }
           } else if (json.type === 'result') {
@@ -981,10 +1042,11 @@ function handleSend(deps) {
             const cleanResponse = stripReaction(noFileTags);
             if (!doneSent) {
               doneSent = true;
-              const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
-              state.getResponseClients().forEach(client => {
-                client.write(`data: ${doneData}\n\n`);
-              });
+              broadcast(
+                state.getResponseClients(),
+                RUN_FINISHED,
+                { runId, messageId, result: cleanResponse, reaction, attachments: responseAttachments }
+              );
             }
           }
         } catch (e) {
@@ -1009,6 +1071,7 @@ function handleSend(deps) {
       if (buffer.trim()) {
         try {
           const json = JSON.parse(buffer);
+          emitTranslated(json);
           if (json.type === 'result') {
             fullResponse = json.result || fullResponse;
             if (json.subtype === 'error_max_turns' && !fullResponse) {
@@ -1038,18 +1101,22 @@ function handleSend(deps) {
         const noFileTags = stripFileAttachments(displayResponse);
         const reaction = extractReaction(noFileTags);
         const cleanResponse = stripReaction(noFileTags);
-        const doneData = JSON.stringify({ type: 'done', text: cleanResponse, reaction, attachments: responseAttachments });
-        state.getResponseClients().forEach(client => {
-          client.write(`data: ${doneData}\n\n`);
-        });
+        broadcast(
+          state.getResponseClients(),
+          RUN_FINISHED,
+          { runId, messageId, result: cleanResponse, reaction, attachments: responseAttachments }
+        );
       }
 
       // Post-hoc step extraction for non-Claude backends
       if (!tracker && backendId !== 'claude' && fullResponse && fullResponse.length > 500 && db) {
         extractStepsFromResponse(db, fullResponse).then(steps => {
           if (steps.length > 0) {
-            const event = JSON.stringify({ type: 'steps-summary', steps });
-            state.getResponseClients().forEach(client => client.write(`data: ${event}\n\n`));
+            broadcast(
+              state.getResponseClients(),
+              CUSTOM,
+              { name: 'steps-summary', runId, value: { steps } }
+            );
           }
         }).catch(() => {}); // Best-effort
       }
@@ -1169,6 +1236,9 @@ function handleChat(deps) {
 
     const { agentDir: appPath, agentBlobDir: chatBlobDir } = AgentService.getPaths(assistant.app_id, assistant.id);
     const agentName = ConversationService.getAgentName(assistant.id);
+
+    const runId = newRunId();
+    const messageId = newMessageId();
 
     // /plan interception — generate a structured plan via Opus
     const chatPlanResult = await handleChatPlanCommand(message, { db, assistant });
@@ -1370,10 +1440,11 @@ function handleChat(deps) {
 
         // Notify terminal of model switch
         if (chatPrevFamily !== chatResolved.familyId) {
-          const switchNotice = JSON.stringify({ type: 'model-switch', from: chatPrevFamily, to: chatResolved.familyId, cascade: chatCliTaskType, reason: chatReason });
-          state.getResponseClients().forEach(client => {
-            try { client.write(`data: ${switchNotice}\n\n`); } catch {}
-          });
+          broadcast(
+            state.getResponseClients(),
+            CUSTOM,
+            { name: 'model-switch', runId, value: { from: chatPrevFamily, to: chatResolved.familyId, cascade: chatCliTaskType, reason: chatReason } }
+          );
         }
       }
 
@@ -1619,6 +1690,7 @@ function handleChat(deps) {
       const timeout = chatClaudeTimeout > 0 ? setTimeout(() => {
         if (!responded) {
           responded = true;
+        state.working = false;
           claude.kill();
           res.status(504).json({ error: `${chatBackend.label} took too long to respond. Try a simpler message.` });
         }
@@ -1644,6 +1716,7 @@ function handleChat(deps) {
 
         if (responded) return;
         responded = true;
+        state.working = false;
 
         if (code !== 0) {
           console.error(`${chatBackend.label} exited with code`, code, stderr);
@@ -1762,6 +1835,7 @@ function handleChat(deps) {
         if (timeout) clearTimeout(timeout);
         if (responded) return;
         responded = true;
+        state.working = false;
         console.error(`Failed to spawn ${chatBackend.command}:`, err);
         res.status(500).json({ error: err.message });
       });

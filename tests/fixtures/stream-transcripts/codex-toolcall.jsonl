@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"019d9480-fdd6-7872-8473-2d0f65a0c7be"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"command_execution","command":"/bin/zsh -lc 'ls -la /tmp'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'cat /tmp/probe.txt'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"/bin/zsh -lc 'cat /tmp/probe.txt'","aggregated_output":"hello from os8\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"/bin/zsh -lc 'ls -la /tmp'","aggregated_output":"lrwxr-xr-x@ 1 root  wheel  11 Nov 22 08:49 /tmp -> private/tmp\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"`/tmp/probe.txt` contains:\n\n```text\nhello from os8\n```\n\n`ls -la /tmp` shows that `/tmp` is a symlink:\n\n```text\nlrwxr-xr-x@ 1 root  wheel  11 Nov 22 08:49 /tmp -> private/tmp\n```"}}
+{"type":"turn.completed","usage":{"input_tokens":25588,"cached_input_tokens":23808,"output_tokens":203}}

@@ -14,6 +14,7 @@ import {
   initPtyHandlers, escapeHtmlStr, getTerminalSelectOptions,
   updateCloseButtonVisibility, closeTerminalInstance, createTerminalInstance
 } from './terminal.js';
+import { AgUiReducer } from '../shared/agui-client.js';
 
 /**
  * Create an agent chat panel — a two-way chat with an agent, scoped to the current app.
@@ -110,6 +111,12 @@ export async function createAgentInstance(appId, options = {}) {
   let staleTimeout = null;
   let errorTimeout = null;
 
+  // ag-ui reducer: ingests structured events (RUN_STARTED, TOOL_CALL_*, etc.) in parallel with
+  // legacy event handlers below. State is maintained for future UI use (live tool cards,
+  // structured tool result panels, run history) but not yet rendered. Legacy handlers remain
+  // the source of truth for current rendering. Attached to `instance` lower in this function.
+  const aguiReducer = new AgUiReducer();
+
   function showWorking(label) {
     workingStartTime = Date.now();
     statusBar.className = 'agent-status-bar active';
@@ -168,76 +175,103 @@ export async function createAgentInstance(appId, options = {}) {
     if (!currentAgentId) return;
 
     eventSource = new EventSource(`http://localhost:${port}/api/agent/${currentAgentId}/stream`);
+
+    // Recover state after tab switch: check if agent is working, and reload
+    // history to catch any responses that arrived while disconnected.
+    fetch(`http://localhost:${port}/api/agents/${currentAgentId}/status`)
+      .then(r => r.json())
+      .then(({ working }) => {
+        if (working && !isLoading) {
+          isLoading = true;
+          inputEl.disabled = true;
+          sendBtn.disabled = true;
+          showWorking('Working...');
+          showTypingIndicator();
+        } else if (!working) {
+          // Agent finished while we were away — reload history to show missed response
+          loadHistory();
+        }
+      })
+      .catch(() => {}); // Best-effort
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        if (data.type === 'model-switch') {
-          // Model routing notice — show in chat as a system message
-          const notice = document.createElement('div');
-          notice.className = 'agent-model-switch-notice';
-          notice.textContent = `Model: ${data.from || '?'} → ${data.to || '?'} (${data.reason || data.cascade})`;
-          messagesEl.appendChild(notice);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
-        } else if (data.type === 'activity') {
-          // Liveness pulse — reset stale/error escalation
-          if (isLoading) {
-            statusBar.classList.remove('stale', 'error');
-            if (!statusLabel.textContent.startsWith('Working') && !statusLabel.textContent.startsWith('Still'))
-              return; // don't overwrite step label
-            statusLabel.textContent = 'Working...';
-            clearTimeout(staleTimeout);
-            clearTimeout(errorTimeout);
-            staleTimeout = setTimeout(() => {
-              statusBar.classList.add('stale');
-              statusLabel.textContent = 'Still working...';
-            }, 60000);
-            errorTimeout = setTimeout(() => {
-              statusBar.classList.remove('stale');
-              statusBar.classList.add('error');
-              statusLabel.textContent = 'May be stuck...';
-            }, 180000);
+        // Maintain reducer state for future use (debug / Phase 6 features).
+        try { aguiReducer.ingest(data); } catch {}
+
+        // CUSTOM events: routed by `name` field
+        if (data.type === 'CUSTOM') {
+          if (data.name === 'model-switch') {
+            const v = data.value || {};
+            const notice = document.createElement('div');
+            notice.className = 'agent-model-switch-notice';
+            notice.textContent = `Model: ${v.from || '?'} → ${v.to || '?'} (${v.reason || v.cascade})`;
+            messagesEl.appendChild(notice);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+          } else if (data.name === 'activity-pulse') {
+            // Liveness pulse — reset stale/error escalation
+            if (isLoading) {
+              statusBar.classList.remove('stale', 'error');
+              if (!statusLabel.textContent.startsWith('Working') && !statusLabel.textContent.startsWith('Still'))
+                return; // don't overwrite step label
+              statusLabel.textContent = 'Working...';
+              clearTimeout(staleTimeout);
+              clearTimeout(errorTimeout);
+              staleTimeout = setTimeout(() => {
+                statusBar.classList.add('stale');
+                statusLabel.textContent = 'Still working...';
+              }, 60000);
+              errorTimeout = setTimeout(() => {
+                statusBar.classList.remove('stale');
+                statusBar.classList.add('error');
+                statusLabel.textContent = 'May be stuck...';
+              }, 180000);
+            }
+          } else if (data.name === 'build-proposal') {
+            const v = data.value || {};
+            if (v.proposalId) {
+              hideTypingIndicator();
+              console.warn(`[AgentPanel] SSE build-proposal received: ${v.proposalId}, rendering card`);
+              renderBuildProposal({ proposalId: v.proposalId, appName: v.appName, appColor: v.appColor, appIcon: v.appIcon, spec: v.spec });
+              skipNextDone = true;
+            }
           }
-        } else if (data.type === 'step-start') {
+        } else if (data.type === 'STEP_STARTED') {
           // Tool execution started — show step label
-          if (isLoading && data.label) {
+          if (isLoading && data.stepName) {
             statusBar.classList.remove('stale', 'error');
-            statusLabel.textContent = data.label;
+            statusLabel.textContent = data.stepName;
           }
-        } else if (data.type === 'step-complete') {
+        } else if (data.type === 'STEP_FINISHED') {
           // Tool execution finished — revert to generic working
           if (isLoading) {
             statusLabel.textContent = 'Working...';
           }
-        } else if (data.type === 'thinking-start') {
+        } else if (data.type === 'REASONING_START') {
           if (isLoading) {
             statusBar.classList.remove('stale', 'error');
             statusLabel.textContent = 'Thinking...';
           }
-        } else if (data.type === 'thinking-end') {
+        } else if (data.type === 'REASONING_END') {
           if (isLoading) {
             statusLabel.textContent = 'Working...';
           }
-        } else if (data.type === 'plan' && data.planId) {
+        } else if (data.type === 'STATE_SNAPSHOT' && data.snapshot?.plan?.planId) {
           // Plan proposal — render approval card, skip the redundant done text
           hideTypingIndicator();
-          renderPlanCard(data);
+          renderPlanCard(data.snapshot.plan);
           skipNextDone = true;
-        } else if (data.type === 'build-proposal' && data.proposalId) {
-          // Build proposal via SSE — render approval card, skip redundant done text
-          hideTypingIndicator();
-          console.warn(`[AgentPanel] SSE build-proposal received: ${data.proposalId}, rendering card`);
-          renderBuildProposal({ proposalId: data.proposalId, appName: data.appName, appColor: data.appColor, appIcon: data.appIcon, spec: data.spec });
-          skipNextDone = true;
-        } else if (data.type === 'stream' && data.text) {
+        } else if (data.type === 'TEXT_MESSAGE_CONTENT' && data.delta) {
           // Streaming text chunk — remove typing indicator on first chunk
           hideTypingIndicator();
           if (!streamingEl) {
             streamingEl = appendMessage('agent', '', agentSelect.selectedOptions[0]?.textContent?.trim() || 'Agent');
           }
           const textEl = streamingEl.querySelector('.agent-msg-text');
-          textEl.textContent += data.text;
+          textEl.textContent += data.delta;
           messagesEl.scrollTop = messagesEl.scrollHeight;
-        } else if (data.type === 'done') {
+        } else if (data.type === 'RUN_FINISHED') {
           hideTypingIndicator();
           hideWorking();
           // Skip redundant done text after plan card
@@ -251,9 +285,10 @@ export async function createAgentInstance(appId, options = {}) {
           }
           // Response complete — replace streaming content with final, or create new message
           const agentLabel = agentSelect.selectedOptions[0]?.textContent?.trim() || 'Agent';
-          if (streamingEl && data.text) {
+          const finalText = data.result;
+          if (streamingEl && finalText) {
             const textEl = streamingEl.querySelector('.agent-msg-text');
-            textEl.textContent = data.text;
+            textEl.textContent = finalText;
             if (data.attachments && data.attachments.length > 0) {
               const attDiv = document.createElement('div');
               attDiv.className = 'agent-msg-attachments';
@@ -265,8 +300,8 @@ export async function createAgentInstance(appId, options = {}) {
               }).join('');
               streamingEl.appendChild(attDiv);
             }
-          } else if (data.text) {
-            appendMessage('agent', data.text, agentLabel, data.attachments);
+          } else if (finalText) {
+            appendMessage('agent', finalText, agentLabel, data.attachments);
           }
           streamingEl = null;
           isLoading = false;
@@ -532,6 +567,7 @@ export async function createAgentInstance(appId, options = {}) {
     pendingAttachments = [];
     renderPendingAttachments();
     hideWorking();
+    aguiReducer.reset();
     hideTypingIndicator();
     connectStream();
     loadHistory();
@@ -737,7 +773,8 @@ export async function createAgentInstance(appId, options = {}) {
     select,
     switchBtn: null,
     _cleanup: cleanup,
-    _agentSelect: agentSelect
+    _agentSelect: agentSelect,
+    aguiReducer
   };
 
   addTerminalInstance(instance);

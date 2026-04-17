@@ -14,6 +14,7 @@ const express = require('express');
 const path = require('path');
 const { APPS_DIR } = require('../config');
 const agentState = require('../services/agent-state');
+const { broadcast, CUSTOM } = require('../shared/agui-events');
 
 function formatElapsed(ms) {
   const s = Math.floor(ms / 1000);
@@ -139,16 +140,15 @@ function createAppsRouter(db, deps) {
       // Also send SSE event directly to agent's stream (backup to IPC chain)
       if (agentId) {
         const state = agentState.getAgentState(agentId);
-        const sseData = JSON.stringify({
-          type: 'build-proposal',
-          proposalId: proposal.id,
-          appName: proposal.appName,
-          appColor: proposal.appColor,
-          appIcon: proposal.appIcon,
-          spec: proposal.spec
-        });
-        state.responseClients.forEach(client => {
-          try { client.write(`data: ${sseData}\n\n`); } catch {}
+        broadcast(state.responseClients, CUSTOM, {
+          name: 'build-proposal',
+          value: {
+            proposalId: proposal.id,
+            appName: proposal.appName,
+            appColor: proposal.appColor,
+            appIcon: proposal.appIcon,
+            spec: proposal.spec
+          }
         });
       }
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import ThreadMessage from './ThreadMessage'
 import AgentAvatar from './AgentAvatar'
 import { useTTSStream } from '../hooks/useTTSStream'
+import { useAgUiReducer } from '../hooks/useAgUiReducer'
 
 function ThreadView({ thread, baseApiUrl, agents, onClose }) {
   const [messages, setMessages] = useState([])
@@ -18,6 +19,11 @@ function ThreadView({ thread, baseApiUrl, agents, onClose }) {
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
   const eventSourceRef = useRef(null)
+
+  // ag-ui reducer: maintains structured state from RUN_STARTED, MESSAGES_SNAPSHOT, etc. in
+  // parallel with legacy event handlers below. State is not yet rendered (Phase 4 plumbing
+  // only); legacy handlers remain the source of truth.
+  const { ingest: aguiIngest } = useAgUiReducer()
 
   // TTS speech queue
   const speechQueueRef = useRef([])
@@ -148,27 +154,33 @@ function ThreadView({ thread, baseApiUrl, agents, onClose }) {
       try {
         const data = JSON.parse(e.data)
 
-        if (data.type === 'thread-message') {
-          const msg = data.message
-          setMessages(prev => {
-            // Deduplicate by ID
-            if (prev.some(m => m.id === msg.id)) return prev
-            return [...prev, msg]
-          })
-          // Queue TTS for agent messages
-          if (ttsEnabledRef.current && msg.sender_app_id !== 'user') {
-            const voiceId = resolveVoiceIdRef.current(msg.sender_app_id)
-            speechQueueRef.current.push({ text: msg.content, voiceId })
-            if (isSpeakingRef.current && speechQueueRef.current.length === 1) {
-              // Already playing — use existing prefetch path
-              prefetchRef.current(msg.content, { voiceId })
-            } else if (!isSpeakingRef.current && speechQueueRef.current.length === 1) {
-              // Nothing playing yet — promote preconnect to prefetch (eager)
-              promoteToPrefetchRef.current(msg.content, { voiceId })
+        // Ingest into ag-ui reducer in parallel with legacy handlers (state-only, no UI yet)
+        aguiIngest(data)
+
+        if (data.type === 'MESSAGES_SNAPSHOT' && Array.isArray(data.messages)) {
+          // Each thread message arrives as a single-message snapshot
+          for (const msg of data.messages) {
+            if (!msg) continue
+            setMessages(prev => {
+              // Deduplicate by ID
+              if (prev.some(m => m.id === msg.id)) return prev
+              return [...prev, msg]
+            })
+            // Queue TTS for agent messages
+            if (ttsEnabledRef.current && msg.sender_app_id !== 'user') {
+              const voiceId = resolveVoiceIdRef.current(msg.sender_app_id)
+              speechQueueRef.current.push({ text: msg.content, voiceId })
+              if (isSpeakingRef.current && speechQueueRef.current.length === 1) {
+                // Already playing — use existing prefetch path
+                prefetchRef.current(msg.content, { voiceId })
+              } else if (!isSpeakingRef.current && speechQueueRef.current.length === 1) {
+                // Nothing playing yet — promote preconnect to prefetch (eager)
+                promoteToPrefetchRef.current(msg.content, { voiceId })
+              }
+              processQueueRef.current()
             }
-            processQueueRef.current()
           }
-        } else if (data.type === 'agent-working') {
+        } else if (data.type === 'RUN_STARTED' && data.agentName) {
           setWorkingAgents(prev => new Set([...prev, data.agentName]))
           // Pre-connect TTS WebSocket for first agent (before text exists)
           if (ttsEnabledRef.current && !isSpeakingRef.current && speechQueueRef.current.length === 0) {
@@ -177,7 +189,7 @@ function ThreadView({ thread, baseApiUrl, agents, onClose }) {
               preconnectRef.current({ voiceId })
             }
           }
-        } else if (data.type === 'agent-done' || data.type === 'agent-error') {
+        } else if ((data.type === 'RUN_FINISHED' || data.type === 'RUN_ERROR') && data.agentName) {
           setWorkingAgents(prev => {
             const next = new Set(prev)
             next.delete(data.agentName)

@@ -11,6 +11,13 @@ const { loadJSON, saveJSON } = require('../utils/file-helpers');
 const { BLOB_DIR } = require('../config');
 const ConversationService = require('../services/conversation');
 const DigestService = require('../services/digest');
+const {
+  broadcast,
+  RUN_FINISHED,
+  TEXT_MESSAGE_CONTENT,
+  newRunId,
+  newMessageId
+} = require('../shared/agui-events');
 
 // Handler modules
 const { getConfig, updateConfig } = require('../assistant/config-handler');
@@ -200,17 +207,23 @@ function createAssistantRouter(db, deps) {
     const { agentDir: appPath, agentBlobDir } = AgentService.getPaths(assistant.app_id, assistant.id);
     const assistantProcess = new AssistantProcess(appPath);
 
+    // Per-process run/message IDs reused across all stream/done events from this process
+    const procRunId = newRunId();
+    const procMessageId = newMessageId();
+
     assistantProcess.on('stream', (text) => {
-      const data = JSON.stringify({ type: 'stream', text });
-      state.getResponseClients().forEach(client => {
-        client.write(`data: ${data}\n\n`);
+      broadcast(state.getResponseClients(), TEXT_MESSAGE_CONTENT, {
+        runId: procRunId,
+        messageId: procMessageId,
+        delta: text
       });
     });
 
     assistantProcess.on('response', (text) => {
-      const data = JSON.stringify({ type: 'done', text });
-      state.getResponseClients().forEach(client => {
-        client.write(`data: ${data}\n\n`);
+      broadcast(state.getResponseClients(), RUN_FINISHED, {
+        runId: procRunId,
+        messageId: procMessageId,
+        result: text
       });
     });
 

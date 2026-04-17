@@ -10,6 +10,11 @@ const PlanService = require('./plan');
 const AgentService = require('./agent');
 const agentState = require('./agent-state');
 const { getAppEnvironmentContext } = require('./plan-generator');
+const {
+  broadcast,
+  RUN_FINISHED,
+  TEXT_MESSAGE_CONTENT
+} = require('../shared/agui-events');
 
 const PLAN_STEP_PRIORITY = 60;
 const POLL_INTERVAL_MS = 5000;
@@ -44,17 +49,19 @@ const PlanExecutorService = {
   },
 
   /**
-   * Send SSE event to an agent's chat clients.
+   * Send an ag-ui SSE event to an agent's chat clients.
+   *
    * @param {string} agentId
-   * @param {object} event - SSE event data
+   * @param {string} aguiType - ag-ui event type constant (e.g. TEXT_MESSAGE_CONTENT)
+   * @param {object} aguiPayload - ag-ui event payload (runId, messageId, delta, etc.)
    */
-  _sendToAgent(agentId, event) {
+  _sendToAgent(agentId, aguiType, aguiPayload) {
     const state = agentState.getAgentState(agentId);
-    const data = JSON.stringify(event);
-    state.responseClients.forEach(client => {
-      try { client.write(`data: ${data}\n\n`); } catch {}
-    });
+    broadcast(state.responseClients, aguiType, aguiPayload);
   },
+
+  _planRunId(planId) { return `run_plan_${planId}`; },
+  _planMessageId(planId) { return `msg_plan_${planId}`; },
 
   /**
    * Begin executing an approved plan.
@@ -109,10 +116,11 @@ const PlanExecutorService = {
 
     PlanService.updateStatus(db, planId, 'cancelled');
 
-    this._sendToAgent(plan.agent_id, {
-      type: 'done',
-      text: 'Plan cancelled.'
-    });
+    this._sendToAgent(
+      plan.agent_id,
+      RUN_FINISHED,
+      { runId: this._planRunId(planId), result: 'Plan cancelled.', status: 'cancelled' }
+    );
 
     console.log(`[PlanExecutor] Plan ${planId} cancelled`);
   },
@@ -200,7 +208,15 @@ const PlanExecutorService = {
     // Helper: send stream event and accumulate text
     const streamText = (text) => {
       accumulatedText += text;
-      this._sendToAgent(plan.agent_id, { type: 'stream', text });
+      this._sendToAgent(
+        plan.agent_id,
+        TEXT_MESSAGE_CONTENT,
+        {
+          runId: this._planRunId(plan.id),
+          messageId: this._planMessageId(plan.id),
+          delta: text
+        }
+      );
     };
 
     for (const step of steps) {
@@ -306,7 +322,15 @@ const PlanExecutorService = {
     // Build and send contextual completion summary
     const finalPlan = PlanService.getById(db, plan.id);
     const summary = this.buildCompletionSummary(finalPlan, totalDuration);
-    this._sendToAgent(plan.agent_id, { type: 'done', text: summary });
+    this._sendToAgent(
+      plan.agent_id,
+      RUN_FINISHED,
+      {
+        runId: this._planRunId(plan.id),
+        result: summary,
+        status: finalPlan?.status || 'completed'
+      }
+    );
     this._notifyComplete(plan.id, summary);
   },
 

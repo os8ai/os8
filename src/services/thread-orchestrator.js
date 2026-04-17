@@ -15,6 +15,15 @@ const { WorkQueue } = require('./work-queue');
 const { stripInternalNotes, stripToolCallXml, stripReaction } = require('../utils/internal-notes');
 const TelegramService = require('./telegram');
 const { readImageAsBase64Compressed } = require('../assistant/identity-images');
+const {
+  broadcast,
+  RUN_STARTED,
+  RUN_FINISHED,
+  RUN_ERROR,
+  MESSAGES_SNAPSHOT,
+  CUSTOM,
+  newRunId
+} = require('../shared/agui-events');
 
 const PRIORITY_THREAD = 75;
 
@@ -61,32 +70,44 @@ const ThreadOrchestrator = {
         console.log(`[ThreadOrchestrator] Circuit breaker tripped for thread ${threadId}, auto-reset in ${cooldownSecs}s`);
 
         // Broadcast trip event so UI can show "paused" state
-        this._broadcastSSE(threadId, { type: 'circuit-breaker-tripped', threadId, cooldownSecs });
+        this._broadcastSSE(
+          threadId,
+          CUSTOM,
+          { name: 'circuit-breaker-tripped', value: { threadId, cooldownSecs } }
+        );
 
         // Notify agents in thread
         const cooldownMins = Math.ceil(cooldownSecs / 60);
         const tripMsg = AgentChatService.sendSystemMessage(db, threadId,
           `Conversation paused — circuit breaker tripped after ${cbLimit} turns. Auto-resuming in ${cooldownMins} minute(s).`
         );
-        this._broadcastSSE(threadId, {
-          type: 'thread-message',
-          message: { ...tripMsg, sender_app_id: 'system', sender_name: 'System' }
-        });
+        const tripSystemMsg = { ...tripMsg, sender_app_id: 'system', sender_name: 'System' };
+        this._broadcastSSE(
+          threadId,
+          MESSAGES_SNAPSHOT,
+          { threadId, messages: [tripSystemMsg] }
+        );
 
         const timerId = setTimeout(() => {
           _resetTimers.delete(threadId);
           AgentChatService.resetCircuitBreaker(db, threadId);
-          this._broadcastSSE(threadId, { type: 'circuit-breaker-reset', threadId });
+          this._broadcastSSE(
+            threadId,
+            CUSTOM,
+            { name: 'circuit-breaker-reset', value: { threadId } }
+          );
           console.log(`[ThreadOrchestrator] Circuit breaker auto-reset for thread ${threadId}`);
 
           // Notify and auto-resume
           const resumeMsg = AgentChatService.sendSystemMessage(db, threadId,
             'Conversation resumed after cooldown.'
           );
-          this._broadcastSSE(threadId, {
-            type: 'thread-message',
-            message: { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' }
-          });
+          const resumeSystemMsg = { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' };
+          this._broadcastSSE(
+            threadId,
+            MESSAGES_SNAPSHOT,
+            { threadId, messages: [resumeSystemMsg] }
+          );
 
           // Kick off the next exchange
           const freshThread = AgentChatService.getThread(db, threadId);
@@ -228,9 +249,16 @@ const ThreadOrchestrator = {
       return;
     }
 
+    // Run lifecycle: one runId per agent-turn, reused across working/done/error events below
+    const runId = newRunId();
+
     // Broadcast "working" event (desktop only — Telegram responses stay in Telegram)
     if (origin !== 'telegram') {
-      this._broadcastSSE(threadId, { type: 'agent-working', agentId, agentName: agent.name });
+      this._broadcastSSE(
+        threadId,
+        RUN_STARTED,
+        { runId, threadId, agentId, agentName: agent.name }
+      );
     }
 
     try {
@@ -265,7 +293,11 @@ const ThreadOrchestrator = {
       if (!responseText.trim()) {
         console.warn(`[ThreadOrchestrator] Empty response from ${agent.name}`);
         if (origin !== 'telegram') {
-          this._broadcastSSE(threadId, { type: 'agent-done', agentId, agentName: agent.name });
+          this._broadcastSSE(
+            threadId,
+            RUN_FINISHED,
+            { runId, threadId, agentId, agentName: agent.name, result: '' }
+          );
         }
         return;
       }
@@ -293,21 +325,27 @@ const ThreadOrchestrator = {
 
       // Broadcast the message to desktop (skip for Telegram-origin responses)
       if (origin !== 'telegram') {
-        this._broadcastSSE(threadId, {
-          type: 'thread-message',
-          message: {
-            id: msg.id,
-            thread_id: threadId,
-            sender_app_id: agentId,
-            sender_name: agent.name,
-            content: responseText,
-            message_type: 'chat',
-            triggered_by: triggeredBy,
-            timestamp: msg.timestamp
-          }
-        });
+        const threadMsg = {
+          id: msg.id,
+          thread_id: threadId,
+          sender_app_id: agentId,
+          sender_name: agent.name,
+          content: responseText,
+          message_type: 'chat',
+          triggered_by: triggeredBy,
+          timestamp: msg.timestamp
+        };
+        this._broadcastSSE(
+          threadId,
+          MESSAGES_SNAPSHOT,
+          { threadId, messages: [threadMsg] }
+        );
 
-        this._broadcastSSE(threadId, { type: 'agent-done', agentId, agentName: agent.name });
+        this._broadcastSSE(
+          threadId,
+          RUN_FINISHED,
+          { runId, threadId, agentId, agentName: agent.name, result: responseText }
+        );
       }
 
       // If this thread is linked to a Telegram group, send the response there
@@ -375,14 +413,17 @@ const ThreadOrchestrator = {
     } catch (err) {
       console.error(`[ThreadOrchestrator] Error executing response for ${agent.name}:`, err.message);
       if (origin !== 'telegram') {
-        this._broadcastSSE(threadId, {
-          type: 'agent-error',
-          agentId,
-          agentName: agent.name,
-          error: err.message
-        });
+        this._broadcastSSE(
+          threadId,
+          RUN_ERROR,
+          { runId, threadId, agentId, agentName: agent.name, message: err.message }
+        );
         // Always clear spinner on error
-        this._broadcastSSE(threadId, { type: 'agent-done', agentId, agentName: agent.name });
+        this._broadcastSSE(
+          threadId,
+          RUN_FINISHED,
+          { runId, threadId, agentId, agentName: agent.name, status: 'error' }
+        );
       }
     }
   },
@@ -499,11 +540,17 @@ const ThreadOrchestrator = {
         const resumeMsg = AgentChatService.sendSystemMessage(db, thread.id,
           'Conversation resumed after cooldown (recovered on restart).'
         );
-        this._broadcastSSE(thread.id, { type: 'circuit-breaker-reset', threadId: thread.id });
-        this._broadcastSSE(thread.id, {
-          type: 'thread-message',
-          message: { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' }
-        });
+        const resumeSystemMsg = { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' };
+        this._broadcastSSE(
+          thread.id,
+          CUSTOM,
+          { name: 'circuit-breaker-reset', value: { threadId: thread.id } }
+        );
+        this._broadcastSSE(
+          thread.id,
+          MESSAGES_SNAPSHOT,
+          { threadId: thread.id, messages: [resumeSystemMsg] }
+        );
 
         // Resume conversation
         const participants = JSON.parse(thread.participants || '[]').filter(id => id !== 'user');
@@ -520,16 +567,22 @@ const ThreadOrchestrator = {
         const timerId = setTimeout(() => {
           _resetTimers.delete(thread.id);
           AgentChatService.resetCircuitBreaker(db, thread.id);
-          this._broadcastSSE(thread.id, { type: 'circuit-breaker-reset', threadId: thread.id });
+          this._broadcastSSE(
+            thread.id,
+            CUSTOM,
+            { name: 'circuit-breaker-reset', value: { threadId: thread.id } }
+          );
           console.log(`[ThreadOrchestrator] Circuit breaker auto-reset for thread ${thread.id} (recovered)`);
 
           const resumeMsg = AgentChatService.sendSystemMessage(db, thread.id,
             'Conversation resumed after cooldown.'
           );
-          this._broadcastSSE(thread.id, {
-            type: 'thread-message',
-            message: { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' }
-          });
+          const recoveredResumeSystemMsg = { ...resumeMsg, sender_app_id: 'system', sender_name: 'System' };
+          this._broadcastSSE(
+            thread.id,
+            MESSAGES_SNAPSHOT,
+            { threadId: thread.id, messages: [recoveredResumeSystemMsg] }
+          );
 
           // Resume conversation
           const freshThread = AgentChatService.getThread(db, thread.id);
@@ -548,21 +601,13 @@ const ThreadOrchestrator = {
   },
 
   /**
-   * Broadcast SSE event to thread clients
+   * Broadcast an ag-ui SSE event to thread clients.
    */
-  _broadcastSSE(threadId, data) {
+  _broadcastSSE(threadId, aguiType, aguiPayload) {
     if (!this.getThreadSSEClients) return;
     const clients = this.getThreadSSEClients(threadId);
     if (!clients || clients.size === 0) return;
-
-    const sseData = JSON.stringify(data);
-    clients.forEach(client => {
-      try {
-        client.write(`data: ${sseData}\n\n`);
-      } catch (e) {
-        // Client may have disconnected
-      }
-    });
+    broadcast(clients, aguiType, aguiPayload);
   }
 };
 

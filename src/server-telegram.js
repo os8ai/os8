@@ -22,6 +22,13 @@ const agentState = require('./services/agent-state');
 const AgentChatService = require('./services/agent-chat');
 const { ThreadOrchestrator } = require('./services/thread-orchestrator');
 const AccountService = require('./services/account');
+const {
+  broadcast,
+  RUN_FINISHED,
+  TEXT_MESSAGE_CONTENT,
+  newRunId,
+  newMessageId
+} = require('./shared/agui-events');
 
 const DEFAULT_CLAUDE_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
 
@@ -401,14 +408,18 @@ function startTelegramWatcherForAgent(db, agent) {
           console.error(`[Telegram ${agent.name}] Response timed out after ${tgClaudeTimeout / 60000} minutes`);
         }, tgClaudeTimeout) : null;
 
+        const tgRunId = newRunId();
+        const tgMessageId = newMessageId();
+
         const streamToSSE = (text) => {
           const displayText = stripToolCallXml(stripInternalNotes(text));
           if (displayText) {
-            const streamData = JSON.stringify({ type: 'stream', text: displayText, source: 'telegram', agentId: agent.id });
             const aState = agentState.getAgentState(agent.id);
-            aState.responseClients.forEach(client => {
-              client.write(`data: ${streamData}\n\n`);
-            });
+            broadcast(
+              aState.responseClients,
+              TEXT_MESSAGE_CONTENT,
+              { runId: tgRunId, messageId: tgMessageId, delta: displayText, source: 'telegram', agentId: agent.id }
+            );
           }
         };
 
@@ -488,11 +499,12 @@ function startTelegramWatcherForAgent(db, agent) {
               }
 
               // Notify desktop SSE clients
-              const doneData = JSON.stringify({ type: 'done', text: displayResponse, source: 'telegram', agentId: agent.id });
               const aState = agentState.getAgentState(agent.id);
-              aState.responseClients.forEach(client => {
-                client.write(`data: ${doneData}\n\n`);
-              });
+              broadcast(
+                aState.responseClients,
+                RUN_FINISHED,
+                { runId: tgRunId, messageId: tgMessageId, result: displayResponse, source: 'telegram', agentId: agent.id }
+              );
             }
           }
         });

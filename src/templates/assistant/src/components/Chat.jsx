@@ -3,6 +3,7 @@ import AgentAvatar, { useAgentStatus } from './AgentAvatar'
 import { useVoiceStream } from '../hooks/useVoiceStream'
 import { useVoiceInput } from '../hooks/useVoiceInput'
 import { useTTSStream } from '../hooks/useTTSStream'
+import { useAgUiReducer } from '../hooks/useAgUiReducer'
 
 // Note: useStreamingMode prefers real-time streaming when available,
 // falls back to batch transcription if streaming server unavailable
@@ -69,6 +70,11 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
   const [activeSteps, setActiveSteps] = useState([])  // Tool execution steps (Claude)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const loadingStartRef = useRef(null)
+
+  // ag-ui reducer: maintains structured state from RUN_STARTED, TOOL_CALL_*, TEXT_MESSAGE_*,
+  // REASONING_* events alongside the legacy event handlers below. State is not yet rendered
+  // (Phase 4 plumbing only); legacy handlers remain the source of truth for UI.
+  const { ingest: aguiIngest, reset: aguiReset } = useAgUiReducer()
   const [historyLoaded, setHistoryLoaded] = useState(false)
   const prevAgentIdRef = useRef(selectedAgentId)
   const [activeReactionPicker, setActiveReactionPicker] = useState(null)
@@ -442,28 +448,42 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
   useEffect(() => {
     const eventSource = new EventSource(`${apiBase}/stream`)
 
+    // Recover loading state if agent is mid-response (e.g. after tab switch / remount)
+    fetch(`${baseApiUrl}/api/agents/${selectedAgentId}/status`)
+      .then(r => r.json())
+      .then(({ working }) => {
+        if (working) {
+          setIsLoading(true)
+          loadingStartRef.current = Date.now()
+        }
+      })
+      .catch(() => {}) // Best-effort
+
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
+
+        // Ingest into ag-ui reducer in parallel with legacy handlers (state-only, no UI yet)
+        aguiIngest(data)
 
         // Record activity on ANY message from the stream
         lastActivityRef.current = Date.now()
         setLastActivityTime(Date.now())
 
-        if (data.type === 'stream') {
-          // Feed text to TTS (use ref to avoid dependency) - even during greeting
-          handleTTSTextRef.current(data.text)
+        if (data.type === 'TEXT_MESSAGE_CONTENT') {
+          // Feed text delta to TTS (use ref to avoid dependency) - even during greeting
+          handleTTSTextRef.current(data.delta)
 
           // Don't show streaming text - just show "Thinking..." until final response
           // This avoids showing partial text with [internal: ...] notes mid-stream
-        } else if (data.type === 'step-start') {
+        } else if (data.type === 'STEP_STARTED') {
           // Claude tool execution step started
           setActiveSteps(prev => {
             const existing = prev.findIndex(s => s.blockIndex === data.blockIndex)
             const step = {
               blockIndex: data.blockIndex,
               stepIndex: data.stepIndex,
-              label: data.label,
+              label: data.stepName,
               toolName: data.toolName,
               startedAt: Date.now(),
               completed: false
@@ -471,12 +491,12 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
             if (existing >= 0) {
               // Refined label update — replace in place
               const updated = [...prev]
-              updated[existing] = { ...updated[existing], label: data.label }
+              updated[existing] = { ...updated[existing], label: data.stepName }
               return updated
             }
             return [...prev, step]
           })
-        } else if (data.type === 'step-complete') {
+        } else if (data.type === 'STEP_FINISHED') {
           // Claude tool execution step finished
           setActiveSteps(prev =>
             prev.map(s => s.blockIndex === data.blockIndex
@@ -484,24 +504,27 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
               : s
             )
           )
-        } else if (data.type === 'activity') {
-          // Liveness pulse from any backend — activity already recorded above
-        } else if (data.type === 'config-changed') {
-          // Agent changed its own config (e.g. model) — refresh settings
-          if (onConfigChangedRef.current) onConfigChangedRef.current()
-        } else if (data.type === 'build-proposal' && data.proposalId) {
-          // Build proposal — show approval card in chat
-          setBuildProposal({
-            proposalId: data.proposalId,
-            appName: data.appName,
-            appColor: data.appColor,
-            appIcon: data.appIcon,
-            spec: data.spec
-          })
-          setProposalStatus(null)
-          setProposalChangesText('')
-          skipNextDoneRef.current = true
-        } else if (data.type === 'done') {
+        } else if (data.type === 'CUSTOM') {
+          // CUSTOM events: routed by `name`
+          if (data.name === 'activity-pulse') {
+            // Liveness pulse from any backend — activity already recorded above
+          } else if (data.name === 'config-changed') {
+            // Agent changed its own config (e.g. model) — refresh settings
+            if (onConfigChangedRef.current) onConfigChangedRef.current()
+          } else if (data.name === 'build-proposal' && data.value?.proposalId) {
+            const v = data.value
+            setBuildProposal({
+              proposalId: v.proposalId,
+              appName: v.appName,
+              appColor: v.appColor,
+              appIcon: v.appIcon,
+              spec: v.spec
+            })
+            setProposalStatus(null)
+            setProposalChangesText('')
+            skipNextDoneRef.current = true
+          }
+        } else if (data.type === 'RUN_FINISHED') {
           // Response complete
           setStreamingText('')
           setIsLoading(false)

@@ -25,7 +25,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | Renderer (UI) | `index.html` + `src/renderer/main.js` (bootstrap) |
 | Renderer styles | `styles.css` → `styles/` (variables, primitives, layout, components, panels, modals, animations, onboarding) |
 | Renderer modules | `src/renderer/*.js` |
-| Shared modules | `src/shared/*.js` (used by shell and apps; includes `tts-stream-core.js` — TTS playback with audio prefetch) |
+| Shared modules | `src/shared/*.js` (used by shell and apps; includes `tts-stream-core.js` — TTS playback with audio prefetch, `agui-events.js` — ag-ui event types and SSE helpers, `agui-client.js` — client-side reducer for ag-ui events) |
 | Agent services | `src/assistant/*.js` (memory, telegram, identity) |
 | Database initialization | `src/db.js` |
 | Services | `src/services/*.js` |
@@ -106,6 +106,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | `skill-review.js` | SkillReviewService (LLM security review, approve/reject, quarantine lifecycle, dependency install) |
 | `speak.js` | SpeakService (text to audio via ElevenLabs REST API) |
 | `stream-tracker.js` | StreamStateTracker (Claude stream event parsing, step labeling, post-hoc extraction) |
+| `backend-events.js` | Per-backend ag-ui translators (ClaudeTranslator, GeminiTranslator, CodexTranslator) — convert raw CLI stream-json into ag-ui events with native IDs |
 | `subconscious.js` | SubconsciousService (goal-driven context curation between raw memory and agent, 12-section structured output, standalone lightweight classifier, depth slider, motivations-aware) |
 | `tasks-file.js` | TasksFileService (JSON-based task management) |
 | `telegram.js` | TelegramService (Telegram Bot API client) |
@@ -174,6 +175,31 @@ See `src/services/README.md` for patterns and conventions.
 
 Page templates in `src/templates/pages/`:
 - `home.html`, `404.html`, `oauth-result.html`, `call.html`
+
+## SSE Event Protocol (ag-ui vocabulary)
+
+Agent SSE streams use the [ag-ui protocol](https://docs.ag-ui.com) event vocabulary. Events are JSON frames sent via `data: {type, timestamp, ...}\n\n`. All event types are defined in `src/shared/agui-events.js`.
+
+| Event type | When emitted | Key fields |
+|---|---|---|
+| `RUN_STARTED` | Agent CLI spawn begins | `runId`, `model`, `agentId`, `agentName` |
+| `RUN_FINISHED` | Response complete | `runId`, `result`, `status`, `reaction`, `attachments` |
+| `RUN_ERROR` | Agent error | `runId`, `message`, `agentId` |
+| `TEXT_MESSAGE_CONTENT` | Streaming text chunk | `runId`, `messageId`, `delta` |
+| `STEP_STARTED` | Tool execution begins (with label) | `runId`, `stepName`, `blockIndex`, `toolName` |
+| `STEP_FINISHED` | Tool execution ends | `runId`, `blockIndex`, `durationMs` |
+| `TOOL_CALL_START` | Tool invocation (native ID) | `runId`, `toolCallId`, `toolCallName` |
+| `TOOL_CALL_ARGS` | Tool input streaming (Claude only) | `runId`, `toolCallId`, `delta` |
+| `TOOL_CALL_END` | Tool invocation complete | `runId`, `toolCallId` |
+| `TOOL_CALL_RESULT` | Tool result returned | `runId`, `toolCallId`, `content`, `isError` |
+| `REASONING_START/CONTENT/END` | Thinking block lifecycle | `runId`, `messageId`, `delta` |
+| `STATE_SNAPSHOT` | Plan state | `snapshot.plan` |
+| `MESSAGES_SNAPSHOT` | Thread message | `threadId`, `messages[]` |
+| `CUSTOM` | OS8-specific events | `name` (e.g. `model-switch`, `activity-pulse`, `build-proposal`, `config-changed`), `value` |
+
+**Per-backend translators** in `src/services/backend-events.js` convert raw CLI stream-json into the vocabulary above using native IDs (Claude `toolu_...`, Gemini `tool_id`, Codex `item.id`). Claude translator is wired live; Gemini/Codex translators are tested but not yet wired.
+
+**Client-side reducer** in `src/shared/agui-client.js` ingests ag-ui events into structured state (`runs`, `messages`, `toolCalls`, `reasoning` Maps). Wired into `agent-panel.js`, `Chat.jsx`, `ThreadView.jsx`.
 
 ## Capabilities System
 
