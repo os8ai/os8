@@ -1,6 +1,6 @@
 {
   "name": "os8",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "OS8 - Desktop workspace for AI-assisted development",
   "main": "main.js",
   "scripts": {
