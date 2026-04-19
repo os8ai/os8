@@ -401,7 +401,10 @@ module.exports = {
 
 ## Development
 
+**Node version:** Node 22+ required (enforced via `package.json` `engines`; `.nvmrc` pins `22`). Older Node hits `ERR_REQUIRE_ESM` at `npm test` startup because vite 7 (pulled in by vitest 3) is ESM-only and Node <22 can't `require()` ESM modules.
+
 ```bash
+nvm use                                          # Picks up Node 22 from .nvmrc
 npm install                                      # Install dependencies
 npx electron-rebuild -f -w better-sqlite3        # Rebuild native modules for Electron
 npm start                                        # Run OS8
@@ -410,7 +413,7 @@ npm test                                         # Run tests
 # Apps served at http://localhost:8888/{app-id}/
 ```
 
-**Native module rebuild:** `better-sqlite3` is a native Node module that must be compiled against Electron's Node.js version, not the system Node.js. After any `npm install` (including when dependencies change), run `npx electron-rebuild -f -w better-sqlite3`. Failure to do so causes `NODE_MODULE_VERSION` mismatch errors at startup.
+**Native module rebuild:** `better-sqlite3` is a native Node module that must be compiled against Electron's Node.js version, not the system Node.js. After any `npm install` (including when dependencies change), run `npx electron-rebuild -f -w better-sqlite3`. Failure to do so causes `NODE_MODULE_VERSION` mismatch errors at startup. `npm test` automatically rebuilds for system Node (via `pretest`) and back for Electron (via `posttest`).
 
 **Separate data environments:** User data defaults to `~/os8/`. Override with `OS8_HOME` env var to run isolated instances (e.g., for testing a clean user experience without affecting personal data):
 
