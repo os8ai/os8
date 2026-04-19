@@ -31,6 +31,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | Services | `src/services/*.js` |
 | Utility helpers | `src/utils/file-helpers.js` |
 | App templates | `src/templates/` |
+| Version migrations | `src/migrations/<version>-<slug>.js` (see `services/migrator.js`) |
 | CLAUDE.md generators | `src/claude-md.js` |
 | Shared utilities | `src/utils.js` |
 | Path constants | `src/config.js` |
@@ -76,6 +77,8 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | `conversation.js` | ConversationService (conversation entries CRUD) |
 | `core.js` | CoreService (React/Vite/Tailwind setup) |
 | `data-storage.js` | DataStorageService (auto-discovers agent-scoped tables for UI) |
+| `migrator.js` | Migration runner (reads `settings.os8_version`, executes pending `src/migrations/*.js` in order, halts on failure) |
+| `template-resync.js` | Resync shell-owned template files into a deployed app dir with backup (used by migrations) |
 | `digest.js` | DigestService (hierarchical memory compression) |
 | `digest-engine.js` | DigestEngine (automatic session + daily digest generation) |
 | `env.js` | EnvService (environment variables) |
@@ -375,6 +378,26 @@ Timed jobs for scheduled agent tasks.
 Templates in `src/templates/` with `{{VARIABLE}}` substitution. Layered: base → standard (or assistant).
 
 New apps scaffold with: `index.html`, `src/main.jsx`, `src/App.jsx`, `src/index.css`, `tasks.json`, `claude-user.md`.
+
+**Shell-owned vs user-owned.** Inside a template, everything under `src/` and `index.html` is **shell-owned** — code OS8 ships and controls. Top-level files (`MYSELF.md`, `USER.md`, `claude-user.md`, `*.json`) are **user/agent-owned** after scaffold and must never be re-copied. The `template-resync` service enforces this split via `SHELL_OWNED_ROOTS` in `src/services/template-resync.js`.
+
+## Upgrade System
+
+OS8 tracks the last-successful version in `settings.os8_version`. On startup (`main.js`, right after `initDatabase`), `src/services/migrator.js` runs any migration files in `src/migrations/` whose version is greater than the stored value and ≤ the current `package.json` version, in order. Each migration commits the version on success, so a failure halts cleanly and resumes on the next start. On failure, OS8 writes `~/os8/logs/migration-failure-<timestamp>.log`, shows a dialog, and refuses to start.
+
+Fresh installs seed `os8_version = currentVersion` so historical migrations don't run. Pre-migration-system installs (identified by `onboarding_v1_migrated`) backfill to `'0.2.9'`.
+
+Migration file shape (`src/migrations/<x.y.z>-<slug>.js`):
+
+```js
+module.exports = {
+  version: '0.2.10',
+  description: 'Short one-liner',
+  async up({ db, logger }) { /* do the thing */ }
+};
+```
+
+**When to write a migration:** any change under `src/templates/*/src/` or `index.html` that an already-deployed app needs to pick up, any DB schema/data migration, any settings-key rename, any file-layout change in `~/os8/`. The common helper for template changes is `resyncAppShellFiles({ appDir, templateName, variables })` in `src/services/template-resync.js` — see `src/migrations/0.2.10-template-resync.js` for the pattern.
 
 ## Development
 

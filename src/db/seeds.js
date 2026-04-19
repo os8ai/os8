@@ -16,6 +16,9 @@ function seedData(db) {
     insertProvider.run('google', 'Google', 'GOOGLE_API_KEY', 'https://aistudio.google.com/apikey', 'https://generativelanguage.googleapis.com/v1/models', 'query', null, 1);
     insertProvider.run('openai', 'OpenAI', 'OPENAI_API_KEY', 'https://platform.openai.com/api-keys', 'https://api.openai.com/v1/models', 'bearer', null, 2);
     insertProvider.run('xai', 'xAI', 'XAI_API_KEY', 'https://console.x.ai/team/default/api-keys', 'https://api.x.ai/v1/models', 'bearer', null, 3);
+    // Local — served by os8-launcher on the same machine. No API key, no validation URL
+    // (availability is checked via LauncherClient against http://localhost:9000/api/health).
+    insertProvider.run('local', 'Local (os8-launcher)', null, null, null, null, null, 4);
 
     const insertContainer = db.prepare(
       `INSERT OR IGNORE INTO ai_containers (id, provider_id, type, name, command, instruction_file, has_login, login_command, api_key_aliases, auth_status_command, auth_file_path, login_trigger_args, display_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
@@ -24,6 +27,10 @@ function seedData(db) {
     insertContainer.run('gemini', 'google', 'cli', 'Gemini CLI', 'gemini', 'GEMINI.md', 1, 'gemini', '["GOOGLE_API_KEY"]', null, '.gemini/oauth_creds.json', '["-p","hi"]', 1);
     insertContainer.run('codex', 'openai', 'cli', 'Codex CLI', 'codex', 'AGENTS.md', 1, 'codex login', '["OPENAI_API_KEY"]', null, '.codex/auth.json', null, 2);
     insertContainer.run('grok', 'xai', 'cli', 'Grok CLI', 'grok', '.grok/GROK.md', 0, null, '["XAI_API_KEY","GROK_API_KEY"]', null, null, null, 3);
+    // Local (os8-launcher) — HTTP container. command is a marker, not invoked; instruction_file
+    // reuses CLAUDE.md so agent dirs don't need a new file generator for Phase 1.
+    // Container id matches the BACKENDS key in backend-adapter.js ('local').
+    insertContainer.run('local', 'local', 'http', 'Local (os8-launcher)', 'local', 'CLAUDE.md', 0, null, '[]', null, null, null, 4);
 
     // Seed model families (the thing users pick in the dropdown)
     const insertFamily = db.prepare(
@@ -40,6 +47,9 @@ function seedData(db) {
     insertFamily.run('grok', 'grok', 'Grok', 'Grok', 'grok-4-0709', 1, 0);
     insertFamily.run('grok-fast', 'grok', 'Grok Fast', 'Grok Fast', 'grok-4-fast-reasoning', 0, 1);
     insertFamily.run('grok-code-fast', 'grok', 'Code Fast', 'Grok Code Fast', 'grok-code-fast-1', 0, 2);
+    // Local-only family. cli_model_arg is the launcher's model name — vLLM serves it with
+    // --served-model-name so this is exactly what /v1/chat/completions expects.
+    insertFamily.run('local-gemma-4-31b', 'local', 'Gemma-4-31B', 'Gemma 4 31B (local)', 'gemma-4-31B-it-nvfp4', 0, 0);
     // Image generation families (use existing containers for login auth inheritance)
     insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
     insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
@@ -257,7 +267,10 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       // Image generation families
       'gemini-imagen':      { cost_tier: 2, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'openai-dalle':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
-      'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 }
+      'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 },
+      // Local Gemma 4 31B — cost_tier 1 (no marginal cost on the user's GPU).
+      // Capability scores are conservative Phase-1 guesses; tune after real eval.
+      'local-gemma-4-31b':  { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 }
     };
     // Always update to latest scores (unconditional)
     const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ?, cap_image = ? WHERE id = ?`);
@@ -278,6 +291,9 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gemini-imagen':  'image',
       'openai-dalle':   'image',
       'grok-imagine':   'image',
+      // Local Gemma — Phase 1 keeps it out of jobs/coding; those route to the
+      // eventual qwen3-coder family in Phase 3.
+      'local-gemma-4-31b': 'conversation,summary,planning',
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET eligible_tasks = ? WHERE id = ?`);
     for (const [id, tasks] of Object.entries(eligibility)) {
@@ -470,6 +486,12 @@ This file defines who you are. You can evolve it over time as you learn and grow
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_step', '0')").run();
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_complete', '0')").run();
 
+  // Phase-1 feature flag for Local Models mode (LOCAL_MODELS_PLAN.md).
+  // '0' = hidden (default); '1' = show local families in the agent model picker.
+  // Flip to '1' in the DB (or via a future Settings toggle) to enable; no UI
+  // exposes it yet — agent.model must also be set manually to 'local-gemma-4-31b'.
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('local_models_enabled', '0')").run();
+
   // One-time migration: auto-complete onboarding for users who existed before
   // onboarding was added (they already have agents). Gated by migration key so it
   // runs once and never interferes with fresh installs on subsequent startups.
@@ -485,6 +507,29 @@ This file defines who you are. You can evolve it over time as you learn and grow
     }
   } catch (e) {
     console.warn('[DB] Onboarding migration:', e.message);
+  }
+
+  // Seed os8_version for the migration runner (src/services/migrator.js).
+  //   Fresh install → seed current version so no migrations run.
+  //   Upgrading user with onboarding_v1_migrated set but no os8_version →
+  //     backfill '0.2.9' (the last release before the migration system landed).
+  //   Anyone else with an existing row → leave alone.
+  try {
+    const versionRow = db.prepare("SELECT value FROM settings WHERE key = 'os8_version'").get();
+    if (!versionRow) {
+      const onboardingMigrated = db.prepare("SELECT value FROM settings WHERE key = 'onboarding_v1_migrated'").get();
+      if (onboardingMigrated) {
+        // Existing pre-migration-system install. Backfill to the last pre-migrator version
+        // so 0.2.10+ migrations fire on first boot.
+        db.prepare("INSERT INTO settings (key, value) VALUES ('os8_version', '0.2.9')").run();
+      } else {
+        // Fresh install — stamp the current package.json version so no historical migrations run.
+        const currentVersion = require('../../package.json').version;
+        db.prepare("INSERT INTO settings (key, value) VALUES ('os8_version', ?)").run(currentVersion);
+      }
+    }
+  } catch (e) {
+    console.warn('[DB] os8_version seed:', e.message);
   }
 
   // Seed default privacy settings — privacy ON by default (only inserts if not already set)

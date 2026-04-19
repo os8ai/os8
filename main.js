@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session, systemPreferences, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, session, systemPreferences, powerMonitor, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { initDatabase, AppService, AgentService, scaffoldAssistantApp, TaskService, TasksFileService, EnvService, SettingsService, ClaudeInstructionsService, CoreService, ConnectionsService, PROVIDERS, generateClaudeMd, generateAssistantClaudeMd, APPS_DIR, BLOB_DIR, CORE_DIR } = require('./src/db');
@@ -216,6 +216,51 @@ app.whenReady().then(async () => {
 
   // Migrate any previously-encrypted keys back to plaintext (one-time)
   EnvService.migrateEncryptedToPlaintext(db);
+
+  // Run pending version migrations (src/migrations/*.js). See CLAUDE.md §Upgrade System.
+  // On MigrationError we write a failure log, show a dialog, and refuse to start —
+  // a half-applied upgrade is worse than a loud failure.
+  try {
+    const { run: runMigrations, MigrationError } = require('./src/services/migrator');
+    await runMigrations({ db, logger: console });
+  } catch (err) {
+    const { MigrationError } = require('./src/services/migrator');
+    if (err instanceof MigrationError) {
+      const { OS8_DIR } = require('./src/config');
+      const logsDir = path.join(OS8_DIR, 'logs');
+      try { fs.mkdirSync(logsDir, { recursive: true }); } catch {}
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const logPath = path.join(logsDir, `migration-failure-${ts}.log`);
+      const body = [
+        `OS8 migration failed.`,
+        ``,
+        `Migration file: ${err.migration.filename}`,
+        `Target version: ${err.migration.version}`,
+        `Description:    ${err.migration.description || '(none)'}`,
+        ``,
+        `Error: ${err.cause.message}`,
+        ``,
+        `Stack:`,
+        err.cause.stack || '(no stack)',
+        ``,
+        `The stored os8_version has not advanced to this migration's version, so`,
+        `restarting OS8 will retry. Fix the underlying issue (or roll back to the`,
+        `prior OS8 release) before restarting.`,
+        ``
+      ].join('\n');
+      try { fs.writeFileSync(logPath, body); } catch (writeErr) {
+        console.error('[migrator] Failed to write failure log:', writeErr.message);
+      }
+      console.error(`[migrator] FAILED — ${err.message}. See ${logPath}`);
+      dialog.showErrorBox(
+        'OS8 upgrade failed',
+        `Migration ${err.migration.version} couldn't run:\n\n${err.cause.message}\n\nDetails: ${logPath}\n\nOS8 cannot start until this is resolved.`
+      );
+      app.quit();
+      return;
+    }
+    throw err;
+  }
 
   // Request microphone permission on macOS (triggers system dialog if needed)
   if (process.platform === 'darwin') {
