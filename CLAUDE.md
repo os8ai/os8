@@ -405,15 +405,14 @@ module.exports = {
 
 ```bash
 nvm use                                          # Picks up Node 22 from .nvmrc
-npm install                                      # Install dependencies
-npx electron-rebuild -f -w better-sqlite3        # Rebuild native modules for Electron
+npm install                                      # Install deps (postinstall rebuilds better-sqlite3 for Electron)
 npm start                                        # Run OS8
 npm test                                         # Run tests
 # OS8 runs on port 8888 (configurable in Settings)
 # Apps served at http://localhost:8888/{app-id}/
 ```
 
-**Native module rebuild:** `better-sqlite3` is a native Node module that must be compiled against Electron's Node.js version, not the system Node.js. After any `npm install` (including when dependencies change), run `npx electron-rebuild -f -w better-sqlite3`. Failure to do so causes `NODE_MODULE_VERSION` mismatch errors at startup. `npm test` automatically rebuilds for system Node (via `pretest`) and back for Electron (via `posttest`).
+**Native module rebuild:** `better-sqlite3` is a native Node module that must be compiled against Electron's Node ABI, not the system Node. The `postinstall` hook runs `scripts/rebuild-native.js` which calls `node-gyp` directly with `--target=<electron-version> --dist-url=https://electronjs.org/headers`. Don't use `npx electron-rebuild` or `@electron/rebuild` directly — they silently fall through to `prebuild-install`, which downloads a prebuilt targeting the system Node ABI (wrong) and reports "Rebuild Complete" anyway. Symptom of the wrong ABI: `npm start` crashes with `NODE_MODULE_VERSION 127 vs 143`. `npm test` automatically rebuilds for system Node (via `pretest`) and back for Electron (via `posttest`).
 
 **Separate data environments:** User data defaults to `~/os8/`. Override with `OS8_HOME` env var to run isolated instances (e.g., for testing a clean user experience without affecting personal data):
 
