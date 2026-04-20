@@ -236,6 +236,30 @@ export async function createAgentInstance(appId, options = {}) {
               renderBuildProposal({ proposalId: v.proposalId, appName: v.appName, appColor: v.appColor, appIcon: v.appIcon, spec: v.spec });
               skipNextDone = true;
             }
+          } else if (data.name === 'local-notice') {
+            // Local backend transient status (MODEL_LOADING). Drive the
+            // existing status line rather than introducing a new surface.
+            const v = data.value || {};
+            if (v.code === 'MODEL_LOADING' && isLoading) {
+              statusBar.classList.remove('stale', 'error');
+              statusLabel.textContent = v.message || 'Loading local model…';
+            }
+          } else if (data.name === 'local-error') {
+            // Launcher-side error — show a notice in the message stream
+            // so the user sees why the agent didn't reply. Response-path
+            // cleanup (RUN_ERROR / RUN_FINISHED) handles isLoading reset.
+            const v = data.value || {};
+            const copy = {
+              LAUNCHER_UNREACHABLE: "os8-launcher isn't running. Start it to use local models.",
+              MODEL_NOT_DOWNLOADED: "Local model isn't downloaded yet.",
+              BUDGET_EXCEEDED: 'Local GPU is full — stop an idle model or raise the launcher budget.',
+              START_FAILED: 'Local backend failed to start. Check launcher logs.',
+            }[v.code] || v.message || 'Local backend error.';
+            const notice = document.createElement('div');
+            notice.className = 'agent-model-switch-notice local-error';
+            notice.textContent = copy;
+            messagesEl.appendChild(notice);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
           }
         } else if (data.type === 'STEP_STARTED') {
           // Tool execution started — show step label

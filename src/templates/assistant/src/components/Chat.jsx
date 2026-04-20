@@ -511,6 +511,39 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
           } else if (data.name === 'config-changed') {
             // Agent changed its own config (e.g. model) — refresh settings
             if (onConfigChangedRef.current) onConfigChangedRef.current()
+          } else if (data.name === 'local-notice') {
+            // Transient status from the local HTTP backend (MODEL_LOADING, …).
+            // Surface as a light streaming-text banner; RUN_FINISHED will
+            // clear it naturally. Non-destructive — the actual response
+            // stream hasn't arrived yet.
+            const v = data.value || {}
+            if (v.code === 'MODEL_LOADING') {
+              setStreamingText(v.message || 'Loading local model…')
+            }
+          } else if (data.name === 'local-error') {
+            // Launcher-side error (BUDGET_EXCEEDED / LAUNCHER_UNREACHABLE /
+            // START_FAILED / …). Append a distinguishable error bubble so
+            // the user knows why the reply didn't land, with copy tailored
+            // to the machine code. isLoading/activeSteps clear on the
+            // ensuing RUN_ERROR or RUN_FINISHED.
+            const v = data.value || {}
+            const copy = {
+              LAUNCHER_UNREACHABLE: "The local model launcher isn't running. Start it with `./start` in the os8-launcher repo.",
+              MODEL_NOT_DOWNLOADED: 'That model isn\'t downloaded yet. Open the os8-launcher dashboard to fetch it.',
+              BUDGET_EXCEEDED: "Local GPU is full — stop an idle model or loosen resources.memory_budget_gb in the launcher's config.yaml.",
+              START_FAILED: 'The local backend failed to start. Check the launcher logs for details.',
+            }[v.code] || v.message || 'Local backend error.'
+            setStreamingText('')
+            setIsLoading(false)
+            setActiveSteps([])
+            setMessages(prev => [...prev, {
+              id: `local-error-${Date.now()}`,
+              role: 'assistant',
+              content: copy,
+              timestamp: new Date().toISOString(),
+              source: 'app',
+              isError: true,
+            }])
           } else if (data.name === 'build-proposal' && data.value?.proposalId) {
             const v = data.value
             setBuildProposal({

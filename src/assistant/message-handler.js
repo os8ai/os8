@@ -917,6 +917,24 @@ function handleSend(deps) {
           // Feed to ag-ui translator for rich event emission with native IDs
           emitTranslated(json);
 
+          // Local HTTP backend emits code-tagged system events when
+          // /api/serve/ensure returns loading / error states. Translate
+          // to CUSTOM ag-ui events so UI surfaces (Chat.jsx,
+          // agent-panel.js) can render distinct toasts by `code`
+          // without parsing free-form stderr.
+          if (json.type === 'system_error' || json.type === 'system_notice') {
+            const clients = state.getResponseClients();
+            broadcast(clients, CUSTOM, {
+              name: json.type === 'system_error' ? 'local-error' : 'local-notice',
+              runId,
+              value: {
+                code: json.code || null,
+                message: json.message || '',
+                instance_id: json.instance_id || null,
+              },
+            });
+          }
+
           // Extract streaming text — Claude uses stream_event, Gemini uses message+delta,
           // Codex uses item events, Grok uses {role:"assistant",content:"..."}
           let streamingText = null;
