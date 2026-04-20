@@ -40,7 +40,7 @@ npx electron-rebuild -f -w better-sqlite3
 npm start
 ```
 
-**Requirements:** Node.js 20+ (LTS recommended). Supports macOS, Windows, and Linux.
+**Requirements:** Node.js 22+ (LTS recommended). Supports macOS, Windows, and Linux.
 
 OS8 runs on port **8888** by default (configurable in Settings). Apps are served at `http://localhost:8888/{app-id}/`.
 
