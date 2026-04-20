@@ -145,7 +145,7 @@ function parseBatchOutput(stdout) {
  * @param {boolean} [opts.promptViaStdin] - Backend uses stdin for prompt (Codex)
  * @returns {{ onData: Function, onExit: Function, kill: Function, pid: number }}
  */
-function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType }) {
+function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType, launcherBackend }) {
   // HTTP backends have no CLI to spawn — route to the launcher HTTP path.
   // The returned object exposes the same { onData, onExit, kill } shape so
   // message-handler.js's stream loop doesn't need to know the difference.
@@ -153,6 +153,7 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     return createHttpProcess(backend, {
       prompt: promptViaStdin || stdinData || '',
       model,
+      launcherBackend,
       taskType: taskType || 'conversation'
     });
   }
@@ -220,7 +221,7 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
  * @param {string} [opts.model] - Model ID to send as OpenAI `model` field
  * @param {string} [opts.taskType='conversation'] - Used to pick the right launcher-reported base_url
  */
-function createHttpProcess(backend, { prompt, model, taskType = 'conversation' } = {}) {
+function createHttpProcess(backend, { prompt, model, launcherBackend = null, taskType = 'conversation' } = {}) {
   const dataCallbacks = [];
   const exitCallbacks = [];
   let aborted = false;
@@ -239,32 +240,83 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
     }
   };
 
+  // Emit a code-tagged error event just before exit so the SSE consumer
+  // (Chat.jsx / agent-panel.js) can branch on the machine code without
+  // parsing free-form stderr. The `exitCode: 1` on finish still surfaces
+  // the failure via the existing error plumbing; the system_error event
+  // carries the richer signal.
+  const finishWithError = (code, message) => {
+    emitLine({ type: 'system_error', code, message });
+    finish({ exitCode: 1, stderr: `${code}: ${message}` });
+  };
+
   // Kick off the request asynchronously. We yield a tick so the caller can
   // attach onData/onExit handlers before any bytes arrive.
   setImmediate(() => { _runHttp().catch((err) => {
     if (aborted) return;
     console.error('[local-http] request failed:', err.message);
-    finish({ exitCode: 1, stderr: err.message });
+    finishWithError('START_FAILED', err.message);
   }); });
 
   async function _runHttp() {
-    // Phase 1: discover base_url + model_id from the launcher's capabilities map.
-    // We requery every call (cheap, <1ms on localhost) so stop/swap on the
-    // launcher side reflects immediately instead of sticking to a stale port.
-    let caps;
+    // Phase 2: discover base_url via ensureModel so we implicitly start
+    // the backend if it isn't running, rather than 404ing. `model` here
+    // is the family's cli_model_arg — which equals the launcher's
+    // model name (launcher serves /v1/chat/completions with
+    // --served-model-name {model_name}). `launcherBackend` comes from
+    // ai_model_families.launcher_backend, null for cloud families (but
+    // we only get here for HTTP containers, so it should be set).
+    let ensureResult;
     try {
-      caps = await LauncherClient.getCapabilities();
+      ensureResult = await LauncherClient.ensureModel({
+        model,
+        backend: launcherBackend,
+        wait: false,
+      });
     } catch (err) {
-      finish({ exitCode: 1, stderr: `Launcher unreachable: ${err.message}` });
+      if (aborted) return;
+      // LauncherError carries code directly; generic errors fall back.
+      const code = err?.code || 'LAUNCHER_UNREACHABLE';
+      finishWithError(code, err.message);
       return;
     }
-    const entry = caps?.[taskType] || caps?.conversation;
-    if (!entry) {
-      finish({ exitCode: 1, stderr: `Launcher has no capability for task '${taskType}' (is a model serving?)` });
-      return;
+
+    let baseUrl = ensureResult?.base_url || null;
+    const instanceId = ensureResult?.instance_id || null;
+
+    // If the launcher just scheduled a start, poll status until healthy.
+    // Bounded by a minute-scale timeout — a real cold start (model load)
+    // can take 30–60s; NIM is longer but rare and has its own path.
+    if (ensureResult?.status === 'loading' || !baseUrl) {
+      emitLine({
+        type: 'system_notice',
+        code: 'MODEL_LOADING',
+        message: `Loading ${model}…`,
+        instance_id: instanceId,
+      });
+      const deadline = Date.now() + 120_000;
+      while (!aborted && Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, 1500));
+        let info;
+        try {
+          info = await LauncherClient.getInstanceStatus(instanceId);
+        } catch (_err) {
+          // Transient — keep polling, the launcher may be serializing a start.
+          continue;
+        }
+        if (info && info.health === 'healthy') {
+          baseUrl = info.base_url || baseUrl;
+          break;
+        }
+      }
+      if (aborted) return;
+      if (!baseUrl) {
+        finishWithError('START_FAILED', `Timed out waiting for ${model} to become healthy.`);
+        return;
+      }
     }
-    const baseUrl = entry.base_url;
-    const modelId = model || entry.model_id || entry.model;
+
+    const modelId = model || ensureResult?.model_id || ensureResult?.model;
 
     const body = {
       model: modelId,
@@ -283,13 +335,13 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
       });
     } catch (err) {
       if (aborted) return;
-      finish({ exitCode: 1, stderr: `fetch failed: ${err.message}` });
+      finishWithError('START_FAILED', `fetch failed: ${err.message}`);
       return;
     }
 
     if (!response.ok) {
       const text = await response.text().catch(() => '');
-      finish({ exitCode: 1, stderr: `${baseUrl} returned ${response.status}: ${text.slice(0, 500)}` });
+      finishWithError('START_FAILED', `${baseUrl} returned ${response.status}: ${text.slice(0, 500)}`);
       return;
     }
 
@@ -347,7 +399,7 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
       }
     } catch (err) {
       if (aborted) return;
-      finish({ exitCode: 1, stderr: `stream read failed: ${err.message}` });
+      finishWithError('START_FAILED', `stream read failed: ${err.message}`);
       return;
     }
 
@@ -371,6 +423,13 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
 
     emitLine({ type: 'result', subtype: 'success', result: accumulated });
     finish({ exitCode: 0, stderr: '' });
+
+    // Fire-and-forget LRU touch so the launcher can prefer evicting
+    // actually-cold instances. A failing touch is a hint loss, not worth
+    // surfacing to the user.
+    if (instanceId) {
+      LauncherClient.touch(instanceId).catch(() => {});
+    }
   }
 
   return {
@@ -568,20 +627,41 @@ async function sendTextPrompt(db, resolved, prompt, opts = {}) {
  * @returns {Promise<string>}
  */
 async function sendTextPromptHttp(resolved, prompt, opts = {}) {
-  const { systemPrompt = null, maxTokens = 4096, taskType = 'conversation' } = opts;
-  const caps = await LauncherClient.getCapabilities();
-  const entry = caps?.[taskType] || caps?.conversation;
-  if (!entry) throw new Error(`Launcher has no capability for task '${taskType}'`);
+  const { systemPrompt = null, maxTokens = 4096 } = opts;
+
+  // Ensure the instance is running before hitting /v1/chat/completions.
+  // wait:true keeps this function synchronous — callers of
+  // sendTextPrompt expect a single round-trip Promise<string>, not a
+  // loading banner. The launcher side bounds the wait via health_timeout.
+  let ensureResult;
+  try {
+    ensureResult = await LauncherClient.ensureModel({
+      model: resolved.modelArg,
+      backend: resolved.launcherBackend || null,
+      wait: true,
+    });
+  } catch (err) {
+    // Propagate LauncherError.code through the thrown message so the
+    // routing cascade / caller can distinguish admission from transport
+    // failures.
+    const code = err?.code || 'LAUNCHER_UNREACHABLE';
+    throw new Error(`[${code}] ${err.message}`);
+  }
+  const baseUrl = ensureResult?.base_url;
+  const instanceId = ensureResult?.instance_id;
+  if (!baseUrl) {
+    throw new Error(`[START_FAILED] Launcher returned no base_url for ${resolved.modelArg}`);
+  }
 
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
 
-  const res = await fetch(`${entry.base_url}/v1/chat/completions`, {
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: resolved.modelArg || entry.model_id,
+      model: resolved.modelArg || ensureResult.model_id,
       messages,
       stream: false,
       max_tokens: maxTokens
@@ -589,9 +669,12 @@ async function sendTextPromptHttp(resolved, prompt, opts = {}) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Launcher ${entry.base_url} returned ${res.status}: ${text.slice(0, 500)}`);
+    throw new Error(`[START_FAILED] Launcher ${baseUrl} returned ${res.status}: ${text.slice(0, 500)}`);
   }
   const json = await res.json();
+  if (instanceId) {
+    LauncherClient.touch(instanceId).catch(() => {});
+  }
   return json?.choices?.[0]?.message?.content || '';
 }
 

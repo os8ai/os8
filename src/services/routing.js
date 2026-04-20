@@ -51,6 +51,7 @@ const RoutingService = {
             familyId: agentOverride,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, agentOverride),
+            launcherBackend: family.launcher_backend || null,
             accessMethod: 'login',
             source: 'agent_override'
           };
@@ -60,6 +61,7 @@ const RoutingService = {
             familyId: agentOverride,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, agentOverride),
+            launcherBackend: family.launcher_backend || null,
             accessMethod: 'api',
             source: 'agent_override'
           };
@@ -79,6 +81,7 @@ const RoutingService = {
             familyId: entry.family_id,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, entry.family_id),
+            launcherBackend: family.launcher_backend || null,
             accessMethod: entry.access_method,
             source: 'cascade'
           };
@@ -91,6 +94,7 @@ const RoutingService = {
       familyId: 'claude-sonnet',
       backendId: 'claude',
       modelArg: AIRegistryService.resolveModelArg(db, 'claude-sonnet') || 'sonnet',
+      launcherBackend: null,
       accessMethod: 'api',
       source: 'fallback'
     };

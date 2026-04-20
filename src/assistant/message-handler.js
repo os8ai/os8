@@ -802,6 +802,7 @@ function handleSend(deps) {
       stdinData,
       promptViaStdin: backend.promptViaStdin ? enrichedMessage : null,
       model: agentModel,
+      launcherBackend: resolved.launcherBackend || null,
       taskType: 'conversation'
     });
 
