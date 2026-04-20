@@ -15,6 +15,7 @@ const { getBackend, stripDisabledApiKeys } = require('./backend-adapter');
 const AIRegistryService = require('./ai-registry');
 const EnvService = require('./env');
 const AnthropicSDK = require('./anthropic-sdk');
+const LauncherClient = require('./launcher-client');
 
 /**
  * Prepare the shell environment for a CLI backend.
@@ -144,7 +145,18 @@ function parseBatchOutput(stdout) {
  * @param {boolean} [opts.promptViaStdin] - Backend uses stdin for prompt (Codex)
  * @returns {{ onData: Function, onExit: Function, kill: Function, pid: number }}
  */
-function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin }) {
+function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType }) {
+  // HTTP backends have no CLI to spawn — route to the launcher HTTP path.
+  // The returned object exposes the same { onData, onExit, kill } shape so
+  // message-handler.js's stream loop doesn't need to know the difference.
+  if (backend.type === 'http') {
+    return createHttpProcess(backend, {
+      prompt: promptViaStdin || stdinData || '',
+      model,
+      taskType: taskType || 'conversation'
+    });
+  }
+
   const usePty = backend.id === 'claude' && !useImages && !forcePipe;
 
   if (usePty) {
@@ -185,6 +197,193 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     pid: child.pid,
     // Expose stdin for callers that need to write prompt separately (Codex)
     stdin: child.stdin
+  };
+}
+
+/**
+ * Create a "process" that POSTs to the launcher's OpenAI-compatible endpoint
+ * and emits Claude-shape stream-json lines via onData. Returns the same
+ * { onData, onExit, kill } interface as createProcess's PTY/spawn paths, so
+ * message-handler.js's streaming loop works unchanged.
+ *
+ * Wire: OpenAI `data: {..choices[0].delta.content..}` chunks →
+ *       `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"text":"..."}}}` line
+ * On completion:
+ *       `{"type":"result","result":"<accumulated>"}` line, then exit code 0.
+ *
+ * This shape is the lowest-common-denominator that cli-runner's parseResponseLine
+ * and message-handler.js both already handle. No translator changes required.
+ *
+ * @param {object} backend - The local backend definition
+ * @param {object} opts
+ * @param {string} opts.prompt - Enriched user message (full context already baked in)
+ * @param {string} [opts.model] - Model ID to send as OpenAI `model` field
+ * @param {string} [opts.taskType='conversation'] - Used to pick the right launcher-reported base_url
+ */
+function createHttpProcess(backend, { prompt, model, taskType = 'conversation' } = {}) {
+  const dataCallbacks = [];
+  const exitCallbacks = [];
+  let aborted = false;
+  let controller = null;
+
+  const emitLine = (obj) => {
+    const line = JSON.stringify(obj) + '\n';
+    for (const cb of dataCallbacks) {
+      try { cb(line); } catch (err) { console.warn('[local-http] onData callback threw:', err.message); }
+    }
+  };
+
+  const finish = ({ exitCode = 0, stderr = '' } = {}) => {
+    for (const cb of exitCallbacks) {
+      try { cb({ exitCode, stderr }); } catch (err) { console.warn('[local-http] onExit callback threw:', err.message); }
+    }
+  };
+
+  // Kick off the request asynchronously. We yield a tick so the caller can
+  // attach onData/onExit handlers before any bytes arrive.
+  setImmediate(() => { _runHttp().catch((err) => {
+    if (aborted) return;
+    console.error('[local-http] request failed:', err.message);
+    finish({ exitCode: 1, stderr: err.message });
+  }); });
+
+  async function _runHttp() {
+    // Phase 1: discover base_url + model_id from the launcher's capabilities map.
+    // We requery every call (cheap, <1ms on localhost) so stop/swap on the
+    // launcher side reflects immediately instead of sticking to a stale port.
+    let caps;
+    try {
+      caps = await LauncherClient.getCapabilities();
+    } catch (err) {
+      finish({ exitCode: 1, stderr: `Launcher unreachable: ${err.message}` });
+      return;
+    }
+    const entry = caps?.[taskType] || caps?.conversation;
+    if (!entry) {
+      finish({ exitCode: 1, stderr: `Launcher has no capability for task '${taskType}' (is a model serving?)` });
+      return;
+    }
+    const baseUrl = entry.base_url;
+    const modelId = model || entry.model_id || entry.model;
+
+    const body = {
+      model: modelId,
+      messages: [{ role: 'user', content: prompt }],
+      stream: true
+    };
+
+    controller = new AbortController();
+    let response;
+    try {
+      response = await fetch(`${baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+    } catch (err) {
+      if (aborted) return;
+      finish({ exitCode: 1, stderr: `fetch failed: ${err.message}` });
+      return;
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      finish({ exitCode: 1, stderr: `${baseUrl} returned ${response.status}: ${text.slice(0, 500)}` });
+      return;
+    }
+
+    // Emit a minimal system/init so any downstream translator that expects a
+    // session_id gets something. We use a pseudo runId since local has no real
+    // session concept. Claude's translator tolerates missing session_id when a
+    // runId is pre-assigned by the caller.
+    emitLine({ type: 'system', subtype: 'init', session_id: `local-${Date.now()}`, model: modelId });
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let accumulated = '';
+
+    try {
+      for await (const chunk of response.body) {
+        if (aborted) return;
+        buffer += decoder.decode(chunk, { stream: true });
+        // Parse SSE frames: events end with blank line; each non-empty line
+        // starts with "data: ". Multi-line "data: " prefixes concatenate.
+        let sep;
+        while ((sep = buffer.indexOf('\n\n')) !== -1) {
+          const frame = buffer.slice(0, sep);
+          buffer = buffer.slice(sep + 2);
+          const dataLines = frame
+            .split('\n')
+            .map(l => l.trim())
+            .filter(l => l.startsWith('data:'))
+            .map(l => l.slice(5).trim());
+          if (dataLines.length === 0) continue;
+          const payload = dataLines.join('');
+          if (payload === '[DONE]') {
+            // vLLM/OpenAI terminator — ignore here, we finalize on stream close.
+            continue;
+          }
+          let json;
+          try {
+            json = JSON.parse(payload);
+          } catch (err) {
+            console.warn(`[local-http] SSE parse skip: ${err.message} — ${payload.slice(0, 120)}`);
+            continue;
+          }
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta.length > 0) {
+            accumulated += delta;
+            emitLine({
+              type: 'stream_event',
+              event: { type: 'content_block_delta', delta: { type: 'text_delta', text: delta } }
+            });
+          }
+          const finishReason = json?.choices?.[0]?.finish_reason;
+          if (finishReason) {
+            // Emit nothing here — the stream will end naturally; we finalize below.
+          }
+        }
+      }
+    } catch (err) {
+      if (aborted) return;
+      finish({ exitCode: 1, stderr: `stream read failed: ${err.message}` });
+      return;
+    }
+
+    // Flush any trailing bytes (unlikely with OpenAI SSE but defensive).
+    if (buffer.trim().startsWith('data:')) {
+      const payload = buffer.trim().slice(5).trim();
+      if (payload && payload !== '[DONE]') {
+        try {
+          const json = JSON.parse(payload);
+          const delta = json?.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta.length > 0) {
+            accumulated += delta;
+            emitLine({
+              type: 'stream_event',
+              event: { type: 'content_block_delta', delta: { type: 'text_delta', text: delta } }
+            });
+          }
+        } catch (_e) {}
+      }
+    }
+
+    emitLine({ type: 'result', subtype: 'success', result: accumulated });
+    finish({ exitCode: 0, stderr: '' });
+  }
+
+  return {
+    onData: (cb) => { dataCallbacks.push(cb); },
+    onExit: (cb) => { exitCallbacks.push(cb); },
+    kill: () => {
+      aborted = true;
+      if (controller) {
+        try { controller.abort(); } catch (_e) {}
+      }
+      finish({ exitCode: 130, stderr: 'killed' });
+    },
+    pid: null
   };
 }
 
@@ -290,6 +489,12 @@ async function sendTextPrompt(db, resolved, prompt, opts = {}) {
 
   const sdkModel = familyToSdkModel(resolved.familyId, sdkFallback);
 
+  // HTTP path: local launcher-backed backend — no CLI, no SDK, just POST.
+  const httpBackend = getBackend(resolved.backendId);
+  if (httpBackend?.type === 'http') {
+    return sendTextPromptHttp(resolved, prompt, { systemPrompt, maxTokens });
+  }
+
   // SDK path: API access method + Anthropic API key available
   if (resolved.accessMethod === 'api' && AnthropicSDK.isAvailable(db)) {
     const sdkOpts = { agentModel: sdkModel, maxTokens };
@@ -349,6 +554,47 @@ async function sendTextPrompt(db, resolved, prompt, opts = {}) {
   });
 }
 
+/**
+ * Text-only prompt through an HTTP (local launcher) backend. Non-streaming —
+ * returns the final completion string. Used by sendTextPrompt() when the
+ * resolved backend has type === 'http'.
+ *
+ * @param {object} resolved - { familyId, backendId, modelArg, accessMethod }
+ * @param {string} prompt - Prompt text
+ * @param {object} [opts]
+ * @param {string} [opts.systemPrompt] - Optional system message
+ * @param {number} [opts.maxTokens=4096]
+ * @param {string} [opts.taskType='conversation']
+ * @returns {Promise<string>}
+ */
+async function sendTextPromptHttp(resolved, prompt, opts = {}) {
+  const { systemPrompt = null, maxTokens = 4096, taskType = 'conversation' } = opts;
+  const caps = await LauncherClient.getCapabilities();
+  const entry = caps?.[taskType] || caps?.conversation;
+  if (!entry) throw new Error(`Launcher has no capability for task '${taskType}'`);
+
+  const messages = [];
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'user', content: prompt });
+
+  const res = await fetch(`${entry.base_url}/v1/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: resolved.modelArg || entry.model_id,
+      messages,
+      stream: false,
+      max_tokens: maxTokens
+    })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Launcher ${entry.base_url} returned ${res.status}: ${text.slice(0, 500)}`);
+  }
+  const json = await res.json();
+  return json?.choices?.[0]?.message?.content || '';
+}
+
 module.exports = {
   prepareSpawnEnv,
   parseResponseLine,
@@ -356,5 +602,6 @@ module.exports = {
   createProcess,
   attachStreamParser,
   familyToSdkModel,
-  sendTextPrompt
+  sendTextPrompt,
+  sendTextPromptHttp
 };

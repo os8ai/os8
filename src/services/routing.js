@@ -34,11 +34,19 @@ const RoutingService = {
    * @returns {{ familyId: string, backendId: string, modelArg: string|null, accessMethod: string, source: string }}
    */
   resolve(db, taskType, agentOverride = null) {
-    // 1. Agent override (conversation only) — try login first, then API
-    if (taskType === 'conversation' && agentOverride && agentOverride !== 'auto') {
-      if (this.isAvailable(db, agentOverride, 'login')) {
-        const family = AIRegistryService.getFamily(db, agentOverride);
-        if (family) {
+    // 1. Agent override — try login first, then API. Honored for every task
+    // type, not just conversation: if a user pins their agent to a specific
+    // family (especially local), they want it for planning/summary too.
+    // Families that aren't eligible for this task (per ai_model_families.eligible_tasks)
+    // are skipped so we don't e.g. route an image task to a text-only family.
+    if (agentOverride && agentOverride !== 'auto') {
+      const family = AIRegistryService.getFamily(db, agentOverride);
+      const eligibleList = family?.eligible_tasks
+        ? family.eligible_tasks.split(',').map(s => s.trim())
+        : null;
+      const isEligible = !eligibleList || eligibleList.includes(taskType);
+      if (family && isEligible) {
+        if (this.isAvailable(db, agentOverride, 'login')) {
           return {
             familyId: agentOverride,
             backendId: family.container_id,
@@ -47,10 +55,7 @@ const RoutingService = {
             source: 'agent_override'
           };
         }
-      }
-      if (this.isAvailable(db, agentOverride, 'api')) {
-        const family = AIRegistryService.getFamily(db, agentOverride);
-        if (family) {
+        if (this.isAvailable(db, agentOverride, 'api')) {
           return {
             familyId: agentOverride,
             backendId: family.container_id,
@@ -60,7 +65,7 @@ const RoutingService = {
           };
         }
       }
-      // Override unavailable — fall through to cascade
+      // Override unavailable or not eligible — fall through to cascade.
     }
 
     // 2. Walk cascade — each entry specifies family + access_method
@@ -104,6 +109,14 @@ const RoutingService = {
 
     const container = AIRegistryService.getContainer(db, family.container_id);
     if (!container) return false;
+
+    // HTTP containers (os8-launcher) are available whenever the launcher has a
+    // matching capability. We don't probe here — the actual POST in
+    // cli-runner.js will fail cleanly if nothing is serving — but we short-
+    // circuit the provider/api-key gating because local has neither.
+    if (container.type === 'http') {
+      return accessMethod === 'api'; // local families live on a single pseudo access method
+    }
 
     const status = db.prepare('SELECT * FROM ai_account_status WHERE provider_id = ?').get(container.provider_id);
     const now = new Date().toISOString();
@@ -199,9 +212,10 @@ const RoutingService = {
         });
       }
 
-      // API entry (if constraint allows API) — skip if no API key env
+      // API entry (if constraint allows API) — skip if no API key env,
+      // except for HTTP containers (local launcher) which don't use keys.
       if (constraint === 'both' || constraint === 'api') {
-        if (!provider?.api_key_env) continue;
+        if (!provider?.api_key_env && container?.type !== 'http') continue;
         const apiScore = this._score(cap, cost, preference);
         entries.push({
           family_id: f.id, access_method: 'api', score: apiScore,

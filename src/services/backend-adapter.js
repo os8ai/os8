@@ -545,6 +545,81 @@ const BACKENDS = {
     }
   },
 
+  local: {
+    id: 'local',
+    command: null,              // no CLI — HTTP-only
+    type: 'http',               // dispatch flag — cli-runner routes HTTP backends to createHttpProcess
+    instructionFile: 'CLAUDE.md', // reuse Claude's instruction filename for now (agent dir already has one)
+    label: 'Local',
+    supportsImageInput: false,
+    supportsImageViaFile: false,
+    supportsImageDescriptions: false,
+    supportsMaxTurns: false,
+    supportsStreamJson: true,   // we synthesize Claude-shape stream-json from OpenAI SSE
+    promptViaStdin: true,       // causes message-handler to pass enrichedMessage via opts.promptViaStdin
+
+    buildArgs(_options = {}) {
+      return [];
+    },
+
+    buildPromptArgs(_message) {
+      // Prompt travels via opts.promptViaStdin, not args; keeps message-handler's
+      // spawn path unchanged (it reads backend.promptViaStdin and forwards the
+      // text into createProcess without push-ing to args).
+      return [];
+    },
+
+    buildTextOnlyArgs(_options = {}) {
+      return [];
+    },
+
+    prepareEnv(baseEnv = process.env) {
+      // Pure HTTP — no child process, no env munging.
+      return { ...baseEnv };
+    },
+
+    /**
+     * Parse a non-streaming OpenAI chat completion response.
+     * Used by parseBatchOutput / sendTextPromptHttp fallback.
+     */
+    parseResponse(output) {
+      try {
+        const response = JSON.parse(output);
+        const text = response?.choices?.[0]?.message?.content || '';
+        return { text, sessionId: null, raw: response };
+      } catch (_err) {
+        return { text: output.trim(), sessionId: null, raw: null };
+      }
+    },
+
+    /**
+     * Aggregate the stream-json lines we synthesized from OpenAI SSE into a
+     * final response. Same contract as Claude's parser — the message-handler
+     * stream loop already handles stream_event + result shapes.
+     */
+    parseStreamJsonOutput(output) {
+      const lines = output.split('\n').filter(line => line.trim());
+      let result = '';
+      let raw = null;
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'result') {
+            result = parsed.result || '';
+            raw = parsed;
+            break;
+          }
+          if (parsed.type === 'stream_event' && parsed.event?.type === 'content_block_delta') {
+            result += parsed.event.delta?.text || '';
+          }
+        } catch (err) {
+          console.warn(`[backend-adapter] local stream parse skip: ${err.message}`);
+        }
+      }
+      return { result, sessionId: null, raw };
+    }
+  },
+
   grok: {
     id: 'grok',
     command: 'grok',

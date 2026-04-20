@@ -259,6 +259,14 @@ function createSettingsApiRouter(db, deps) {
       return res.status(400).json({ error: 'Unknown backend' });
     }
 
+    // HTTP containers (os8-launcher local models) have no API key and no login —
+    // availability is "is the launcher running" which the actual request handles.
+    // Reporting ready=true here keeps the Chat pre-send check from bouncing the
+    // user to the setup screen whenever their agent is set to a local family.
+    if (container.type === 'http') {
+      return res.json({ hasApiKey: false, loggedIn: false, ready: true });
+    }
+
     const provider = AIRegistryService.getProvider(db, container.provider_id);
     const envKey = provider.api_key_env;
     const envVar = EnvService.get(db, envKey);

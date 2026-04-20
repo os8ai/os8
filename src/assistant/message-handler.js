@@ -791,13 +791,18 @@ function handleSend(deps) {
 
     lap('cli-args-ready');
 
-    // Unified spawn: PTY for Claude-no-images, spawn for everything else
+    // Unified spawn: PTY for Claude-no-images, spawn for everything else.
+    // HTTP (local) backends route through createHttpProcess internally; the
+    // model/taskType hints flow through so the launcher can pick the right
+    // per-task endpoint (Phase 2+) — for Phase 1 the launcher only has one.
     ptyProcess = createProcess(backend, args, {
       cwd: appPath,
       env,
       useImages: hasImageStdin,
       stdinData,
-      promptViaStdin: backend.promptViaStdin ? enrichedMessage : null
+      promptViaStdin: backend.promptViaStdin ? enrichedMessage : null,
+      model: agentModel,
+      taskType: 'conversation'
     });
 
     lap('cli-spawned');
@@ -1190,8 +1195,17 @@ function handleSend(deps) {
         const noTags = stripFileAttachments(stripped);
         res.json({ success: true, text: stripReaction(noTags), reaction: extractReaction(noTags), attachments: resAttachments });
       } else {
+        // HTTP backends (local/launcher) fail for transient reasons — launcher
+        // not running, model not serving, port blocked — none of which require
+        // re-running the setup wizard. Avoid the "exited with code N" phrasing
+        // because Chat.jsx's backend-error regex matches it and resets
+        // setupComplete, bouncing the user to /new.
+        const isHttp = backend.type === 'http';
+        const errorMessage = isHttp
+          ? `${backend.label} backend unavailable: ${(stderr || '').trim() || 'unknown error'}`
+          : `${backend.label} exited with code ${exitCode}`;
         res.status(500).json({
-          error: `${backend.label} exited with code ${exitCode}`,
+          error: errorMessage,
           stderr: stderr ? stderr.substring(0, 1000) : null,
           output: fullResponse ? fullResponse.substring(0, 1000) : null
         });
