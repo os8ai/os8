@@ -186,14 +186,42 @@ describe('RoutingService', () => {
       expect(result.source).toBe('agent_override');
     });
 
-    it('ignores agent override for jobs (uses cascade)', () => {
+    it('honors agent override for jobs (not just conversation)', () => {
+      // Phase-1 intentionally widened the override to every task type so
+      // pinning an agent (especially local) applies uniformly across
+      // jobs/planning/summary. The cascade is the fallback path, not a
+      // task-type gate — eligibility is the gate (see next test).
       const db = createMockDb({
         cascades: { jobs: [{ family_id: 'claude-haiku', access_method: 'api', enabled: 1, priority: 0 }] }
       });
       const result = RoutingService.resolve(db, 'jobs', 'claude-opus');
-      expect(result.source).toBe('cascade');
-      expect(result.familyId).toBe('claude-haiku');
-      expect(result.accessMethod).toBe('api');
+      expect(result.source).toBe('agent_override');
+      expect(result.familyId).toBe('claude-opus');
+    });
+
+    it('falls through to cascade when override is ineligible for this task', () => {
+      // eligible_tasks scopes an override: a family whose eligible_tasks
+      // doesn't include the requested task doesn't hijack routing —
+      // resolver cascades instead.
+      const origGetFamily = AIRegistryService.getFamily;
+      AIRegistryService.getFamily = (db, id) => {
+        const f = origGetFamily(db, id);
+        if (f && id === 'claude-opus') {
+          return { ...f, eligible_tasks: 'conversation,summary' };
+        }
+        return f;
+      };
+      try {
+        const db = createMockDb({
+          cascades: { jobs: [{ family_id: 'claude-haiku', access_method: 'api', enabled: 1, priority: 0 }] }
+        });
+        const result = RoutingService.resolve(db, 'jobs', 'claude-opus');
+        expect(result.source).toBe('cascade');
+        expect(result.familyId).toBe('claude-haiku');
+        expect(result.accessMethod).toBe('api');
+      } finally {
+        AIRegistryService.getFamily = origGetFamily;
+      }
     });
 
     it('treats auto as cascade', () => {
