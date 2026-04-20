@@ -628,6 +628,7 @@ function createSchema(db) {
       cap_summary INTEGER DEFAULT 3,
       cap_image INTEGER DEFAULT 0,
       eligible_tasks TEXT DEFAULT NULL,
+      launcher_backend TEXT DEFAULT NULL,
       is_default INTEGER DEFAULT 0,
       display_order INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP

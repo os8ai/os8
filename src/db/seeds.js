@@ -47,9 +47,18 @@ function seedData(db) {
     insertFamily.run('grok', 'grok', 'Grok', 'Grok', 'grok-4-0709', 1, 0);
     insertFamily.run('grok-fast', 'grok', 'Grok Fast', 'Grok Fast', 'grok-4-fast-reasoning', 0, 1);
     insertFamily.run('grok-code-fast', 'grok', 'Code Fast', 'Grok Code Fast', 'grok-code-fast-1', 0, 2);
-    // Local-only family. cli_model_arg is the launcher's model name — vLLM serves it with
-    // --served-model-name so this is exactly what /v1/chat/completions expects.
-    insertFamily.run('local-gemma-4-31b', 'local', 'Gemma-4-31B', 'Gemma 4 31B (local)', 'gemma-4-31B-it-nvfp4', 0, 0);
+    // Local-only families. cli_model_arg is the launcher's model name — the
+    // backend serves it on /v1/chat/completions under that exact string. The
+    // launcher_backend column (set below in the backfill block) tells OS8's
+    // LauncherClient.ensureModel which backend kind to request.
+    //
+    // Only local-gemma-4-31b is wired into an eligible_tasks list below;
+    // the rest are seeded for Phase-2 readiness but stay out of cascades
+    // until Phase 3 lights them up.
+    insertFamily.run('local-gemma-4-31b',     'local', 'Gemma-4-31B',    'Gemma 4 31B (local)',        'gemma-4-31B-it-nvfp4', 0, 0);
+    insertFamily.run('local-qwen3-coder-30b', 'local', 'Qwen3-Coder-30B','Qwen3 Coder 30B (local)',    'qwen3-coder:30b',      0, 1);
+    insertFamily.run('local-kokoro-v1',       'local', 'Kokoro v1',      'Kokoro v1 TTS (local)',      'kokoro-v1',            0, 2);
+    insertFamily.run('local-flux1-schnell',   'local', 'Flux.1 Schnell', 'Flux.1 Schnell (local)',     'flux1-schnell',        0, 3);
     // Image generation families (use existing containers for login auth inheritance)
     insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
     insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
@@ -268,9 +277,12 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gemini-imagen':      { cost_tier: 2, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'openai-dalle':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 },
-      // Local Gemma 4 31B — cost_tier 1 (no marginal cost on the user's GPU).
-      // Capability scores are conservative Phase-1 guesses; tune after real eval.
-      'local-gemma-4-31b':  { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 }
+      // Local families — cost_tier 1 (no marginal cost on the user's GPU).
+      // Capability scores are conservative Phase-1/2 guesses; tune after real eval.
+      'local-gemma-4-31b':     { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 },
+      'local-qwen3-coder-30b': { cost_tier: 1, cap_chat: 2, cap_jobs: 3, cap_planning: 2, cap_coding: 4, cap_summary: 2 },
+      'local-kokoro-v1':       { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
+      'local-flux1-schnell':   { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 }
     };
     // Always update to latest scores (unconditional)
     const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ?, cap_image = ? WHERE id = ?`);
@@ -294,6 +306,12 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       // Local Gemma — Phase 1 keeps it out of jobs/coding; those route to the
       // eventual qwen3-coder family in Phase 3.
       'local-gemma-4-31b': 'conversation,summary,planning',
+      // Local families seeded in Phase 2 (os8-1) but not yet wired into the
+      // routing cascade — Phase 3 lights them up. Narrow eligible_tasks so a
+      // stray agent-override pin can't route, say, chat to Kokoro.
+      'local-qwen3-coder-30b': 'coding,jobs',
+      'local-kokoro-v1':       'tts',
+      'local-flux1-schnell':   'image',
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET eligible_tasks = ? WHERE id = ?`);
     for (const [id, tasks] of Object.entries(eligibility)) {
@@ -301,6 +319,32 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
     }
   });
   backfillEligibleTasks();
+
+  // Local families need a launcher_backend hint — LauncherClient.ensureModel
+  // passes it to /api/serve/ensure so the launcher knows which backend kind
+  // (vllm / ollama / comfyui / kokoro) to spin up. Cloud families leave this
+  // NULL. Safe on old DBs — the column is created in both schema.js and the
+  // 0.3.0 migration.
+  const backfillLauncherBackend = db.transaction(() => {
+    const mapping = {
+      'local-gemma-4-31b':     'vllm',
+      'local-qwen3-coder-30b': 'ollama',
+      'local-kokoro-v1':       'kokoro',
+      'local-flux1-schnell':   'comfyui',
+    };
+    const stmt = db.prepare(`UPDATE ai_model_families SET launcher_backend = ? WHERE id = ?`);
+    for (const [id, backend] of Object.entries(mapping)) {
+      stmt.run(backend, id);
+    }
+  });
+  try {
+    backfillLauncherBackend();
+  } catch (e) {
+    // Old DB without the column — the migration runs on the next startup
+    // and the backfill retries via the seed block then. Ignore here so
+    // first-time seed on a pre-0.3.0 DB doesn't blow up.
+    if (!/no such column/i.test(e.message)) throw e;
+  }
 
   // Seed one row per provider in ai_account_status
   try {
