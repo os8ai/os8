@@ -485,11 +485,25 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 - **Acceptance proven end-to-end** via fresh-install verification: ai_mode=proprietary routes conversation→claude-sonnet, coding→gpt-codex; flipping ai_mode=local routes conversation→local-gemma-4-31b, coding→local-qwen3-coder-next; flipping back restores cloud; emptying the local cascade under ai_mode=local returns `source='local_no_fallback'` with `backendId='local'` (never a cloud backend).
 - **Status:** 350 tests pass (+15 from this PR). The one pre-existing `ignores agent override for jobs` failure from os8-3-1 is unchanged.
 
-**`os8-3-3`: Tool-call synthesis + jobs escalation.**
-- `cli-runner.js::createHttpProcess`: tool_calls delta → Claude stream-json synthesis; `tools` in request body.
-- Skill catalog → OpenAI tool-spec converter (new helper, alongside existing spec builders).
-- `routing.js::nextInCascade`; message-handler catches `tool_call_parse_failed`, retries once via `nextInCascade`.
-- **Test:** qwen3-coder emits a multi-call turn → ag-ui events show `TOOL_CALL_START/ARGS/END` per call; malformed call triggers escalation to qwen3-coder-next.
+**`os8-3-3`: Tool-call synthesis + jobs escalation. (SHIPPED, partial)**
+- `src/services/http-stream-synth.js` (new): pure-function module that translates OpenAI chat-completion SSE chunks into Claude-shape stream-json. State machine handles parallel tool calls (distinct `claudeBlockIndex` per OpenAI `tool_calls[i].index`), late-arriving `id`/`name`, fragmented `arguments` accumulation, and JSON-validation on close. Accumulator survives interleaved fragments across indices. Extracted from `createHttpProcess` for unit-testability.
+- `cli-runner.js::createHttpProcess`:
+  - New `opts.tools` — when non-empty, included in the request body alongside `tool_choice: 'auto'`.
+  - SSE loop replaced with `HttpStreamSynth.processSSEChunk` per frame + `HttpStreamSynth.finalizeStream` at close.
+  - Synthesized `message_start` (carrying `msg_local_*` id) emitted before the stream loop and `message_stop` after — gives `ClaudeTranslator` the lifecycle events its block-tracking expects.
+  - On `state.parseFailure`, exits with `exitCode=1` and `stderr` prefixed `tool_call_parse_failed:` (escalation signal for the future jobs-escalation hook).
+- `backend-events.js::createTranslator`: `case 'local'` routes to `ClaudeTranslator`. Now that the local backend emits Claude-shape stream-json, the existing translator emits `TOOL_CALL_START/ARGS/END/RESULT` ag-ui events for qwen3-coder turns just as it does for Claude Code's.
+- `routing.js::nextInCascade(db, taskType, currentFamilyId, accessMethod, mode)`: returns the next enabled cascade entry under the current ai_mode, or `null` if the current entry is last/absent. Skips disabled rows; matches on (family_id, access_method) so login + API entries for the same family are distinguished.
+- **Tests:**
+  - `tests/services/http-stream-synth.test.js` — 13 tests covering text-only streams, single tool_call lifecycle, parallel tool_calls (interleaved fragments), text+tool_call mix, JSON-validation parse failures (malformed args, missing id/name), empty streams, idempotent finalize.
+  - `tests/services/routing.test.js` — 5 new `nextInCascade` tests (next entry, end-of-cascade, unknown family, disabled-skip, access_method matching).
+
+**Deferred (called out so we don't pretend it shipped):**
+- **Skill catalog → OpenAI tool-spec converter.** The plan's `message-handler` populates `opts.tools` from the agent's pinned capabilities. Today no caller passes tools to `createHttpProcess`, so the synthesizer is exercised only in tests. Wiring the converter requires deciding which capability types (skill / api / mcp) become OpenAI function tools and how their input schemas map — bigger than os8-3-3's scope.
+- **Message-handler escalation hook.** With no tools being passed yet, `tool_call_parse_failed` won't fire in practice. The signal (`stderr` prefix + `state.parseFailure`) and the routing primitive (`nextInCascade`) are both in place; wiring the catch + retry loop in `message-handler.js` is a one-screen follow-up once tools start flowing.
+- **Tool execution loop.** Even when the model emits `tool_use` blocks, OS8's HTTP path doesn't currently execute the calls and feed results back into the conversation. CLI backends (Claude Code) do this internally; for HTTP, OS8 would need to route tool_calls back through its capability system. Out of os8-3-3's scope; tracked as a separate Phase-3.x or Phase-4 concern.
+
+**Status:** 368 tests pass (+18 from this PR). Pre-existing `routing.test.js:194` failure (stale Phase-1 expectation) unchanged.
 
 **`os8-3-4`: Vision.**
 - `createHttpProcess`: `attachments` opt → multimodal OpenAI content parts (`image_url`/`video_url` + `text`).

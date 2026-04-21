@@ -203,6 +203,33 @@ const RoutingService = {
   },
 
   /**
+   * Find the cascade entry that follows a given (familyId, accessMethod) under
+   * the current ai_mode. Phase 3 §4.3: jobs escalation uses this to bounce
+   * one step down the cascade after a tool_call parse failure on the primary.
+   *
+   * Returns the next entry whose `enabled` flag is set, or null if the
+   * current entry is the last one (or absent).
+   *
+   * @param {object} db
+   * @param {string} taskType
+   * @param {string} currentFamilyId
+   * @param {string} [accessMethod='api']
+   * @param {'proprietary' | 'local'} [mode] - defaults to current ai_mode
+   * @returns {object|null} The next routing_cascade row, or null if none
+   */
+  nextInCascade(db, taskType, currentFamilyId, accessMethod = 'api', mode) {
+    const cascade = this.getCascade(db, taskType, mode);
+    const currentIdx = cascade.findIndex(
+      e => e.family_id === currentFamilyId && e.access_method === accessMethod
+    );
+    if (currentIdx === -1) return null;
+    for (let i = currentIdx + 1; i < cascade.length; i++) {
+      if (cascade[i].enabled) return cascade[i];
+    }
+    return null;
+  },
+
+  /**
    * Update the cascade for a task type + mode (user reordering).
    * @param {object} db
    * @param {string} taskType

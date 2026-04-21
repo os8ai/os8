@@ -557,6 +557,13 @@ class CodexTranslator {
 function createTranslator(backendId, opts = {}) {
   switch (backendId) {
     case 'claude': return new ClaudeTranslator(opts);
+    // Phase 3 (os8-3-3): the local HTTP backend synthesizes Claude-shape
+    // stream-json (message_start, content_block_start{tool_use},
+    // input_json_delta, content_block_stop, message_stop) in
+    // src/services/http-stream-synth.js. ClaudeTranslator handles it
+    // unchanged — TOOL_CALL_START/ARGS/END/RESULT ag-ui events fire
+    // for qwen3-coder tool calls just as they would for Claude Code's.
+    case 'local':  return new ClaudeTranslator(opts);
     case 'gemini': return new GeminiTranslator(opts);
     case 'codex':  return new CodexTranslator(opts);
     default: return null;

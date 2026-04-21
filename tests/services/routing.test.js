@@ -549,4 +549,73 @@ describe('RoutingService', () => {
       expect(RoutingService.VALID_MODES).toEqual(['proprietary', 'local']);
     });
   });
+
+  describe('nextInCascade (Phase 3 §4.3 — jobs escalation)', () => {
+    it('returns the next entry under the current mode', () => {
+      const db = createMockDb({
+        cascades: {
+          jobs: [
+            { family_id: 'local-qwen3-coder-30b', access_method: 'api', enabled: 1, priority: 0 },
+            { family_id: 'local-qwen3-coder-next', access_method: 'api', enabled: 1, priority: 1 }
+          ]
+        }
+      });
+      const next = RoutingService.nextInCascade(db, 'jobs', 'local-qwen3-coder-30b', 'api');
+      expect(next).toBeDefined();
+      expect(next.family_id).toBe('local-qwen3-coder-next');
+    });
+
+    it('returns null when the current entry is the last in the cascade', () => {
+      const db = createMockDb({
+        cascades: {
+          jobs: [
+            { family_id: 'local-qwen3-coder-30b', access_method: 'api', enabled: 1, priority: 0 },
+            { family_id: 'local-qwen3-coder-next', access_method: 'api', enabled: 1, priority: 1 }
+          ]
+        }
+      });
+      const next = RoutingService.nextInCascade(db, 'jobs', 'local-qwen3-coder-next', 'api');
+      expect(next).toBe(null);
+    });
+
+    it('returns null when the current familyId is not in the cascade', () => {
+      const db = createMockDb({
+        cascades: {
+          jobs: [
+            { family_id: 'local-qwen3-coder-30b', access_method: 'api', enabled: 1, priority: 0 }
+          ]
+        }
+      });
+      expect(RoutingService.nextInCascade(db, 'jobs', 'unknown-family', 'api')).toBe(null);
+    });
+
+    it('skips disabled entries on the way down', () => {
+      const db = createMockDb({
+        cascades: {
+          jobs: [
+            { family_id: 'a', access_method: 'api', enabled: 1, priority: 0 },
+            { family_id: 'b', access_method: 'api', enabled: 0, priority: 1 },
+            { family_id: 'c', access_method: 'api', enabled: 1, priority: 2 }
+          ]
+        }
+      });
+      const next = RoutingService.nextInCascade(db, 'jobs', 'a', 'api');
+      expect(next.family_id).toBe('c');
+    });
+
+    it('matches access_method as well as family_id', () => {
+      const db = createMockDb({
+        cascades: {
+          conversation: [
+            { family_id: 'claude-sonnet', access_method: 'login', enabled: 1, priority: 0 },
+            { family_id: 'claude-sonnet', access_method: 'api',   enabled: 1, priority: 1 },
+            { family_id: 'gemini-pro',    access_method: 'api',   enabled: 1, priority: 2 }
+          ]
+        }
+      });
+      // Starting at the API entry, next is gemini-pro — not the login entry above.
+      const next = RoutingService.nextInCascade(db, 'conversation', 'claude-sonnet', 'api');
+      expect(next.family_id).toBe('gemini-pro');
+    });
+  });
 });

@@ -16,6 +16,7 @@ const AIRegistryService = require('./ai-registry');
 const EnvService = require('./env');
 const AnthropicSDK = require('./anthropic-sdk');
 const LauncherClient = require('./launcher-client');
+const HttpStreamSynth = require('./http-stream-synth');
 
 /**
  * Prepare the shell environment for a CLI backend.
@@ -219,8 +220,14 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
  * @param {string} opts.prompt - Enriched user message (full context already baked in)
  * @param {string} [opts.model] - Model ID to send as OpenAI `model` field
  * @param {string} [opts.taskType='conversation'] - Used to pick the right launcher-reported base_url
+ * @param {Array<object>} [opts.tools] - OpenAI-shape function tool specs. When
+ *   non-empty, included in the request body with `tool_choice: 'auto'`, and
+ *   the response's `tool_calls` deltas are synthesized into Claude-shape
+ *   tool_use blocks (Phase 3 §4.7). Malformed args close the stream with
+ *   `exitCode=1` and `stderr` prefixed `tool_call_parse_failed:` so the
+ *   jobs-escalation hook can detect parse failures.
  */
-function createHttpProcess(backend, { prompt, model, taskType = 'conversation' } = {}) {
+function createHttpProcess(backend, { prompt, model, taskType = 'conversation', tools = null } = {}) {
   const dataCallbacks = [];
   const exitCallbacks = [];
   let aborted = false;
@@ -271,6 +278,10 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
       messages: [{ role: 'user', content: prompt }],
       stream: true
     };
+    if (Array.isArray(tools) && tools.length > 0) {
+      body.tools = tools;
+      body.tool_choice = 'auto';
+    }
 
     controller = new AbortController();
     let response;
@@ -298,10 +309,33 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
     // session concept. Claude's translator tolerates missing session_id when a
     // runId is pre-assigned by the caller.
     emitLine({ type: 'system', subtype: 'init', session_id: `local-${Date.now()}`, model: modelId });
+    // Phase 3 (os8-3-3): emit message_start so ClaudeTranslator initializes
+    // its currentMessageId before tool_use content blocks arrive. The
+    // synthesized id mirrors Claude's `msg_*` shape so the translator's
+    // parentMessageId field is populated on TOOL_CALL_* events.
+    emitLine({
+      type: 'stream_event',
+      event: {
+        type: 'message_start',
+        message: { id: `msg_local_${Date.now()}`, model: modelId, role: 'assistant', content: [] }
+      }
+    });
 
     const decoder = new TextDecoder();
     let buffer = '';
-    let accumulated = '';
+    const state = HttpStreamSynth.createStreamState();
+
+    const handlePayload = (payload) => {
+      if (payload === '[DONE]') return;
+      let json;
+      try {
+        json = JSON.parse(payload);
+      } catch (err) {
+        console.warn(`[local-http] SSE parse skip: ${err.message} — ${payload.slice(0, 120)}`);
+        return;
+      }
+      for (const evt of HttpStreamSynth.processSSEChunk(state, json)) emitLine(evt);
+    };
 
     try {
       for await (const chunk of response.body) {
@@ -319,30 +353,7 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
             .filter(l => l.startsWith('data:'))
             .map(l => l.slice(5).trim());
           if (dataLines.length === 0) continue;
-          const payload = dataLines.join('');
-          if (payload === '[DONE]') {
-            // vLLM/OpenAI terminator — ignore here, we finalize on stream close.
-            continue;
-          }
-          let json;
-          try {
-            json = JSON.parse(payload);
-          } catch (err) {
-            console.warn(`[local-http] SSE parse skip: ${err.message} — ${payload.slice(0, 120)}`);
-            continue;
-          }
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === 'string' && delta.length > 0) {
-            accumulated += delta;
-            emitLine({
-              type: 'stream_event',
-              event: { type: 'content_block_delta', delta: { type: 'text_delta', text: delta } }
-            });
-          }
-          const finishReason = json?.choices?.[0]?.finish_reason;
-          if (finishReason) {
-            // Emit nothing here — the stream will end naturally; we finalize below.
-          }
+          handlePayload(dataLines.join(''));
         }
       }
     } catch (err) {
@@ -353,24 +364,25 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation' }
 
     // Flush any trailing bytes (unlikely with OpenAI SSE but defensive).
     if (buffer.trim().startsWith('data:')) {
-      const payload = buffer.trim().slice(5).trim();
-      if (payload && payload !== '[DONE]') {
-        try {
-          const json = JSON.parse(payload);
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === 'string' && delta.length > 0) {
-            accumulated += delta;
-            emitLine({
-              type: 'stream_event',
-              event: { type: 'content_block_delta', delta: { type: 'text_delta', text: delta } }
-            });
-          }
-        } catch (_e) {}
-      }
+      handlePayload(buffer.trim().slice(5).trim());
     }
 
-    emitLine({ type: 'result', subtype: 'success', result: accumulated });
-    finish({ exitCode: 0, stderr: '' });
+    for (const evt of HttpStreamSynth.finalizeStream(state)) emitLine(evt);
+    emitLine({ type: 'stream_event', event: { type: 'message_stop' } });
+
+    if (state.parseFailure) {
+      // Phase 3 (os8-3-3) jobs escalation hook: a `tool_call_parse_failed:`-
+      // prefixed stderr is the signal `routing.nextInCascade` consumers watch
+      // for. The accumulated text + tool_use events still reach the caller
+      // via the stream — only the exit code differs.
+      finish({
+        exitCode: 1,
+        stderr: `tool_call_parse_failed: ${state.parseFailure.detail}` +
+                (state.parseFailure.toolCallId ? ` (tool_call_id=${state.parseFailure.toolCallId})` : '')
+      });
+    } else {
+      finish({ exitCode: 0, stderr: '' });
+    }
   }
 
   return {
