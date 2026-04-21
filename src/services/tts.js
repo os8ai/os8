@@ -7,10 +7,12 @@
 
 const ElevenLabsProvider = require('./tts-elevenlabs')
 const OpenAIProvider = require('./tts-openai')
+const KokoroProvider = require('./tts-kokoro')
 
 const PROVIDERS = {
   elevenlabs: ElevenLabsProvider,
-  openai: OpenAIProvider
+  openai: OpenAIProvider,
+  kokoro: KokoroProvider
 }
 
 /**
@@ -197,7 +199,8 @@ class TTSService {
   }
 
   /**
-   * Check if TTS is available (provider set + API key present)
+   * Check if TTS is available (provider set + API key present, or for local
+   * providers, launcher reachable).
    * @param {Database} db
    * @returns {{ available: boolean, provider: string|null, reason?: string }}
    */
@@ -207,6 +210,15 @@ class TTSService {
     if (!provider) {
       return { available: false, provider: null, reason: 'no_provider' }
     }
+    // Phase 3 (os8-3-5): local providers (Kokoro) have API_KEY_ENV=null.
+    // Reachability is checked synchronously-best-effort: we can't await here
+    // (this method is sync), so we report "available" optimistically and let
+    // the actual TTS call surface "launcher down" if Kokoro isn't serving.
+    // The Settings UI can call LauncherClient.isReachable() separately for
+    // a more honest preflight indicator.
+    if (provider.API_KEY_ENV === null) {
+      return { available: true, provider: provider.PROVIDER_ID }
+    }
     const apiKeyRecord = EnvService.get(db, provider.API_KEY_ENV)
     if (!apiKeyRecord || !apiKeyRecord.value) {
       return { available: false, provider: provider.PROVIDER_ID, reason: 'no_api_key' }
@@ -215,7 +227,9 @@ class TTSService {
   }
 
   /**
-   * Get API key for active provider
+   * Get API key for active provider. Returns null for local providers
+   * (Kokoro) which have no auth — callers should treat null as "skip the
+   * API-key check" rather than "missing key".
    * @param {Database} db
    * @returns {string|null}
    */
@@ -223,6 +237,7 @@ class TTSService {
     const EnvService = require('./env')
     const provider = TTSService.getProvider(db)
     if (!provider) return null
+    if (provider.API_KEY_ENV === null) return null  // local provider — no auth
     const record = EnvService.get(db, provider.API_KEY_ENV)
     return record?.value || null
   }
@@ -236,7 +251,11 @@ class TTSService {
     const provider = TTSService.getProvider(db)
     if (!provider) throw new Error('No TTS provider configured')
     const apiKey = TTSService.getApiKey(db)
-    if (!apiKey) throw new Error(`${provider.PROVIDER_ID} API key not configured`)
+    // Local providers have API_KEY_ENV=null; pass through and let the provider
+    // ignore the apiKey arg (it does — see tts-kokoro.js).
+    if (apiKey === null && provider.API_KEY_ENV !== null) {
+      throw new Error(`${provider.PROVIDER_ID} API key not configured`)
+    }
     return provider.getVoices(apiKey)
   }
 

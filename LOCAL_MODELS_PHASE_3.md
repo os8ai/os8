@@ -526,10 +526,20 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 
 **Status:** 383 tests pass (+15 from this PR). Pre-existing `routing.test.js:194` failure unchanged.
 
-**`os8-3-5`: TTS (Kokoro).**
-- `src/services/tts-kokoro.js` — new file matching `tts-openai.js`'s export surface.
-- `tts.js`: `PROVIDERS` map extended with `kokoro`; `isAvailable` branch for null-`API_KEY_ENV` providers (launcher reachability check); `switchProvider` honors `tts_provider_local` when `ai_mode='local'`.
-- **Test:** pick Kokoro in settings, `/api/speak` → MP3 from launcher :8880.
+**`os8-3-5`: TTS (Kokoro). (SHIPPED)**
+- `package.json`: 0.3.3 → 0.3.4.
+- `src/services/tts-kokoro.js` (new): matches `tts-openai.js`'s export surface (`PROVIDER_ID`, `API_KEY_ENV`, `DEFAULT_VOICES`, `DEFAULTS`, `getVoices`, `generateAudio`, `streamAudio`, `streamAudioChunked`, `getDefaultVoices`, `getWebSocketUrl`). `API_KEY_ENV=null` (no auth). Resolves the data-plane base URL from `LauncherClient.getCapabilities().tts` with a fallback to `localhost:8880` so freshly-started Kokoro responds before launcher state catches up. Voice-id helpers handle Kokoro's `<lang><gender>_<name>` convention (af_bella, am_adam, bf_emma...) into friendlier labels.
+- `src/services/tts.js`:
+  - `PROVIDERS` map extended with `kokoro`.
+  - `isAvailable`: new null-`API_KEY_ENV` branch — local providers report `available: true` optimistically; the actual TTS call surfaces "launcher down" if Kokoro isn't serving. Settings UI can call `LauncherClient.isReachable()` separately for an honest preflight.
+  - `getApiKey`: returns `null` for local providers (signals "no auth needed", not "missing key"). `getVoices` skips the API-key-missing throw when the provider declares no auth.
+- **Tests (`tests/services/tts-kokoro.test.js`):** 17 tests covering module shape (export parity with tts-openai), voice-id helpers (humanize, category, labels, defensive paths), `getVoices` against mocked Kokoro-FastAPI responses (normalization, error handling, fallback to localhost:8880 when launcher unreachable), `generateAudio` (request body shape, default voice fallback, error surfacing), facade integration (`PROVIDERS.kokoro` present, `isAvailable` returns true without API key, `getApiKey` returns null for local).
+
+**Honest deferrals:**
+- **Auto-switch on `ai_mode` flip.** §4.4 sketches an auto-switch (when `ai_mode='local'`, switch to Kokoro; when flipping back, restore prior `tts_provider`). Not wired in this PR — the user picks Kokoro manually from settings. One-screen follow-up in os8-3-7 if the wire-up is desired.
+- **Fish Speech.** Out of Phase-3 scope per the doc decision.
+
+**Status:** 400 tests pass (+17 from this PR). Pre-existing `routing.test.js:194` unchanged.
 
 **`os8-3-6`: Image gen via ComfyUI.**
 - `imagegen.js`: `generateWithComfyUI`, family → comfyui provider mapping, `resolveImageProviders` respects mode.
