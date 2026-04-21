@@ -322,6 +322,80 @@ function createAIRegistryRouter(db) {
     }
   });
 
+  // --- Local status (Phase 3 §0 acceptance #7) ---
+
+  /**
+   * GET /api/ai/local-status — surface every local family's serving status
+   * tied to LauncherClient.getCapabilities(). Used by Settings UI and the
+   * onboarding preflight (Phase 4) to give the user an honest picture of
+   * what's actually serving vs what's seeded but offline.
+   *
+   * Shape:
+   *   {
+   *     ai_mode: 'proprietary' | 'local',
+   *     launcher: { reachable: boolean, base_url: string | null },
+   *     families: [
+   *       { id, launcher_model, launcher_backend, supports_vision,
+   *         eligible_tasks, serving: boolean, served_tasks: string[] }
+   *     ]
+   *   }
+   */
+  router.get('/local-status', async (req, res) => {
+    try {
+      const LauncherClient = require('../services/launcher-client');
+      const families = db.prepare(`
+        SELECT id, launcher_model, launcher_backend, supports_vision, eligible_tasks
+        FROM ai_model_families
+        WHERE container_id = 'local'
+        ORDER BY display_order ASC
+      `).all();
+
+      const reachable = await LauncherClient.isReachable();
+      let caps = null;
+      let baseUrl = LauncherClient.DEFAULT_BASE;
+      if (reachable) {
+        try { caps = await LauncherClient.getCapabilities(); } catch (_e) { caps = null; }
+      }
+
+      // Build a launcher_model → served_tasks index from the capabilities map.
+      // Launcher's caps payload is { taskType: [{instance_id, model, base_url}, ...] }
+      // OR { taskType: {model, base_url} } depending on launcher version.
+      const servingByModel = new Map();
+      if (caps) {
+        for (const [taskType, entries] of Object.entries(caps)) {
+          const list = Array.isArray(entries) ? entries : [entries];
+          for (const entry of list) {
+            const model = entry?.model || entry?.model_id;
+            if (!model) continue;
+            if (!servingByModel.has(model)) servingByModel.set(model, []);
+            servingByModel.get(model).push(taskType);
+          }
+        }
+      }
+
+      const enriched = families.map(f => {
+        const tasks = servingByModel.get(f.launcher_model) || [];
+        return {
+          id: f.id,
+          launcher_model: f.launcher_model,
+          launcher_backend: f.launcher_backend,
+          supports_vision: !!f.supports_vision,
+          eligible_tasks: f.eligible_tasks || null,
+          serving: tasks.length > 0,
+          served_tasks: tasks
+        };
+      });
+
+      res.json({
+        ai_mode: RoutingService.getMode(db),
+        launcher: { reachable, base_url: baseUrl },
+        families: enriched
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

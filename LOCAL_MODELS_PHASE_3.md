@@ -562,13 +562,24 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 
 **Status:** 421 tests pass (+21 from this PR). Pre-existing `routing.test.js:194` unchanged.
 
-**`os8-3-7`: Wire-up + registry.**
-- `/api/skills/registry`: surface local capabilities with availability tied to `LauncherClient.getCapabilities()`.
-- Verify `app.js::generateClaudeMd` auto-includes local capabilities (should already — capability system is source-agnostic).
-- Manual STT regression check (item 8).
-- **Test:** the seven acceptance criteria in §0.
+**`os8-3-7`: Wire-up + acceptance. (SHIPPED)**
+- `package.json`: 0.3.5 → 0.3.6.
+- New endpoint `GET /api/ai/local-status` (`src/routes/ai-registry.js`): surfaces every local family's serving status by joining `ai_model_families WHERE container_id='local'` against `LauncherClient.getCapabilities()`. Returns `{ai_mode, launcher: {reachable, base_url}, families: [{id, launcher_model, launcher_backend, supports_vision, eligible_tasks, serving, served_tasks}]}`. Handles both pre-Phase-2 capabilities shape (object per task) and post-Phase-2 shape (array per task) so the launcher can ship either side first. Used by Settings UI and the future Phase-4 onboarding preflight.
+- **STT regression check (item 8):** verified via grep — `whisper.js`, `whisper-stream.js`, and `routes/voice.js` reference neither `LauncherClient` nor `ai_mode` nor `RoutingService`. STT continues to run independently of every Phase-3 change.
+- **Capability registry decision:** the existing `GET /api/skills/registry` tracks skills/APIs/MCP — things-an-agent-can-call. AI families (local-gemma-4-31b etc.) are routing decision-surface, not callable tools. Mixing them would confuse semantics. The new `/api/ai/local-status` endpoint is the right home for "is the launcher serving X" rather than overloading the registry.
+- **Tests (`tests/services/local-status.test.js`):** 5 tests covering launcher unreachable (all families offline), per-family serving status from launcher capabilities (handles both array and object capability shapes), `supports_vision`/`eligible_tasks` exposure, `ai_mode` reflection, exclusion of non-local families.
 
-Total: 7 PRs, independently reviewable, each leaves the tree green.
+**Acceptance review (§0):**
+1. ai_mode=local + agent on auto-routing → conversation→gemma-4-31B etc. — **green** (verified end-to-end in os8-3-2 fresh-install script).
+2. `/api/imagegen/generate` under ai_mode=local → ComfyUI → PNG — **wired**, requires running launcher for live verification.
+3. `/api/speak` with Kokoro selected → MP3 from :8880 — **wired**, requires running launcher.
+4. Jobs `tool_call_parse_failed` → escalation to qwen3-coder-next — **partial**: signal + `nextInCascade` shipped (os8-3-3); message-handler catch+retry deferred (no caller passes tools yet — see os8-3-3 deferrals).
+5. Vision agent + PNG attachment → routes to qwen3-6-35b-a3b — **wired**, requires running launcher.
+6. qwen3-coder turn → ag-ui `TOOL_CALL_*` events — **wired** (os8-3-3 + ClaudeTranslator routing for `local`), requires tool-spec wire-up at the message-handler layer for live verification.
+7. `/api/ai/local-status` shows local capabilities tied to `/api/status/capabilities` — **green** (this commit).
+8. STT continues to work — **green** (regression check above).
+
+Total: 7 PRs shipped. Items 2/3/5/6 of acceptance need a running launcher for live verification; the unit tests cover the routing + body-shape correctness. Items 1/7/8 verified in CI today.
 
 ---
 
