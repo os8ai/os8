@@ -192,11 +192,13 @@ function createVoiceRouter(db, { EnvService, SettingsService }) {
 
   /**
    * GET /api/voice/tts-status
-   * Check TTS availability
+   * Check TTS availability — async path probes the launcher for local
+   * providers so the status banner can distinguish launcher_down vs
+   * model_not_serving (Phase 3-5 follow-up).
    */
-  router.get('/tts-status', (req, res) => {
+  router.get('/tts-status', async (req, res) => {
     try {
-      const status = TTSService.isAvailable(db);
+      const status = await TTSService.isAvailableAsync(db);
       res.json({
         available: status.available,
         provider: status.provider,
@@ -210,13 +212,16 @@ function createVoiceRouter(db, { EnvService, SettingsService }) {
 
   /**
    * POST /api/voice/tts-provider
-   * Switch TTS provider (elevenlabs, openai, or empty for none)
+   * Switch TTS provider. Whitelist comes from TTSService.PROVIDERS so adding
+   * a new provider module automatically widens the accepted set; empty string
+   * deselects.
    */
   router.post('/tts-provider', express.json(), (req, res) => {
     try {
       const { provider } = req.body
-      if (provider && !['elevenlabs', 'openai'].includes(provider)) {
-        return res.status(400).json({ error: 'Invalid provider' })
+      const validProviders = Object.keys(TTSService.PROVIDERS)
+      if (provider && !validProviders.includes(provider)) {
+        return res.status(400).json({ error: `Invalid provider: ${provider}. Expected one of: ${validProviders.join(', ')} (or empty)` })
       }
       const result = TTSService.switchProvider(db, provider || '')
       res.json({ success: true, ...result })

@@ -82,6 +82,17 @@ const VOICE_PROVIDERS = {
     placeholder: 'sk-...',
     url: 'https://platform.openai.com/api-keys',
     urlLabel: 'platform.openai.com'
+  },
+  // Phase 3-5 follow-up: Kokoro is local — runs in os8-launcher (no API key).
+  // The voice step probes /api/ai/local-status to show "Launcher detected" /
+  // "Launcher not running" instead of an API-key input.
+  kokoro: {
+    name: 'Kokoro (local)',
+    requiresLauncher: true,
+    badge: 'Free, local',
+    helpText: 'Runs in os8-launcher with no API key. 54 prebuilt voices, 8 languages.',
+    docsUrl: 'https://github.com/os8ai/os8-launcher',
+    docsLabel: 'os8-launcher setup'
   }
 };
 
@@ -537,6 +548,45 @@ function renderStep3Image(container) {
 }
 
 // Step 4: Voice Setup
+/**
+ * Probe the launcher for Kokoro availability and update the onboarding
+ * Kokoro card's status badge. Best-effort — silent on failure.
+ *
+ * Three states map to three badge classes that the onboarding CSS already
+ * styles:
+ *   - 'connected'     (green) — launcher reachable + Kokoro serving
+ *   - 'not-connected' (gray)  — launcher reachable, Kokoro not serving yet
+ *                                (still pickable; tts.js surface call will
+ *                                fail with a clear error)
+ *   - 'not-connected' (red-ish for offline) — launcher unreachable
+ */
+async function probeKokoroStatus(container) {
+  const statusEl = container.querySelector('#onboardingKokoroStatus');
+  if (!statusEl) return;
+  try {
+    const port = await window.os8.server.getPort();
+    const res = await fetch(`http://localhost:${port}/api/ai/local-status`);
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const data = await res.json();
+    if (!data.launcher?.reachable) {
+      statusEl.textContent = '× Launcher offline';
+      statusEl.className = 'onboarding-provider-status not-connected';
+      return;
+    }
+    const kokoro = (data.families || []).find(f => f.id === 'local-kokoro-v1');
+    if (kokoro?.serving) {
+      statusEl.textContent = '✓ Launcher detected, Kokoro serving';
+      statusEl.className = 'onboarding-provider-status connected';
+    } else {
+      statusEl.textContent = '⚠ Launcher up, Kokoro not loaded';
+      statusEl.className = 'onboarding-provider-status not-connected';
+    }
+  } catch (_e) {
+    statusEl.textContent = '× Launcher offline';
+    statusEl.className = 'onboarding-provider-status not-connected';
+  }
+}
+
 function renderStep4Voice(container) {
   const openaiConfigured = providerStatuses.openai?.apiKey || providerStatuses.openai?.login;
   const elevenConfigured = providerStatuses.elevenlabs?.apiKey;
@@ -616,7 +666,55 @@ function renderStep4Voice(container) {
     html += `<p class="onboarding-add-more" style="text-align: center; margin-top: 20px;">Both voice providers configured.</p>`;
   }
 
+  // Kokoro card — local provider, no API key. Status filled in async after
+  // render via probeKokoroStatus(). Always shown (the user can pick it
+  // even after configuring a cloud provider — the picker in Settings lets
+  // them switch later).
+  html += `
+    <div class="onboarding-providers" style="margin-top: 8px;">
+      <div class="onboarding-provider-card" data-voice-provider="kokoro" id="onboardingKokoroCard">
+        <div class="onboarding-provider-header">
+          <div class="onboarding-provider-info">
+            <span class="onboarding-provider-name">${VOICE_PROVIDERS.kokoro.name}</span>
+            <span class="onboarding-provider-badge best">${VOICE_PROVIDERS.kokoro.badge}</span>
+          </div>
+          <span class="onboarding-provider-status" id="onboardingKokoroStatus">Checking launcher…</span>
+        </div>
+        <div class="onboarding-apikey-section visible">
+          <div class="onboarding-apikey-row" style="justify-content: space-between;">
+            <span style="font-size: 11px; color: #888;">${VOICE_PROVIDERS.kokoro.helpText}</span>
+            <button class="onboarding-kokoro-pick" type="button">Use Kokoro</button>
+          </div>
+          <a class="onboarding-apikey-link" href="#" data-url="${VOICE_PROVIDERS.kokoro.docsUrl}">${VOICE_PROVIDERS.kokoro.docsLabel}</a>
+        </div>
+      </div>
+    </div>
+  `;
+
   container.innerHTML = html;
+
+  // Probe launcher reachability + Kokoro serving status. Best-effort —
+  // failures just leave the card in "Checking…" → "Launcher offline" state.
+  probeKokoroStatus(container);
+
+  // Wire the "Use Kokoro" button.
+  const kokoroBtn = container.querySelector('.onboarding-kokoro-pick');
+  if (kokoroBtn) {
+    kokoroBtn.addEventListener('click', async () => {
+      await window.os8.settings.set('tts_provider', 'kokoro');
+      providerStatuses.kokoro = { selected: true };
+      // Mirror the cloud-provider behavior: enable voice output globally.
+      try {
+        const port = await window.os8.server.getPort();
+        await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true })
+        });
+      } catch {}
+      renderStep();
+    });
+  }
 
   // Attach voice key save handlers
   container.querySelectorAll('.save-btn[data-env-key]').forEach(btn => {

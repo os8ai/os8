@@ -23,6 +23,32 @@ const AWAY_OPTIONS = [
   { value: 900000, label: '15 min' },
 ]
 
+// TTS provider labels — keep in sync with src/services/tts.js::PROVIDER_LABELS.
+// (This is a React app served separately, so we duplicate rather than import
+// across the shell/template boundary.)
+const PROVIDER_LABELS = {
+  elevenlabs: 'ElevenLabs',
+  openai:     'OpenAI',
+  kokoro:     'Kokoro (local)'
+}
+
+const PROVIDER_OPTIONS = [
+  { value: '',           label: 'None' },
+  { value: 'elevenlabs', label: PROVIDER_LABELS.elevenlabs },
+  { value: 'openai',     label: PROVIDER_LABELS.openai },
+  { value: 'kokoro',     label: PROVIDER_LABELS.kokoro }
+]
+
+// Human-readable status banner text per backend `reason` code. Cloud
+// providers use 'no_api_key'; local providers use 'launcher_down' or
+// 'model_not_serving' (added in Phase 3-5 follow-up).
+const TTS_STATUS_MESSAGES = {
+  no_api_key:        'API key not configured',
+  no_provider:       'No provider selected',
+  launcher_down:     "os8-launcher isn't running on :9000",
+  model_not_serving: 'Launcher up, but the model is not loaded'
+}
+
 const RATE_LIMIT_OPTIONS = [
   { value: 2000, label: '2s' },
   { value: 5000, label: '5s' },
@@ -735,15 +761,11 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
           {activeTab === 'system' && (
             <>
               {/* Default Voices */}
-              <Section title="Voice" subtitle={voiceReady && ttsProvider ? `${ttsProvider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'} — default voices for agents without a voice assigned` : 'Default voices for agents without a voice assigned'}>
+              <Section title="Voice" subtitle={voiceReady && ttsProvider ? `${PROVIDER_LABELS[ttsProvider] || ttsProvider} — default voices for agents without a voice assigned` : 'Default voices for agents without a voice assigned'}>
                 {/* TTS Provider Toggle */}
                 <Field label="Provider">
                   <div className="flex gap-1">
-                    {[
-                      { value: '', label: 'None' },
-                      { value: 'elevenlabs', label: 'ElevenLabs' },
-                      { value: 'openai', label: 'OpenAI' },
-                    ].map(opt => (
+                    {PROVIDER_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
                         type="button"
@@ -760,7 +782,7 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
                   </div>
                   {ttsStatus && ttsProvider && (
                     <p className={`text-[10px] mt-1 ${ttsStatus.available ? 'text-green-400' : 'text-red-400'}`}>
-                      {ttsStatus.available ? 'Ready' : ttsStatus.reason === 'no_api_key' ? 'API key not configured' : (ttsStatus.reason || 'Unknown')}
+                      {ttsStatus.available ? 'Ready' : (TTS_STATUS_MESSAGES[ttsStatus.reason] || ttsStatus.reason || 'Unknown')}
                     </p>
                   )}
                 </Field>

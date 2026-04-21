@@ -15,6 +15,24 @@ const PROVIDERS = {
   kokoro: KokoroProvider
 }
 
+// Display labels keyed by provider id. Single source of truth — UI components
+// import this so adding a fourth provider doesn't require touching ternaries
+// or hardcoded button arrays. Keep keys in sync with PROVIDERS above; the
+// tests/services/tts-providers-labels.test.js file enforces parity.
+const PROVIDER_LABELS = {
+  elevenlabs: 'ElevenLabs',
+  openai:     'OpenAI',
+  kokoro:     'Kokoro (local)'
+}
+
+// Tagline shown beneath each provider card. Helps the user understand the
+// trade-off before picking. Optional — UI may render or skip.
+const PROVIDER_HELP = {
+  elevenlabs: 'Highest-quality voices; cloud API; requires an API key.',
+  openai:     'Solid quality; cloud API; requires an OpenAI API key.',
+  kokoro:     'Free, fully local; runs in os8-launcher (no API key); 54 prebuilt voices.'
+}
+
 /**
  * TextChunker - Buffers text and emits chunks at sentence boundaries
  * Used for streaming TTS to ensure natural speech breaks
@@ -133,6 +151,8 @@ class TTSService {
   static TTS_DEFAULTS = TTS_DEFAULTS
   static TextChunker = TextChunker
   static PROVIDERS = PROVIDERS
+  static PROVIDER_LABELS = PROVIDER_LABELS
+  static PROVIDER_HELP = PROVIDER_HELP
 
   /**
    * Get TTS settings from database
@@ -211,17 +231,70 @@ class TTSService {
       return { available: false, provider: null, reason: 'no_provider' }
     }
     // Phase 3 (os8-3-5): local providers (Kokoro) have API_KEY_ENV=null.
-    // Reachability is checked synchronously-best-effort: we can't await here
-    // (this method is sync), so we report "available" optimistically and let
-    // the actual TTS call surface "launcher down" if Kokoro isn't serving.
-    // The Settings UI can call LauncherClient.isReachable() separately for
-    // a more honest preflight indicator.
+    // The sync path reports "available" optimistically; the async variant
+    // (isAvailableAsync below) probes the launcher for an honest answer.
+    // UI components that can await should prefer the async variant — it
+    // distinguishes "launcher down" from "model not serving" so the status
+    // banner can be specific.
     if (provider.API_KEY_ENV === null) {
       return { available: true, provider: provider.PROVIDER_ID }
     }
     const apiKeyRecord = EnvService.get(db, provider.API_KEY_ENV)
     if (!apiKeyRecord || !apiKeyRecord.value) {
       return { available: false, provider: provider.PROVIDER_ID, reason: 'no_api_key' }
+    }
+    return { available: true, provider: provider.PROVIDER_ID }
+  }
+
+  /**
+   * Async availability check — for local providers (API_KEY_ENV=null) probes
+   * the launcher to know whether the model is actually serving. Cloud
+   * providers behave the same as the sync isAvailable.
+   *
+   * Reasons for null-key providers:
+   *   - 'launcher_down'      → /api/health unreachable
+   *   - 'model_not_serving'  → launcher reachable but the provider's family
+   *                            isn't in the running models list
+   *   - undefined            → available
+   *
+   * @param {Database} db
+   * @returns {Promise<{ available: boolean, provider: string|null, reason?: string }>}
+   */
+  static async isAvailableAsync(db) {
+    const sync = TTSService.isAvailable(db)
+    const provider = TTSService.getProvider(db)
+    // Cloud providers (or no provider) — sync answer is authoritative.
+    if (!provider || provider.API_KEY_ENV !== null) return sync
+    // Local provider — probe the launcher.
+    const LauncherClient = require('./launcher-client')
+    const reachable = await LauncherClient.isReachable()
+    if (!reachable) {
+      return { available: false, provider: provider.PROVIDER_ID, reason: 'launcher_down' }
+    }
+    let caps = null
+    try { caps = await LauncherClient.getCapabilities() } catch (_e) { /* leave caps null */ }
+    // Look up the launcher_model for this provider's family by convention:
+    // 'kokoro' → 'local-kokoro-v1' etc. via id LIKE 'local-<provider>%'.
+    const familyRow = db.prepare(
+      `SELECT launcher_model FROM ai_model_families WHERE container_id = 'local' AND id LIKE ? LIMIT 1`
+    ).get(`local-${provider.PROVIDER_ID}%`)
+    const launcherModel = familyRow?.launcher_model
+    if (!launcherModel) {
+      // No matching family seeded — can't prove unavailable, report optimistic.
+      return { available: true, provider: provider.PROVIDER_ID }
+    }
+    let serving = false
+    if (caps) {
+      for (const entries of Object.values(caps)) {
+        const list = Array.isArray(entries) ? entries : [entries]
+        for (const entry of list) {
+          if ((entry?.model || entry?.model_id) === launcherModel) { serving = true; break }
+        }
+        if (serving) break
+      }
+    }
+    if (!serving) {
+      return { available: false, provider: provider.PROVIDER_ID, reason: 'model_not_serving' }
     }
     return { available: true, provider: provider.PROVIDER_ID }
   }
