@@ -12,6 +12,8 @@ const os = require('os');
 const crypto = require('crypto');
 const { BLOB_DIR } = require('../config');
 const EnvService = require('./env');
+const ComfyUIClient = require('./comfyui-client');
+const { buildFluxText2ImageWorkflow, FLUX_MODEL_DEFAULTS } = require('./comfyui-workflows/flux-text2image');
 
 // Image files directory
 const IMAGEGEN_DIR = path.join(BLOB_DIR, 'imagegen');
@@ -176,6 +178,11 @@ class ImageGenService {
       if (provider === 'google') return await this._getGeminiLoginAuth();
       return null;
     }
+    // Phase 3 (os8-3-6): the local pseudo-provider has no auth — ComfyUI
+    // listens on the launcher's port without keys. Returning a sentinel
+    // {type:'none'} lets the dispatch branch run through; the ComfyUI client
+    // ignores `auth` entirely.
+    if (provider === 'local') return { type: 'none', token: null };
     // API key
     const keyMap = { google: 'GOOGLE_API_KEY', openai: 'OPENAI_API_KEY', xai: 'XAI_API_KEY' };
     const envKey = keyMap[provider];
@@ -188,10 +195,18 @@ class ImageGenService {
   // --- Routing integration ---
 
   /**
-   * Map family IDs to provider names used by imagegen
+   * Map family IDs to provider names used by imagegen.
+   * Phase 3 (os8-3-6): local-flux1-* families dispatch to ComfyUI via the
+   * launcher. The dispatch branch in generate() uses 'comfyui' to route.
    */
   static _familyToProvider(familyId) {
-    const map = { 'gemini-imagen': 'gemini', 'openai-dalle': 'openai', 'grok-imagine': 'grok' };
+    const map = {
+      'gemini-imagen': 'gemini',
+      'openai-dalle': 'openai',
+      'grok-imagine': 'grok',
+      'local-flux1-schnell': 'comfyui',
+      'local-flux1-dev':     'comfyui'
+    };
     return map[familyId] || null;
   }
 
@@ -199,7 +214,13 @@ class ImageGenService {
    * Map family IDs to provider IDs used by routing
    */
   static _familyToProviderId(familyId) {
-    const map = { 'gemini-imagen': 'google', 'openai-dalle': 'openai', 'grok-imagine': 'xai' };
+    const map = {
+      'gemini-imagen': 'google',
+      'openai-dalle': 'openai',
+      'grok-imagine': 'xai',
+      'local-flux1-schnell': 'local',
+      'local-flux1-dev':     'local'
+    };
     return map[familyId] || null;
   }
 
@@ -344,6 +365,11 @@ class ImageGenService {
           result = await this.generateWithOpenAI(auth, prompt, referenceImages, mask, genOptions);
         } else if (entry.provider === 'grok') {
           result = await this.generateWithGrok(auth, prompt, referenceImages, genOptions);
+        } else if (entry.provider === 'comfyui') {
+          // Phase 3 §4.5 — local image-gen via ComfyUI workflow templates.
+          // Reference images aren't supported here (Kontext is image-edit,
+          // out of Phase-3 scope); the workflow is text-to-image only.
+          result = await this.generateWithComfyUI(prompt, entry.familyId, genOptions);
         } else {
           result = await this.generateWithGemini(auth, prompt, referenceImages, genOptions);
         }
@@ -604,6 +630,66 @@ class ImageGenService {
    * - Text-to-image: Uses Imagen API (predict endpoint)
    * - With reference images: Uses Gemini generateContent API
    */
+  /**
+   * Generate with ComfyUI (Phase 3 §4.5).
+   *
+   * No auth — local ComfyUI listens on the launcher's port without keys.
+   * Reference images are not supported here (text-to-image only); the
+   * Kontext image-edit family is out of Phase-3 scope.
+   *
+   * Flow:
+   *   1. Resolve ComfyUI base_url from launcher caps (fallback :8188).
+   *   2. Map family → modelName for the workflow template.
+   *   3. POST workflow to /prompt → prompt_id.
+   *   4. Poll /history/{prompt_id} until complete.
+   *   5. Fetch each output image via /view → save to imagegen blob dir.
+   */
+  static async generateWithComfyUI(prompt, familyId, options = {}) {
+    const baseUrl = await ComfyUIClient.resolveBaseUrl();
+
+    // Map family → ComfyUI's model directory name. The launcher's container
+    // bind-mounts each model under /app/models/.../<modelName>/, so this name
+    // must match the launcher's `models:` key in config.yaml.
+    const modelName = ({
+      'local-flux1-schnell': 'flux1-schnell',
+      'local-flux1-dev':     'flux1-dev'
+    })[familyId] || 'flux1-schnell';
+
+    const defaults = FLUX_MODEL_DEFAULTS[modelName] || { steps: 4 };
+    const width = options.width || 1024;
+    const height = options.height || 1024;
+    const steps = options.steps || defaults.steps;
+    const seed = (options.seed != null) ? options.seed : -1;
+
+    const workflow = buildFluxText2ImageWorkflow({ modelName, prompt, width, height, steps, seed });
+    const clientId = crypto.randomUUID().replace(/-/g, '');
+
+    console.log(`ImageGen: ComfyUI ${modelName} ${width}x${height} steps=${steps} seed=${seed}`);
+
+    const promptId = await ComfyUIClient.submitWorkflow(baseUrl, workflow, clientId);
+    const outputs = await ComfyUIClient.pollUntilDone(baseUrl, promptId);
+    const refs = ComfyUIClient.extractImageRefs(outputs);
+    if (refs.length === 0) {
+      throw new Error('ComfyUI completed but produced no images');
+    }
+
+    // Fetch each generated image, save to imagegen blob dir using the
+    // existing saveImages pipeline (matches metadata sidecar conventions).
+    const imageParts = [];
+    for (const ref of refs) {
+      const buf = await ComfyUIClient.fetchImage(baseUrl, ref);
+      imageParts.push({
+        b64_json: buf.toString('base64'),
+        // ComfyUI emits PNG by default; magic-byte detection in saveImages
+        // handles edge cases.
+        mimeType: 'image/png'
+      });
+    }
+
+    const images = await this.saveImages(imageParts, prompt, 'comfyui', modelName);
+    return { images, model: modelName };
+  }
+
   static async generateWithGemini(auth, prompt, referenceImages, options) {
     const n = Math.min(options.n || 1, 4);
 

@@ -541,11 +541,26 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 
 **Status:** 400 tests pass (+17 from this PR). Pre-existing `routing.test.js:194` unchanged.
 
-**`os8-3-6`: Image gen via ComfyUI.**
-- `imagegen.js`: `generateWithComfyUI`, family → comfyui provider mapping, `resolveImageProviders` respects mode.
-- Workflow JSON templates in `src/services/comfyui-workflows/`.
-- WS client or polling fallback for progress.
-- **Test:** `POST /api/imagegen/generate {prompt: "red apple"}` under `ai_mode='local'` → PNG from ComfyUI on :8188.
+**`os8-3-6`: Image gen via ComfyUI. (SHIPPED)**
+- `package.json`: 0.3.4 → 0.3.5.
+- `src/services/comfyui-workflows/flux-text2image.js` (new): `buildFluxText2ImageWorkflow({modelName, prompt, width, height, steps, seed})` returns the canonical 9-node Flux schnell/dev graph (UNETLoader → DualCLIPLoader → VAELoader → CLIPTextEncodeFlux × 2 → EmptySD3LatentImage → KSampler → VAEDecode → SaveImage). Mirrors the launcher's `clients/image-gen/static/index.html::buildWorkflow` exactly so behavior matches the canonical client. `FLUX_MODEL_DEFAULTS` carries per-model step counts (schnell: 4, dev: 20).
+- `src/services/comfyui-client.js` (new): `submitWorkflow` (POST /prompt → prompt_id), `pollUntilDone` (poll /history/{id} until outputs present, surface execution errors from ComfyUI's status payload, time out at 3 min default), `fetchImage` (GET /view → Buffer), `extractImageRefs` (flatten across SaveImage nodes), `resolveBaseUrl` (LauncherClient.getCapabilities[image-gen] with localhost:8188 fallback). HTTP-poll path chosen over WebSocket — Flux schnell completes in <5s and the `ws` dependency would be overkill for the gain.
+- `src/services/imagegen.js`:
+  - `_familyToProvider` adds `local-flux1-schnell` / `local-flux1-dev` → `'comfyui'`.
+  - `_familyToProviderId` adds the same families → `'local'`.
+  - `getAuthForProvider` adds a `local` branch returning `{type:'none', token:null}` (no auth).
+  - `generate()` dispatch gains a `comfyui` branch calling `generateWithComfyUI(prompt, familyId, options)`.
+  - New `generateWithComfyUI`: resolves base_url, picks the model name from familyId (flux1-schnell / flux1-dev), builds the workflow with `buildFluxText2ImageWorkflow`, submits + polls + fetches, then runs the result through the existing `saveImages` pipeline (metadata sidecar conventions preserved).
+  - `resolveImageProviders` is mode-aware automatically — `RoutingService.getCascade(db, 'image')` reads the current `ai_mode` and returns the right cascade rows. Under `ai_mode='local'` only ComfyUI families surface; under `'proprietary'` only cloud families. No code change needed in this method.
+- **Tests (`tests/services/comfyui-image.test.js`):** 21 tests covering workflow shape (node skeleton, prompt embedding, dimension passthrough, explicit vs random seed, model-specific paths, validation), ComfyUI client (submit success/error/non-OK, poll-completes / poll-error-from-status / poll-timeout, fetchImage Buffer, extractImageRefs flattening, resolveBaseUrl fallback + capability read), and imagegen integration (`_familyToProvider` / `_familyToProviderId` / `getAuthForProvider` for local).
+
+**Honest deferrals:**
+- **Reference images / Kontext.** The image-edit Kontext workflow is a different graph (LoadImage + VAEEncode + ReferenceLatent). Out of Phase-3 scope per the doc; `generateWithComfyUI` rejects reference images today.
+- **WebSocket progress events.** ComfyUI's `/ws` channel emits step-level progress; we poll instead. Add a WS variant later if step UX becomes important.
+- **`getStatus` ComfyUI surface.** The provider-availability summary at `/api/imagegen/status` doesn't yet report `local` / `comfyui` — would require an async reachability probe in a sync method. Settings UI can call `LauncherClient.isReachable()` directly for now.
+- **End-to-end smoke test (PNG out).** Requires a running launcher with ComfyUI + flux1-schnell weights. Manual acceptance only.
+
+**Status:** 421 tests pass (+21 from this PR). Pre-existing `routing.test.js:194` unchanged.
 
 **`os8-3-7`: Wire-up + registry.**
 - `/api/skills/registry`: surface local capabilities with availability tied to `LauncherClient.getCapabilities()`.
