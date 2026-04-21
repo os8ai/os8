@@ -443,4 +443,110 @@ describe('RoutingService', () => {
       expect(jobsHaikuIdx).toBeLessThan(jobsOpusIdx);
     });
   });
+
+  describe('mode (Phase 3 §4.2)', () => {
+    // The shared mock's cascades dict is keyed by task_type only, not
+    // (task_type, mode). That matches the SQL filter from the caller's
+    // perspective for a single mode. For mode-specific tests we simulate the
+    // target mode's rows via the cascades opt and set ai_mode accordingly.
+    it('getMode defaults to proprietary when ai_mode unset', () => {
+      const db = createMockDb();
+      expect(RoutingService.getMode(db)).toBe('proprietary');
+    });
+
+    it('getMode returns local when setting is local', () => {
+      const db = createMockDb();
+      RoutingService.setMode(db, 'local');
+      expect(RoutingService.getMode(db)).toBe('local');
+    });
+
+    it('getMode fails safe to proprietary on unknown values', () => {
+      const db = createMockDb();
+      // Write an invalid value directly to settings (bypass the validator).
+      // Use the same parameterized shape setMode uses so the mock captures key+value.
+      db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)").run('ai_mode', 'garbled');
+      expect(RoutingService.getMode(db)).toBe('proprietary');
+    });
+
+    it('setMode rejects invalid modes', () => {
+      const db = createMockDb();
+      expect(() => RoutingService.setMode(db, 'hybrid')).toThrow(/Invalid ai_mode/);
+    });
+
+    it('resolve hard-fallback under ai_mode=local returns local-family (privacy promise)', () => {
+      // Empty cascade + no agent override → hard fallback.
+      const db = createMockDb({ cascades: { conversation: [] } });
+      RoutingService.setMode(db, 'local');
+      const result = RoutingService.resolve(db, 'conversation');
+      expect(result.source).toBe('local_no_fallback');
+      expect(result.familyId).toBe('local-gemma-4-31b');
+      expect(result.backendId).toBe('local');
+      // Critical: NEVER cloud-family under ai_mode=local.
+      expect(result.familyId).not.toMatch(/^(claude|gemini|gpt|grok)/);
+    });
+
+    it('resolve hard-fallback under ai_mode=proprietary returns claude-sonnet (unchanged)', () => {
+      const db = createMockDb({ cascades: { conversation: [] } });
+      // mode is default 'proprietary'
+      const result = RoutingService.resolve(db, 'conversation');
+      expect(result.source).toBe('fallback');
+      expect(result.familyId).toBe('claude-sonnet');
+    });
+
+    it('generateCascade(mode=proprietary) excludes HTTP containers', () => {
+      // Inject an HTTP family into the mocked family list.
+      const origFamilies = AIRegistryService.getFamilies;
+      const origContainer = AIRegistryService.getContainer;
+      AIRegistryService.getFamilies = () => [
+        ...FAMILIES,
+        { id: 'local-chat', container_id: 'local', name: 'Local', display_name: 'Local', cli_model_arg: 'x', cost_tier: 1, cap_chat: 5, cap_jobs: 5, cap_planning: 5, cap_coding: 5 }
+      ];
+      AIRegistryService.getContainer = (_, id) => id === 'local' ? { id: 'local', provider_id: 'local', type: 'http' } : CONTAINERS[id] || null;
+      try {
+        const db = createMockDb();
+        const propCascade = RoutingService.generateCascade(db, 'conversation', 'proprietary');
+        expect(propCascade.every(e => e.family_id !== 'local-chat')).toBe(true);
+      } finally {
+        AIRegistryService.getFamilies = origFamilies;
+        AIRegistryService.getContainer = origContainer;
+      }
+    });
+
+    it('generateCascade(mode=local) includes only HTTP containers', () => {
+      const origFamilies = AIRegistryService.getFamilies;
+      const origContainer = AIRegistryService.getContainer;
+      const origProvider = AIRegistryService.getProvider;
+      AIRegistryService.getFamilies = () => [
+        ...FAMILIES,
+        { id: 'local-chat', container_id: 'local', name: 'Local', display_name: 'Local', cli_model_arg: 'x', cost_tier: 1, cap_chat: 5, cap_jobs: 5, cap_planning: 5, cap_coding: 5 }
+      ];
+      AIRegistryService.getContainer = (_, id) => id === 'local' ? { id: 'local', provider_id: 'local', type: 'http', has_login: 0 } : CONTAINERS[id] || null;
+      AIRegistryService.getProvider = (_, id) => id === 'local' ? { id: 'local', api_key_env: null } : PROVIDERS[id] || null;
+      try {
+        const db = createMockDb();
+        // Constraints need a `local` entry for the mode-local path to emit the API entry.
+        db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('model_api_constraints', ?, CURRENT_TIMESTAMP)")
+          .run(JSON.stringify({ ...RoutingService._defaultConstraints() }));
+        const localCascade = RoutingService.generateCascade(db, 'conversation', 'local');
+        expect(localCascade.length).toBeGreaterThan(0);
+        expect(localCascade.every(e => e.family_id === 'local-chat')).toBe(true);
+      } finally {
+        AIRegistryService.getFamilies = origFamilies;
+        AIRegistryService.getContainer = origContainer;
+        AIRegistryService.getProvider = origProvider;
+      }
+    });
+
+    it('_defaultConstraints includes local pseudo-provider', () => {
+      const constraints = RoutingService._defaultConstraints();
+      expect(constraints.local).toBeDefined();
+      for (const tt of RoutingService.TASK_TYPES) {
+        expect(constraints.local[tt]).toBe('api');
+      }
+    });
+
+    it('VALID_MODES is exposed and contains the two modes', () => {
+      expect(RoutingService.VALID_MODES).toEqual(['proprietary', 'local']);
+    });
+  });
 });

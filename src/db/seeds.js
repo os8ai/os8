@@ -441,6 +441,15 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
           updated = true;
         }
       }
+      // Phase 3 (os8-3-2): add 'local' pseudo-provider. HTTP-only, api for every task.
+      if (!constraints.local) {
+        constraints.local = {};
+        const RoutingService = require('../services/routing');
+        for (const tt of RoutingService.TASK_TYPES) {
+          constraints.local[tt] = 'api';
+        }
+        updated = true;
+      }
       if (updated) {
         db.prepare("UPDATE settings SET value = ? WHERE key = 'model_api_constraints'").run(JSON.stringify(constraints));
       }

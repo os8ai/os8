@@ -122,7 +122,7 @@ ALTER TABLE routing_cascade ADD COLUMN mode TEXT NOT NULL DEFAULT 'proprietary';
 
 **Phase-2 dependency absorbed.** Phase 2 OS8-side (`os8-1`) was a separate migration adding `launcher_model` / `launcher_backend` columns to `ai_model_families`. Phase 2 is still design-only in git, so `os8-3-1` folds those two ALTERs into its own path (inline `try { db.exec('ALTER...') } catch {}` in `seeds.js` alongside the other additive column ALTERs). This keeps `os8-3-1` self-sufficient — it no longer blocks on a Phase-2 implementation PR. If Phase 2 is ever implemented as a standalone milestone, its `os8-1` step is now a no-op.
 
-**Local-half cascade seeding is deferred to `os8-3-2`.** After the migration runs, `routing_cascade` contains proprietary-only rows. `os8-3-2` will parameterize `generateCascade` on mode and seed the local half. Until then, `generateCascade` in `os8-3-1` ships a minimal one-line filter (`if (container?.type === 'http') continue;`) so local families can't leak into the proprietary auto-cascade on a fresh install — without it, a fresh DB would route `coding` primary to `local-qwen3-coder-next` under default proprietary mode (wrong). See §6's `os8-3-1` notes.
+**Local-half cascade seeding (shipped in `os8-3-2`).** After the os8-3-1 migration runs, `routing_cascade` contains proprietary-only rows. `os8-3-2` parameterizes `generateCascade` on mode and adds a `0.3.2-seed-local-cascade.js` migration that backfills the local half. Fresh installs populate both halves via the updated `regenerateAll(db)`. See §6's `os8-3-2` notes.
 
 ### 2.2 `ai_model_families` — add `supports_vision` boolean
 
@@ -465,10 +465,25 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 - `tests/migrations/0.3.1-routing-mode.test.js` (new): 7 tests covering mode column default, backfill, row preservation, UNIQUE swap behavior, dormant-flag deletion, and idempotency.
 - **Status:** 341 tests pass (+7 from the new migration file). One pre-existing failure (`routing.test.js:194` — test is stale from before Phase 1's agent-override-for-all-tasks fix) is unchanged by this PR.
 
-**`os8-3-2`: Resolver mode plumbing.**
-- `routing.js`: `ai_mode` setting; `getCascade` + `generateCascade` + `regenerateAll` take `mode`; hard-fail on no-local-fallback; `_defaultConstraints` includes `'local'` provider.
-- Migration backfill: regenerate local cascades for all task types after `ai_mode` is first set.
-- **Test:** flip `ai_mode` manually in DB → conversation routes to `local-gemma-4-31b`; flip back → Claude.
+**`os8-3-2`: Resolver mode plumbing. (SHIPPED)**
+- `package.json`: version bump 0.3.1 → 0.3.2.
+- `routing.js`:
+  - New `VALID_MODES = ['proprietary', 'local']` constant, exported.
+  - New `getMode(db)` / `setMode(db, mode)`. `getMode` fails safe to `'proprietary'` when the setting is unset or holds a non-`local` value — a garbled row can never silently enable local mode.
+  - `getCascade(db, taskType, mode?)` — mode defaults to current `ai_mode` via `getMode`.
+  - `updateCascade(db, taskType, entries, mode?)` — manual-reorder UI path, scoped per mode.
+  - `generateCascade(db, taskType, mode='proprietary')` — symmetric mode filter replaces the os8-3-1 one-liner. `'proprietary'` excludes HTTP containers; `'local'` includes only them.
+  - `regenerateAll(db)` — iterates both modes. Skips regeneration of a mode that still has manual rows (per-mode scope instead of global).
+  - `_regenerateTaskType(db, taskType)` — refreshes both modes.
+  - Hard-fallback at the end of `resolve()`: under `ai_mode='local'`, returns a local chat family (`local-gemma-4-31b`) with `source='local_no_fallback'` instead of `claude-sonnet`. **Privacy promise held — never cloud-fall-back when local mode is active.** (Deviation from §4.2's "throw LOCAL_MODE_NO_FALLBACK" — `resolve()` stays total to avoid try/catch churn across ~20 call-sites; the HTTP dispatcher's launcher-unreachable toast surfaces naturally.)
+  - `_defaultConstraints()` now seeds a `'local'` pseudo-provider with `'api'` for every task (HTTP has no login concept).
+- `seeds.js`: backfill existing `model_api_constraints` settings rows to include the `'local'` provider.
+- `src/migrations/0.3.2-seed-local-cascade.js` (new): populates local cascade rows for every task type by calling `generateCascade(db, taskType, 'local')`. Idempotent via early-return when local rows already exist. Non-destructive to proprietary rows.
+- `src/routes/ai-registry.js`: new `GET /api/ai/routing/mode` and `PUT /api/ai/routing/mode` endpoints. The PUT validates against `VALID_MODES` and calls `setMode`. Broadcast of a `CUSTOM` `mode-switch` ag-ui event is deferred to Phase 4 (requires a global broadcaster — the current per-agent `state.responseClients` pattern doesn't cover the case of a setting change outside an active stream).
+- `tests/migrations/0.3.2-seed-local-cascade.test.js` (new): 6 tests covering local-cascade seed coverage, cap-based ordering (qwen3-coder-next > qwen3-coder-30b on coding), proprietary-row preservation, mode isolation, idempotency.
+- `tests/services/routing.test.js`: 9 new tests covering `getMode` defaults + fail-safe, `setMode` validation, mode-gated hard fallback (privacy assertion), mode-aware `generateCascade`, `_defaultConstraints` local-provider inclusion, `VALID_MODES` export.
+- **Acceptance proven end-to-end** via fresh-install verification: ai_mode=proprietary routes conversation→claude-sonnet, coding→gpt-codex; flipping ai_mode=local routes conversation→local-gemma-4-31b, coding→local-qwen3-coder-next; flipping back restores cloud; emptying the local cascade under ai_mode=local returns `source='local_no_fallback'` with `backendId='local'` (never a cloud backend).
+- **Status:** 350 tests pass (+15 from this PR). The one pre-existing `ignores agent override for jobs` failure from os8-3-1 is unchanged.
 
 **`os8-3-3`: Tool-call synthesis + jobs escalation.**
 - `cli-runner.js::createHttpProcess`: tool_calls delta → Claude stream-json synthesis; `tools` in request body.

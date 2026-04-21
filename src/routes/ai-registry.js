@@ -295,6 +295,33 @@ function createAIRegistryRouter(db) {
     }
   });
 
+  // --- Mode (Phase 3 §4.2) ---
+
+  router.get('/routing/mode', (req, res) => {
+    try {
+      res.json({ mode: RoutingService.getMode(db), validModes: RoutingService.VALID_MODES });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.put('/routing/mode', (req, res) => {
+    try {
+      const { mode } = req.body;
+      if (!RoutingService.VALID_MODES.includes(mode)) {
+        return res.status(400).json({ error: `Invalid mode: ${mode}. Expected one of: ${RoutingService.VALID_MODES.join(', ')}` });
+      }
+      RoutingService.setMode(db, mode);
+      // TODO(phase-4): broadcast a CUSTOM `mode-switch` ag-ui event to all open
+      // agent SSE streams so the UI re-renders model badges. Requires a global
+      // broadcaster that doesn't exist yet (per-agent state.responseClients is
+      // the only broadcast channel today).
+      res.json({ success: true, mode });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

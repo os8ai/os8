@@ -23,6 +23,7 @@ const BILLING_PATTERNS = {
 
 const TASK_TYPES = ['conversation', 'jobs', 'planning', 'coding', 'summary', 'image'];
 const PROVIDER_IDS = ['anthropic', 'google', 'openai', 'xai'];
+const VALID_MODES = ['proprietary', 'local'];
 const DEFAULT_EXHAUSTION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 const RoutingService = {
@@ -86,7 +87,25 @@ const RoutingService = {
       }
     }
 
-    // 3. Hard fallback: claude-sonnet via API
+    // 3. Hard fallback.
+    // Under ai_mode='local' we MUST NOT silently route to a cloud family —
+    // that's the privacy promise of local mode. Return a local chat family
+    // with source='local_no_fallback'; the HTTP dispatcher will surface
+    // "launcher unreachable" naturally if it can't serve the request.
+    // Note: this is a deviation from Phase 3 §4.2's "throw LOCAL_MODE_NO_FALLBACK"
+    // sketch — ~20 resolve() call-sites would need try/catch blocks, so keeping
+    // resolve() total (never throws) preserves the existing contract while still
+    // honoring the privacy promise.
+    const mode = this.getMode(db);
+    if (mode === 'local') {
+      return {
+        familyId: 'local-gemma-4-31b',
+        backendId: 'local',
+        modelArg: AIRegistryService.resolveModelArg(db, 'local-gemma-4-31b') || 'gemma-4-31B-it-nvfp4',
+        accessMethod: 'api',
+        source: 'local_no_fallback'
+      };
+    }
     return {
       familyId: 'claude-sonnet',
       backendId: 'claude',
@@ -144,44 +163,78 @@ const RoutingService = {
   },
 
   /**
-   * Get the cascade for a task type.
+   * Read the global ai_mode setting. Defaults to 'proprietary' when unset or
+   * when the value is not a valid mode — fail-safe so a garbled settings row
+   * can never silently enable local mode.
    * @param {object} db
-   * @param {string} taskType
-   * @returns {Array}
+   * @returns {'proprietary' | 'local'}
    */
-  getCascade(db, taskType) {
-    return db.prepare(
-      'SELECT * FROM routing_cascade WHERE task_type = ? ORDER BY priority ASC'
-    ).all(taskType);
+  getMode(db) {
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get('ai_mode');
+    return row?.value === 'local' ? 'local' : 'proprietary';
   },
 
   /**
-   * Update the cascade for a task type (user reordering).
+   * Set the global ai_mode. After writing, the caller typically wants to
+   * trigger regenerateAll to refresh auto-generated cascades — but this
+   * function only writes the setting; the API route orchestrates.
+   * @param {object} db
+   * @param {'proprietary' | 'local'} mode
+   */
+  setMode(db, mode) {
+    if (!VALID_MODES.includes(mode)) {
+      throw new Error(`Invalid ai_mode: ${mode}. Expected one of: ${VALID_MODES.join(', ')}`);
+    }
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)").run('ai_mode', mode);
+  },
+
+  /**
+   * Get the cascade for a task type under a specific mode.
+   * @param {object} db
+   * @param {string} taskType
+   * @param {'proprietary' | 'local'} [mode] - defaults to current ai_mode
+   * @returns {Array}
+   */
+  getCascade(db, taskType, mode) {
+    const m = mode || this.getMode(db);
+    return db.prepare(
+      'SELECT * FROM routing_cascade WHERE task_type = ? AND mode = ? ORDER BY priority ASC'
+    ).all(taskType, m);
+  },
+
+  /**
+   * Update the cascade for a task type + mode (user reordering).
    * @param {object} db
    * @param {string} taskType
    * @param {Array<{ family_id: string, access_method: string, enabled: boolean }>} entries
+   * @param {'proprietary' | 'local'} [mode] - defaults to current ai_mode
    */
-  updateCascade(db, taskType, entries) {
+  updateCascade(db, taskType, entries, mode) {
+    const m = mode || this.getMode(db);
     const update = db.transaction(() => {
-      db.prepare('DELETE FROM routing_cascade WHERE task_type = ?').run(taskType);
+      db.prepare('DELETE FROM routing_cascade WHERE task_type = ? AND mode = ?').run(taskType, m);
       const insert = db.prepare(
-        'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated) VALUES (?, ?, ?, ?, ?, 0)'
+        'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated, mode) VALUES (?, ?, ?, ?, ?, 0, ?)'
       );
       entries.forEach((entry, idx) => {
-        insert.run(taskType, idx, entry.family_id, entry.access_method || 'api', entry.enabled ? 1 : 0);
+        insert.run(taskType, idx, entry.family_id, entry.access_method || 'api', entry.enabled ? 1 : 0, m);
       });
     });
     update();
   },
 
   /**
-   * Generate cascade for a single task type based on preference.
+   * Generate cascade for a single task type + mode based on preference.
    * Creates login + API entries per family (login gets discounted cost).
+   * Mode filter is symmetric:
+   *   'proprietary' → non-HTTP containers only (cloud CLIs)
+   *   'local'       → HTTP containers only (os8-launcher)
    * @param {object} db
    * @param {string} taskType
+   * @param {'proprietary' | 'local'} [mode='proprietary']
    * @returns {Array<{ family_id: string, access_method: string, score: number, cost_display: number }>}
    */
-  generateCascade(db, taskType) {
+  generateCascade(db, taskType, mode = 'proprietary') {
     const preference = this.getPreference(db, taskType);
     const families = AIRegistryService.getFamilies(db);
     const capCol = `cap_${taskType === 'conversation' ? 'chat' : taskType}`;
@@ -199,12 +252,13 @@ const RoutingService = {
       if (cap <= 0) continue; // Skip families with no capability for this task
       const cost = f.cost_tier || 3;
       const container = AIRegistryService.getContainer(db, f.container_id);
-      // Phase 3 (os8-3-1): auto-generated cascades are proprietary-only.
-      // Local (HTTP) families only appear in cascades under mode='local', which
-      // os8-3-2 will generate via a mode-parameterized path. Excluding them here
-      // prevents `local-qwen3-coder-next` from showing up as the default `coding`
-      // primary on fresh installs where ai_mode='proprietary'.
-      if (container?.type === 'http') continue;
+      // Mode filter — proprietary excludes local, local excludes proprietary.
+      // Replaces the os8-3-1 one-liner that unconditionally skipped HTTP
+      // families (correct for proprietary, but meant local cascades couldn't
+      // be generated at all). os8-3-2 turns it into symmetric filtering.
+      const isHttp = container?.type === 'http';
+      if (mode === 'proprietary' && isHttp) continue;
+      if (mode === 'local' && !isHttp) continue;
       const provider = container ? AIRegistryService.getProvider(db, container.provider_id) : null;
       const constraint = constraints[provider?.id]?.[taskType] || 'both';
 
@@ -246,23 +300,31 @@ const RoutingService = {
   },
 
   /**
-   * Regenerate all cascades based on current preference.
+   * Regenerate all cascades based on current preference — once per mode.
+   * Per-mode behavior:
+   *   1. Delete auto-generated rows for that mode.
+   *   2. If any manual rows remain under that mode, skip regeneration for it
+   *      (preserves the user's customizations). The other mode still runs.
+   * This diverges from pre-Phase-3 behavior (single global skip) so a user
+   * who customized their proprietary cascade still gets auto-local seeds.
    * @param {object} db
    */
   regenerateAll(db) {
     const regen = db.transaction(() => {
-      db.prepare('DELETE FROM routing_cascade WHERE is_auto_generated = 1').run();
-      const hasCustom = db.prepare('SELECT COUNT(*) as cnt FROM routing_cascade').get().cnt > 0;
-      if (hasCustom) return;
+      for (const mode of VALID_MODES) {
+        db.prepare('DELETE FROM routing_cascade WHERE is_auto_generated = 1 AND mode = ?').run(mode);
+        const hasCustom = db.prepare('SELECT COUNT(*) as cnt FROM routing_cascade WHERE mode = ?').get(mode).cnt > 0;
+        if (hasCustom) continue;
 
-      for (const taskType of TASK_TYPES) {
-        const cascade = this.generateCascade(db, taskType);
         const insert = db.prepare(
-          'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated) VALUES (?, ?, ?, ?, 1, 1)'
+          'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated, mode) VALUES (?, ?, ?, ?, 1, 1, ?)'
         );
-        cascade.forEach((entry, idx) => {
-          insert.run(taskType, idx, entry.family_id, entry.access_method);
-        });
+        for (const taskType of TASK_TYPES) {
+          const cascade = this.generateCascade(db, taskType, mode);
+          cascade.forEach((entry, idx) => {
+            insert.run(taskType, idx, entry.family_id, entry.access_method, mode);
+          });
+        }
       }
     });
     regen();
@@ -314,17 +376,19 @@ const RoutingService = {
     }
   },
 
-  /** Regenerate cascade for a single task type */
+  /** Regenerate cascade for a single task type — both modes. */
   _regenerateTaskType(db, taskType) {
     const regen = db.transaction(() => {
-      db.prepare('DELETE FROM routing_cascade WHERE task_type = ?').run(taskType);
-      const cascade = this.generateCascade(db, taskType);
-      const insert = db.prepare(
-        'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated) VALUES (?, ?, ?, ?, 1, 1)'
-      );
-      cascade.forEach((entry, idx) => {
-        insert.run(taskType, idx, entry.family_id, entry.access_method);
-      });
+      for (const mode of VALID_MODES) {
+        db.prepare('DELETE FROM routing_cascade WHERE task_type = ? AND mode = ?').run(taskType, mode);
+        const cascade = this.generateCascade(db, taskType, mode);
+        const insert = db.prepare(
+          'INSERT INTO routing_cascade (task_type, priority, family_id, access_method, enabled, is_auto_generated, mode) VALUES (?, ?, ?, ?, 1, 1, ?)'
+        );
+        cascade.forEach((entry, idx) => {
+          insert.run(taskType, idx, entry.family_id, entry.access_method, mode);
+        });
+      }
     });
     regen();
   },
@@ -388,6 +452,12 @@ const RoutingService = {
         }
       }
     }
+    // 'local' is an HTTP pseudo-provider — no login, no API keys. Every task
+    // is accessed via 'api' (the access_method convention for HTTP families).
+    defaults.local = {};
+    for (const tt of TASK_TYPES) {
+      defaults.local[tt] = 'api';
+    }
     return defaults;
   },
 
@@ -399,7 +469,8 @@ const RoutingService = {
 
   BILLING_PATTERNS,
   TASK_TYPES,
-  PROVIDER_IDS
+  PROVIDER_IDS,
+  VALID_MODES
 };
 
 module.exports = RoutingService;
