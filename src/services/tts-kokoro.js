@@ -85,13 +85,23 @@ async function getVoices(_apiKey) {
   // Kokoro-FastAPI returns { voices: [<voice_id>, ...] } — flat string list,
   // unlike ElevenLabs which returns rich voice metadata. Normalize.
   const list = Array.isArray(data?.voices) ? data.voices : (Array.isArray(data) ? data : []);
-  return list.map(voiceId => ({
-    voiceId,
-    name: humanizeVoiceId(voiceId),
-    category: kokoroCategoryOf(voiceId),
-    labels: kokoroLabelsOf(voiceId),
-    previewUrl: null
-  }));
+  return list.map(voiceId => {
+    const stem = humanizeVoiceId(voiceId);
+    const category = kokoroCategoryOf(voiceId);
+    // Suffix the language category for disambiguation. Kokoro borrowed several
+    // voice names from OpenAI's conventions (am_echo, am_onyx, af_alloy,
+    // af_nova) so a bare "Echo" in the picker is ambiguous when the user
+    // also has OpenAI's voices in memory. "Echo (American)" is unambiguous.
+    // "Other"-category voices keep the bare stem.
+    const name = category && category !== 'Other' ? `${stem} (${category})` : stem;
+    return {
+      voiceId,
+      name,
+      category,
+      labels: kokoroLabelsOf(voiceId),
+      previewUrl: null
+    };
+  });
 }
 
 /**

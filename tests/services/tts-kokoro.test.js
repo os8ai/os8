@@ -80,13 +80,30 @@ describe('tts-kokoro — getVoices (mocked fetch)', () => {
     expect(voices).toHaveLength(3);
     expect(voices[0]).toEqual({
       voiceId: 'af_bella',
-      name: 'Bella',
+      name: 'Bella (American)',  // category suffixed for disambiguation
       category: 'American',
       labels: { gender: 'female' },
       previewUrl: null
     });
     expect(voices[2].category).toBe('British');
+    expect(voices[2].name).toBe('Emma (British)');
     expect(voices[2].labels.gender).toBe('female');
+  });
+
+  it('disambiguates names that collide with OpenAI voice names', async () => {
+    // The reason we suffix the category at all: Kokoro borrowed several voice
+    // names from OpenAI (am_echo, am_onyx, af_alloy, af_nova). Without the
+    // suffix, the picker would show a bare "Echo" identical to OpenAI's Echo.
+    global.fetch = vi.fn(async (url) => {
+      if (url.endsWith('/api/status/capabilities')) {
+        return { ok: true, json: async () => ({}) };
+      }
+      if (url.endsWith('/v1/audio/voices')) {
+        return { ok: true, json: async () => ({ voices: ['am_echo', 'am_onyx', 'af_nova'] }) };
+      }
+    });
+    const voices = await Kokoro.getVoices();
+    expect(voices.map(v => v.name)).toEqual(['Echo (American)', 'Onyx (American)', 'Nova (American)']);
   });
 
   it('throws a clear error when Kokoro returns non-OK', async () => {
