@@ -1,184 +1,157 @@
-# Local Models for OS8 — End-to-End Implementation Plan
+# Local Models for OS8 — Plan v2
 
-**Status:** v1.2 (2026-04-19) — Phase 1 shipped (end-to-end verified against Gemma-4-31B on vLLM).
-**Scope:** Add a "Local Models" mode to OS8 that routes all AI tasks (chat, tools, coding, summary, image-gen, TTS, vision) through the open-source `os8-launcher` instead of proprietary cloud APIs.
+**Status:** v2.0 (2026-04-21) — rewrite on top of the shipped Phase 1–3 + 2B work.
 
----
-
-## Phase 1 as-shipped (2026-04-19)
-
-Acceptance met: user pins an agent's family to `local-gemma-4-31b`, sends a message, and the stream renders in the UI with Gemma-4-31B responding from the user's local GPU.
-
-**Landed in launcher (`os8-launcher/src/api.py`):**
-- `GET /api/status/capabilities` — returns `{task_type: {model, base_url, model_id}}` derived from the currently-running backend + a small eligibility table. Composes cleanly with the Ports tab (`/api/ports`, committed concurrently in `59eca3d`) — if the user overrides vLLM's port, the `base_url` in the capabilities payload reflects it automatically.
-
-**Landed in OS8:**
-- `src/services/backend-adapter.js` — 5th `BACKENDS` entry `local` with `type: 'http'`, no-op `buildArgs`/`prepareEnv`, OpenAI-shape `parseResponse`/`parseStreamJsonOutput`.
-- `src/services/launcher-client.js` (new) — thin HTTP wrapper: `getStatus`, `getCapabilities`, `listAvailableModels`, `isReachable`.
-- `src/services/cli-runner.js` — `createProcess` dispatches HTTP backends to a new `createHttpProcess` that POSTs to `<base_url>/v1/chat/completions` and synthesizes Claude-shape stream-json (`stream_event`/`content_block_delta` → `result`) so `message-handler.js`'s existing stream loop consumes it unchanged. `sendTextPromptHttp()` parallel to `sendTextPrompt()`.
-- `src/assistant/message-handler.js` — one call-site addition to pass `model`/`taskType` through to `createProcess`; HTTP backend failures now use "backend unavailable" phrasing so the Chat.jsx regex doesn't reset `setupComplete` on launcher-down.
-- `src/services/routing.js` — (a) `isAvailable` short-circuits `container.type === 'http'` past provider/API-key gating; (b) `generateCascade` stops skipping HTTP containers for missing `api_key_env`; (c) **agent override is now honored for every task type, not just conversation** (families that aren't listed in their `eligible_tasks` are still skipped). Without this, pinning an agent to `local-gemma-4-31b` silently re-routed to Claude Opus whenever the flow classified as `planning`.
-- `src/routes/settings-api.js` — `/api/backend/auth-status/:backend` returns `ready: true` for HTTP containers (no API key, no login).
-- `src/db/seeds.js` — provider `local`, container `local` (type `http`, id matches the BACKENDS key), family `local-gemma-4-31b` with conservative caps and `eligible_tasks='conversation,summary,planning'`. Feature flag `local_models_enabled` seeded at `'0'` but dormant — no code reads it yet; Phase 4 will wire the onboarding fork + UI toggle.
-
-**Known out-of-scope (deferred):**
-- OpenAI `tool_calls` passthrough — was a Phase-1 stretch goal; deferred to Phase 3 when qwen3-coder (a tool-trained model) lands. Gemma-4-31B isn't tool-trained, so there's nothing to prove.
-- Pre-existing UI bugs surfaced during testing (`state.working` wrapper divergence; "Working…" stale indicator on the subconscious-direct path) — not introduced by this work; filed for separate follow-up.
-
-**Composition with concurrent work:**
-- Ports tab feature (`os8-launcher` `59eca3d`) shipped at the same time as the `/api/status/capabilities` endpoint. The two compose without any coordination: the capabilities payload reads whatever port the running backend was started with, so port overrides are transparent to OS8.
+Supersedes v1.x. The historical phase docs (`LOCAL_MODELS_PHASE_2.md`, `LOCAL_MODELS_PHASE_2B.md`, `LOCAL_MODELS_PHASE_3.md`) remain as audit records of what shipped; this doc is the current canonical roadmap.
 
 ---
 
-## Background
+## What this is now
 
-- OS8 today runs on four cloud-backed CLI backends: Claude, Gemini, Codex, Grok. Every AI task (conversation, jobs, planning, coding, summary, image) flows through `src/services/routing.js` → `backend-adapter.js` → a spawned CLI.
-- `os8-launcher` is a separate open-source project (same owner) at `~/Claude/os8-launcher`. It runs local open-source models on NVIDIA hardware via Docker + vLLM / llama.cpp / ollama / ComfyUI / Kokoro / fish-speech. It exposes OpenAI-compatible HTTP endpoints on per-backend ports, plus a FastAPI control plane on `:9000`.
-- There is **no** pre-existing local-backend code inside the OS8 repo. A stub placeholder exists in os8-launcher at `clients/os8/manifest.yaml`, but it's just a manifest shell. We start the OS8-side integration from scratch.
-- Launcher's own roadmap already names "OS8 Bridge" as Milestone 2 (see `os8-launcher/VISION.md`).
+Three opinionated local-model slots. Each powers one capability. One global toggle ("Local mode") in OS8 Settings flips them all on or off together. The os8-launcher's resident pool (shipped Phase 2) auto-loads and pins all three when local mode is active; they stay memory-resident for instant-response use.
 
-## 1. Integration Shape
+| Slot | Model | Size | What it powers in OS8 |
+|------|-------|------|-----------------------|
+| **Chat** | `qwen3-6-35b-a3b` | 36 GB | conversation, jobs, planning, coding, summary, vision (multimodal input) |
+| **Image** | `flux1-kontext-dev` | 18 GB | reference-image conditioned image generation + editing |
+| **Voice** | `kokoro-v1` | 0.3 GB | text-to-speech |
 
-Two processes, two planes:
+Resident footprint: ~54 GB + KV margin ≈ 70 GB on the 128 GB Spark. Plenty of headroom.
 
-- **Control plane** → `http://localhost:9000/api/*` (launcher FastAPI). Used to start/stop models, discover what's running, download weights, check health.
-- **Data plane** → OpenAI-compatible endpoints on per-backend ports. All chat/TTS/image backends already expose `POST /v1/chat/completions` (or `/v1/audio/speech`, or ComfyUI's `/prompt`).
-  - vLLM: 8000
-  - llama.cpp: 8080
-  - ollama: 11434
-  - ComfyUI: 8188
-  - Kokoro TTS: 8880
-  - fish-speech TTS: 8080
-  - Vision (Qwen3.6): 9006
+**Why just these three, one choice each:**
+- Real-world testing on the Spark has confirmed these are the three that actually work well for OS8's use cases from the launcher's current inventory.
+- Running many models simultaneously on a home machine means more swap thrash than value. Opinionated defaults beat infinite flexibility for the default user.
+- Dropdown menus with additional options are a later enhancement; for now, each slot has exactly one model.
 
-OS8 becomes a client of both planes: it talks to the control plane to orchestrate availability, and to the data plane for actual inference. **No CLI spawning** — pure HTTP. This is a simpler path than the existing CLI backends.
+---
 
-## 2. Model → Task Mapping
+## Architecture
 
-Default cascades when Local mode is active:
+**OS8** = UI + orchestrator. Picks one model per slot (currently hardcoded to the table above), calls the launcher's `/api/serve/ensure` with `resident=true` for each slot on mode-flip or startup, then treats them as always-available.
 
-| Task | Primary | Fallback | Notes |
-|------|---------|----------|-------|
-| **conversation** | `gemma-4-31B-it-nvfp4` (32 GB, vLLM) | `gemma-4-E2B-it` (10 GB) | Good quality, fits alongside others |
-| **coding** | `qwen3-coder-30b` (17 GB, ollama) | `qwen3-coder-next` (85 GB) | 30B default keeps VRAM free |
-| **jobs / tools** | `qwen3-coder-30b` | `qwen3-coder-next` | 30B resident by default; auto-escalate to 85B on malformed tool calls |
-| **planning** | `gemma-4-31B-it-nvfp4` | — | Instant; already resident. Nemotron-120b available as optional advanced download |
-| **summary** | `gemma-4-E2B-it` | `gemma-4-31B-it-nvfp4` | Small model is fine and fast |
-| **image-gen** | `flux1-schnell` (34 GB, ComfyUI) | `flux2-klein-4b` | Schnell fast, Klein lighter |
-| **image-edit** | `flux1-kontext-dev` | — | Unique to Kontext |
-| **vision** | `qwen3-6-35b-a3b` | — | Multimodal input |
-| **TTS** | `kokoro-v1` (0.3 GB) | `fish-s2-pro` | Kokoro tiny/54 voices; Fish for cloning |
-| **STT** | whisper.cpp (already in OS8) | — | No launcher work needed |
+**os8-launcher** = serving plane. Runs the three containers/processes, pins them as resident so LRU eviction never touches them, exposes OpenAI-shape endpoints on per-backend ports, reports status via `/api/status/capabilities` and `/api/ai/local-status` (OS8-side).
 
-Cascades use OS8's standard escalation pattern: cheap-and-resident first, heavy-and-accurate on failure. For jobs, the 30B handles routine cases; malformed tool calls auto-escalate to the 85B. Nemotron-120b stays in `config.yaml` but is excluded from the default download and resident set because its 30–60 min NIM cold start is a first-run UX killer — users opt in via Settings → Advanced Models.
+**Flow when local mode is on:**
+1. User is in Settings → Local mode = on.
+2. OS8 knows the three slot assignments.
+3. OS8 calls ensureModel for each (resident=true). Launcher starts them if not already running, or no-ops if they are.
+4. Launcher's Phase-2 concurrent-serving holds all three in memory simultaneously.
+5. OS8 routing:
+   - Every text task (chat, jobs, planning, coding, summary) → chat slot model.
+   - Any task with image input → chat slot (Qwen 3.6 is multimodal).
+   - Image generation → image slot model (requires reference image; see UX note below).
+   - TTS → voice slot model via the `tts.js` facade.
+6. A call to any of the three is a pure data-plane POST to its launcher port. No cold-load latency, no "launcher has no capability" errors.
 
-## 3. Concurrent Serving (Resident Pool)
+**When user flips local mode OFF:**
+- OS8 stops calling local endpoints. Routing switches back to the proprietary cascade (Claude/Gemini/OpenAI/Grok via CLIs).
+- Launcher keeps the residents running — user can manually stop them via the launcher dashboard if they want the VRAM back. OS8 doesn't force-stop the launcher because other tools (Open WebUI, aider, etc.) might be using it.
 
-Launcher today = one backend at a time (single `backend:` entry in `~/.config/os8-launcher/state.yaml`). OS8 switches models constantly, so the launcher gains a **resident pool** mode: multiple backends run simultaneously on distinct ports, with OS8 selecting the right port per task.
+---
 
-Default resident set for DGX Spark (128 GB unified memory):
+## Current state (as of 2026-04-21)
 
-- Gemma-4-31B chat (32 GB) — always resident
-- Qwen3-coder-30b (17 GB) — always resident (serves both `coding` and `jobs`)
-- Kokoro TTS (0.3 GB) — always resident
-- Flux1-schnell (34 GB) — resident; evicted only when a 120B+ model is explicitly requested
+**Shipped and working:**
+- Launcher concurrent serving, port allocation, `/api/serve/ensure`, `/api/serve/touch`, LRU eviction, resident-pool auto-start (commits `8f23276..7246a06` on `os8-launcher@main`).
+- OS8 routing mode (`ai_mode = 'local' | 'proprietary'`), family seeds, cascade-by-mode, vision-swap on attachments, tool-call synthesis, local-status endpoint.
+- OS8 `ensureModel` wiring — every chat call goes through ensure → poll-if-loading → POST → touch.
+- Kokoro TTS provider — full parity with ElevenLabs/OpenAI (three-way picker, default voices, per-agent voices, sample playback via on-demand generation).
+- ComfyUI image-gen — workflow templates + client. **Currently wired to `flux1-schnell` (no reference needed).** Needs swap to `flux1-kontext-dev`.
+- Qwen3-6-35b-a3b family seeded for vision + conversation — **needs eligible_tasks widened to cover coding, jobs, planning, summary too.**
+- 471 passing tests. Pre-start hook prevents the better-sqlite3 ABI mismatch bite.
 
-Total ~83 GB baseline, ~45 GB headroom for swaps.
+**Gap against the v2 triplet:**
 
-**Configurable resident set.** Users with less VRAM set `resident: [chat]` (or any subset) in `config.yaml`. Anything outside the resident set hot-swaps on demand; LRU eviction kicks in under VRAM pressure. DGX Spark users get the zero-latency experience; commodity-GPU users get a working-but-swappier experience.
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | `local-flux1-schnell` is the wired image family; v2 wants `flux1-kontext-dev`. | Add family seed for `local-flux1-kontext-dev`, update `imagegen.js` family→provider map, swap the workflow template from schnell to kontext (Kontext workflow already exists in the launcher client — port it). |
+| 2 | `local-qwen3-6-35b-a3b` has `eligible_tasks='conversation'`. Under v2 it's the text workhorse. | Expand to `conversation,summary,planning,coding,jobs`. Bump cap scores so it wins cascades for those tasks. |
+| 3 | Unused seeded families (`local-gemma-4-31b`, `local-gemma-4-e2b`, `local-qwen3-coder-30b`, `local-qwen3-coder-next`, `local-flux1-schnell`, `local-kokoro-v1`). Keep kokoro, drop the rest. | Leave rows in place for rollback safety, but set their `eligible_tasks` to empty or their caps to zero so they never win. Clean removal is a later migration. |
+| 4 | Launcher `config.yaml`: `resident: []` today. Needs the chosen triplet. | Set `resident: [chat, image, tts]` with `roles:` updated so `chat: qwen3-6-35b-a3b`, `image: flux1-kontext-dev`, `tts: kokoro-v1`. One file change. |
+| 5 | No OS8 Settings UI for local mode on/off. Currently set via SQL. | Add a toggle in Settings → AI, plus a three-slot status panel showing which models are serving (read from `/api/ai/local-status`). |
+| 6 | `imagegen.js::generateWithComfyUI` doesn't handle reference images. | Extend `generateWithComfyUI` to pass reference through the Kontext workflow (LoadImage node upload via `POST /upload/image`, then graph with VAEEncode + ReferenceLatent). |
+| 7 | When flipping to local mode, the three models take 30-90s to become resident. No UX indication of progress. | Add a startup banner: "Starting local services: chat ✓, image (loading 42s), voice ✓" reading from `/api/ai/local-status`. |
 
-## 4. Phased Plan
+**Bugs to fix along the way (flagged in flight):**
+- **MODEL_LOAD_TIMEOUT at 60s** in `createHttpProcess` is too tight for cold vLLM starts. Either bump to 120s or rely on resident auto-start making this rare enough not to matter. If residents are always pre-loaded, the 60s timeout only bites when someone force-stopped a model mid-session.
+- **Loading banner SSE plumbing** deferred from Phase 2B — still needs wiring if we want per-call "loading…" banners. With resident auto-start, this becomes less critical.
 
-### Phase 1 — End-to-end skeleton (one model, prove the pipe)
+---
 
-Goal: a user selects "Local Models", chats with Gemma-4-31B, and it works.
+## Plan — phased, small
 
-**Launcher side:**
-- Keep single-model serving as-is for now.
-- Add `GET /api/status/capabilities` returning `{task_type: {model, base_url, model_id}}` so OS8 can discover what's usable per task.
+### Phase A: Align the defaults (quick — half a day)
 
-**OS8 side:**
-- `src/services/backend-adapter.js`: add `local` backend (5th entry). No CLI spawn — `buildArgs`/`prepareEnv` are no-ops; a new HTTP path does `POST http://localhost:<port>/v1/chat/completions` with OpenAI schema. Reuse `parseResponseLine()` (NDJSON is already handled for Codex/Grok).
-- `src/services/cli-runner.js`: add `sendTextPromptHttp()` parallel to `sendTextPrompt()`; dispatch when `container.type === 'http'`.
-- `src/services/launcher-client.js` (new): thin client for `http://localhost:9000/api/*` — `getStatus()`, `ensureModel(task)`, `listAvailableModels()`.
-- DB seed: new provider `local`, container `launcher` (type `http`), initial family `local-gemma-4-31b` with `eligible_tasks='conversation,summary,planning'`.
-- Settings: "Local Models" toggle behind a feature flag.
+Goal: with zero UI changes, the three chosen models are what you get when ai_mode=local.
 
-**Acceptance:** manually set an agent's family to `local-gemma-4-31b`, send a message, stream renders correctly.
+1. Launcher `config.yaml`:
+   - Update `roles.chat` to `{ model: qwen3-6-35b-a3b, backend: vllm }`.
+   - Update `roles.image-gen` to `{ model: flux1-kontext-dev, backend: comfyui }` (new role or repurpose).
+   - Set `resident: [chat, image-gen, tts]`.
+2. OS8 seeds migration:
+   - Add `local-flux1-kontext-dev` family (eligible_tasks='image', supports_vision=0, launcher_model='flux1-kontext-dev', launcher_backend='comfyui').
+   - Update `local-qwen3-6-35b-a3b`: eligible_tasks='conversation,summary,planning,coding,jobs', cap scores bumped (cap_chat=4, cap_coding=3, cap_jobs=3, cap_planning=3, cap_summary=3).
+   - Zero out caps / clear eligible_tasks on the other local families so they never win cascades (keeps rows for rollback).
+3. OS8 imagegen.js:
+   - Add `local-flux1-kontext-dev` to `_familyToProvider` and `_familyToProviderId`.
+   - New workflow template `comfyui-workflows/flux-kontext-edit.js` (adapt from the launcher's image-gen client).
+   - Extend `generateWithComfyUI` to upload a reference via `POST /upload/image` and build the Kontext graph when the family is kontext-dev.
+   - Reject calls without a reference with a clear error (`Kontext requires a reference image`).
+4. Tests: migration test for the new family row; extend imagegen-image.test.js with a Kontext-workflow shape test.
 
-### Phase 2 — Launcher concurrent serving (resident pool)
+**Done when:** user flips `ai_mode=local`, launcher auto-starts all three, chat/image/voice all work. No UI yet.
 
-Goal: chat + code + TTS + image all warm simultaneously; switching between tasks is instant.
+### Phase B: Settings UI — three-slot status + local-mode toggle (half a day)
 
-- Launcher `state.py`: schema becomes `backends: [{name, model, port, ...}]` (list).
-- Launcher `backends.py`: `start()` accepts `--alongside` flag; port allocator assigns distinct ports if default is taken.
-- Launcher `/api/status`: returns list of running backends.
-- New endpoint `POST /api/serve/ensure` — idempotent "make sure this model is running"; returns port; no-op if already up.
-- Launcher `config.yaml`: new `resident: [chat, coder, tts, image-gen]` key controls the default resident set. Eviction is LRU by task, bounded by a configurable VRAM budget.
-- OS8 `launcher-client.js`: `ensureModel(familyId)` calls `/api/serve/ensure` before each request when needed.
+Goal: user never has to touch SQL again.
 
-**Acceptance:** start chat model, start coding model without stopping chat; both reachable simultaneously; LRU eviction works under VRAM pressure.
+1. Add `ai_mode` toggle to Settings → AI panel.
+2. New "Local services" section with three rows (Chat / Image / Voice), each showing:
+   - Current model (read-only for now).
+   - Live status: Serving ✓ / Loading (polling /api/ai/local-status) / Offline.
+3. On toggle-flip to local mode: call ensureModel for each slot with resident=true via a new `/api/ai/local-mode/start` endpoint, show a progress banner.
+4. On toggle-flip off: no force-stop (power users may keep launcher running for other tools); just switch OS8 routing back.
 
-### Phase 3 — Task coverage
+### Phase C: Reference-image UX in agents (variable)
 
-Goal: every task type in OS8 runs locally.
+Most agent image-gen calls already carry context (agent portrait, scene setup). Audit the call-sites to make sure they attach a reference. The ones that don't either get a reasonable default (agent's own portrait) or surface the "Kontext needs a reference" error.
 
-- Seed remaining families per §2 table with correct `cap_*` scores and `eligible_tasks`.
-- Routing cascades: add a `mode` column to the cascade table (`proprietary` | `local`). Resolver reads the global mode setting unless the agent has a per-agent override (see Phase 4).
-- **Jobs escalation:** cascade order `local-qwen3-coder-30b` → `local-qwen3-coder-next`; routing auto-escalates when tool-call parsing fails.
-- **TTS:** new `tts-kokoro.js` and `tts-fish.js` modules matching the existing `tts-openai.js` interface (exports `DEFAULTS`, `getVoices`, `PROVIDER_ID`). Plug into `PROVIDERS` map in `src/services/tts.js`. Both hit launcher ports directly.
-- **Image gen:** extend `resolveImageProviders()` in `src/services/imagegen.js` to recognize local families → POST to ComfyUI (`/prompt` with workflow JSON, not OpenAI-compat — needs a small ComfyUI client).
-- **Vision:** route multimodal agents to `qwen3-6-35b-a3b` via the vision backend port (9006).
-- **STT:** no work — `src/services/whisper.js` already runs locally.
+Specific call-sites to review: sim-portrait.js, agent-life (scene snapshots), any imagegen calls in skills.
 
-### Phase 4 — Onboarding fork + mode controls
+### Phase D: Dropdowns per slot (later, when we have more than one model per slot)
 
-Goal: a new user picks "Proprietary" or "Local" and everything Just Works. Power users can override per agent.
+Deferred until there's a second viable option for any slot. If you later validate (say) Fish Speech for voice, we add it to the voice slot's dropdown. Until then, one-choice-each is fine.
 
-**Onboarding (detect + guide):**
-- `src/renderer/onboarding.js`: insert **Step 2.0: Mode Selection** before backend detection. Two cards: *Proprietary Models* (current flow) / *Local Models*.
-- If Local selected, run a **preflight check**:
-  - Is `~/Claude/os8-launcher/` present?
-  - Is Docker installed and running?
-  - Is the NVIDIA Container Toolkit present? Is a GPU visible?
-  - Is launcher API responsive on `:9000`?
-- For each failing check, surface an actionable panel: the exact command to run (copy-paste-ready) and a link to the launcher's install docs. Once all checks pass, OS8 takes over — verifies launcher version, polls `/api/status/capabilities`, offers to download any missing resident-set models via `/api/models/{name}/download`.
-- Skip Steps 2–5 of the proprietary flow (no API keys, no voice provider auth).
+### Phase E: Launcher "OS8 support mode" (later, optional)
 
-**Mode controls (global default + per-agent override):**
-- Settings: persistent **Mode** switch (Proprietary / Local). Drives the global default.
-- Agent config: **Mode** field with three values — "Use global default" (default), "Force Proprietary", "Force Local". Routing resolver reads the agent override first, falls back to global.
-- Use case: a private journal agent can be pinned to Local regardless of global mode; a heavy-reasoning agent can be pinned to Proprietary even when the global is Local.
+If the launcher dashboard's multi-persona UX starts feeling confusing in practice, split it into two modes at the top-level: "OS8 support mode" (shows only the three OS8 slots + status) and "Power user" (current dashboard). Not urgent; revisit after Phase B ships and we see how it feels.
 
-### Phase 5 — Polish
+---
 
-- Model discovery auto-sync: when launcher's `config.yaml` changes, OS8 re-seeds families via control-plane poll.
-- Error UX: distinguish "launcher not running", "model not downloaded", "model loading (wait)", "VRAM full" as separate toasts.
-- Offline indicator: "Running locally" badge in the UI.
-- Advanced Models panel in Settings: opt-in download for Nemotron-120b (with explicit warning about 30–60 min cold start) and other heavy models excluded from the default set.
-- Docs: user-facing `docs/local-models.md`, launcher README cross-link.
-- Future work trigger: if onboarding telemetry shows high abandonment at the preflight step, promote install to a bundled auto-installer for Linux.
+## Design decisions / trade-offs (recorded)
 
-## 5. Key Integration Points (file:line)
+- **Qwen3-6-35b-a3b for coding**: seeded `cap_coding=2` in Phase 3 because qwen3-coder-30b (cap=4) was the coding specialist. We accept the drop in coding quality in exchange for fewer concurrent models and unified chat/code/vision. If it proves painful we can swap qwen3-coder-30b into the chat slot or add a fourth "coder" slot.
+- **Kontext requires references**: callers without a reference image get a clear error. Matches the actual capability of the model; any workaround (blank canvas) would produce garbage.
+- **Launcher keeps residents running after OS8 flips off local mode**: conservative — other tools may be using the launcher (Open WebUI, aider) and we shouldn't unilaterally stop their models.
+- **OS8 is source of truth for the three choices, not the launcher**: avoids bidirectional sync complexity. Launcher's `resident:` config is where the assignment physically lives, but OS8 owns the picker and just writes through.
 
-**OS8 side (where changes land):**
-- `src/services/backend-adapter.js:74–691` — add 5th `BACKENDS` entry
-- `src/services/cli-runner.js:281+` — add HTTP dispatch path
-- `src/services/routing.js:36–92` — resolver reads global mode + per-agent override; local cascade generator
-- `src/services/ai-registry.js:6–201` — query path; schema unchanged
-- `src/db/schema.js:597–659` — add `mode` column to cascade table; add `mode_override` column to agents table
-- `src/db/seeds.js:9–83` — add local provider/container/families
-- `src/services/tts.js:11–14` — add Kokoro/fish to `PROVIDERS` map
-- `src/services/imagegen.js:211–234` — extend `resolveImageProviders()` for ComfyUI
-- `src/renderer/onboarding.js:14–21` — insert mode-select + preflight steps
-- `src/renderer/settings.js` — global Mode switch + per-agent override UI
+---
 
-**Launcher side (where changes land):**
-- `src/state.py:34–55` — backend entry becomes list
-- `src/backends.py:515–750` — lifecycle supports concurrent backends; LRU eviction
-- `src/api.py:267` — `/api/status` returns list; new `/api/status/capabilities`, `/api/serve/ensure`
-- `config.yaml` — new `resident:` key for default resident set
+## Out of scope (explicit non-goals for v2)
 
-## 6. Immediate Next Steps
+- **Multi-choice dropdowns per slot.** One model per slot for now.
+- **Per-agent override of the local triplet.** All agents in local mode use the same three. Per-agent model routing stays available via agent.model pinning but requires SQL.
+- **Auto-sync of launcher config.yaml changes.** Launcher is the source of truth for what models *can* be served; OS8 knows which subset is active via its own seeds. If a new model lands in config.yaml, it appears after a manual OS8 seed update.
+- **Image-edit as a distinct task.** Kontext does both generation and editing with the same workflow; no separate code path.
+- **Fish Speech, gemma, qwen3-coder-*, flux1-schnell, flux1-dev, fastwan, wan.** All remain in the launcher's config for power users who want them via the dashboard; OS8 ignores them.
+- **Phase 4 onboarding fork and Phase 5 polish from the old plan.** Replaced by Phase B (toggle in existing Settings) and ongoing iteration.
 
-Start with **Phase 1**: single-model HTTP backend working end-to-end. That's the riskiest part (proving OpenAI-compat path + streaming + tool-use parity) and everything else builds on it. Concrete task list with file-level changes on green light.
+---
+
+## Historical phase docs (preserved for audit)
+
+- `LOCAL_MODELS_PHASE_2.md` — concurrent serving design (launcher).
+- `LOCAL_MODELS_PHASE_2B.md` — OS8 ensureModel integration.
+- `LOCAL_MODELS_PHASE_3.md` — task coverage (families, TTS, image, vision, tool calls).
+
+These describe what shipped. This doc describes where we're going next.
