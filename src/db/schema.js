@@ -630,6 +630,9 @@ function createSchema(db) {
       eligible_tasks TEXT DEFAULT NULL,
       is_default INTEGER DEFAULT 0,
       display_order INTEGER DEFAULT 0,
+      launcher_model TEXT,
+      launcher_backend TEXT,
+      supports_vision INTEGER DEFAULT 0,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -699,7 +702,8 @@ function createSchema(db) {
       access_method TEXT NOT NULL DEFAULT 'api',
       enabled INTEGER DEFAULT 1,
       is_auto_generated INTEGER DEFAULT 1,
-      UNIQUE(task_type, priority)
+      mode TEXT NOT NULL DEFAULT 'proprietary',
+      UNIQUE(task_type, mode, priority)
     );
   `);
 

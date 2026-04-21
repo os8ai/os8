@@ -199,6 +199,12 @@ const RoutingService = {
       if (cap <= 0) continue; // Skip families with no capability for this task
       const cost = f.cost_tier || 3;
       const container = AIRegistryService.getContainer(db, f.container_id);
+      // Phase 3 (os8-3-1): auto-generated cascades are proprietary-only.
+      // Local (HTTP) families only appear in cascades under mode='local', which
+      // os8-3-2 will generate via a mode-parameterized path. Excluding them here
+      // prevents `local-qwen3-coder-next` from showing up as the default `coding`
+      // primary on fresh installs where ai_mode='proprietary'.
+      if (container?.type === 'http') continue;
       const provider = container ? AIRegistryService.getProvider(db, container.provider_id) : null;
       const constraint = constraints[provider?.id]?.[taskType] || 'both';
 

@@ -47,9 +47,18 @@ function seedData(db) {
     insertFamily.run('grok', 'grok', 'Grok', 'Grok', 'grok-4-0709', 1, 0);
     insertFamily.run('grok-fast', 'grok', 'Grok Fast', 'Grok Fast', 'grok-4-fast-reasoning', 0, 1);
     insertFamily.run('grok-code-fast', 'grok', 'Code Fast', 'Grok Code Fast', 'grok-code-fast-1', 0, 2);
-    // Local-only family. cli_model_arg is the launcher's model name — vLLM serves it with
-    // --served-model-name so this is exactly what /v1/chat/completions expects.
-    insertFamily.run('local-gemma-4-31b', 'local', 'Gemma-4-31B', 'Gemma 4 31B (local)', 'gemma-4-31B-it-nvfp4', 0, 0);
+    // Local-only families served by os8-launcher. cli_model_arg is the launcher's model
+    // name — vLLM serves under --served-model-name so this is exactly what
+    // /v1/chat/completions expects. For ollama-served families, the launcher translates
+    // to the ollama tag on its side. TTS/image-gen families don't use cli_model_arg at
+    // runtime (their dispatch paths go through tts.js / imagegen.js, not the chat route).
+    insertFamily.run('local-gemma-4-31b',      'local', 'Gemma-4-31B',      'Gemma 4 31B (local)',      'gemma-4-31B-it-nvfp4', 0, 0);
+    insertFamily.run('local-gemma-4-e2b',      'local', 'Gemma-4-E2B',      'Gemma 4 E2B (local)',      'gemma-4-E2B-it',       0, 3);
+    insertFamily.run('local-qwen3-coder-30b',  'local', 'Qwen3-Coder-30B',  'Qwen3 Coder 30B (local)',  'qwen3-coder-30b',      0, 4);
+    insertFamily.run('local-qwen3-coder-next', 'local', 'Qwen3-Coder-Next', 'Qwen3 Coder Next (local)', 'qwen3-coder-next',     0, 5);
+    insertFamily.run('local-qwen3-6-35b-a3b',  'local', 'Qwen3.6-35B',      'Qwen3.6 35B (local)',      'qwen3-6-35b-a3b',      0, 6);
+    insertFamily.run('local-kokoro-v1',        'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',    'kokoro-v1',            0, 7);
+    insertFamily.run('local-flux1-schnell',    'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',   'flux1-schnell',        0, 8);
     // Image generation families (use existing containers for login auth inheritance)
     insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
     insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
@@ -247,6 +256,12 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN cap_summary INTEGER DEFAULT 3'); } catch(e) {}
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN eligible_tasks TEXT DEFAULT NULL'); } catch(e) {}
   try { db.exec('ALTER TABLE ai_model_families ADD COLUMN cap_image INTEGER DEFAULT 0'); } catch(e) {}
+  // Phase 3 (os8-3-1): launcher_model/launcher_backend identify the model + backend
+  // inside os8-launcher for HTTP-dispatch families. supports_vision is a per-family
+  // boolean consulted at dispatch time when attachments are present (see Phase-3 §4.6).
+  try { db.exec('ALTER TABLE ai_model_families ADD COLUMN launcher_model TEXT'); } catch(e) {}
+  try { db.exec('ALTER TABLE ai_model_families ADD COLUMN launcher_backend TEXT'); } catch(e) {}
+  try { db.exec('ALTER TABLE ai_model_families ADD COLUMN supports_vision INTEGER DEFAULT 0'); } catch(e) {}
 
   // Backfill capability/cost for known families (1-5 scale)
   // Ability: 1=minimal, 2=basic, 3=good, 4=strong, 5=best-in-class
@@ -268,9 +283,18 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gemini-imagen':      { cost_tier: 2, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'openai-dalle':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 },
-      // Local Gemma 4 31B — cost_tier 1 (no marginal cost on the user's GPU).
-      // Capability scores are conservative Phase-1 guesses; tune after real eval.
-      'local-gemma-4-31b':  { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 }
+      // Local families — cost_tier 1 (no marginal cost on the user's GPU).
+      // Capability scores are conservative starting points; tune after real eval (Phase 5).
+      'local-gemma-4-31b':       { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 },
+      'local-gemma-4-e2b':       { cost_tier: 1, cap_chat: 2, cap_jobs: 1, cap_planning: 1, cap_coding: 1, cap_summary: 3 },
+      'local-qwen3-coder-30b':   { cost_tier: 1, cap_chat: 2, cap_jobs: 4, cap_planning: 3, cap_coding: 4, cap_summary: 2 },
+      'local-qwen3-coder-next':  { cost_tier: 1, cap_chat: 2, cap_jobs: 5, cap_planning: 4, cap_coding: 5, cap_summary: 2 },
+      'local-qwen3-6-35b-a3b':   { cost_tier: 1, cap_chat: 3, cap_jobs: 3, cap_planning: 3, cap_coding: 2, cap_summary: 3 },
+      // Kokoro and Flux are out of the LLM cascade — TTS goes through tts.js facade,
+      // image-gen through imagegen.js. Seed zero caps except cap_image for Flux, whose
+      // image-task eligibility is what surfaces it in the image routing cascade.
+      'local-kokoro-v1':         { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
+      'local-flux1-schnell':     { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 }
     };
     // Always update to latest scores (unconditional)
     const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ?, cap_image = ? WHERE id = ?`);
@@ -291,9 +315,16 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gemini-imagen':  'image',
       'openai-dalle':   'image',
       'grok-imagine':   'image',
-      // Local Gemma — Phase 1 keeps it out of jobs/coding; those route to the
-      // eventual qwen3-coder family in Phase 3.
-      'local-gemma-4-31b': 'conversation,summary,planning',
+      // Local families — restrict to the task types each model is actually good at.
+      // qwen3-coder-* handle jobs/coding; gemma-4-31B handles conversation/summary/planning;
+      // qwen3.6-35B is conversation-only (vision is picked via supports_vision at dispatch).
+      // kokoro is out-of-cascade (TTS facade); flux1-schnell covers image.
+      'local-gemma-4-31b':       'conversation,summary,planning',
+      'local-gemma-4-e2b':       'conversation,summary',
+      'local-qwen3-coder-30b':   'coding,jobs',
+      'local-qwen3-coder-next':  'coding,jobs',
+      'local-qwen3-6-35b-a3b':   'conversation',
+      'local-flux1-schnell':     'image',
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET eligible_tasks = ? WHERE id = ?`);
     for (const [id, tasks] of Object.entries(eligibility)) {
@@ -301,6 +332,27 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
     }
   });
   backfillEligibleTasks();
+
+  // Backfill launcher metadata for local families. launcher_model matches the
+  // key under `models:` in os8-launcher/config.yaml. launcher_backend matches
+  // the key under `backends:`. Consumed by launcher-client.js::ensureModel in
+  // Phase 3-2 onward.
+  const backfillLauncherMetadata = db.transaction(() => {
+    const meta = {
+      'local-gemma-4-31b':       { launcher_model: 'gemma-4-31B-it-nvfp4', launcher_backend: 'vllm',         supports_vision: 0 },
+      'local-gemma-4-e2b':       { launcher_model: 'gemma-4-E2B-it',       launcher_backend: 'vllm',         supports_vision: 0 },
+      'local-qwen3-coder-30b':   { launcher_model: 'qwen3-coder-30b',      launcher_backend: 'ollama',       supports_vision: 0 },
+      'local-qwen3-coder-next':  { launcher_model: 'qwen3-coder-next',     launcher_backend: 'vllm',         supports_vision: 0 },
+      'local-qwen3-6-35b-a3b':   { launcher_model: 'qwen3-6-35b-a3b',      launcher_backend: 'vllm',         supports_vision: 1 },
+      'local-kokoro-v1':         { launcher_model: 'kokoro-v1',            launcher_backend: 'kokoro',       supports_vision: 0 },
+      'local-flux1-schnell':     { launcher_model: 'flux1-schnell',        launcher_backend: 'comfyui',      supports_vision: 0 },
+    };
+    const stmt = db.prepare(`UPDATE ai_model_families SET launcher_model = ?, launcher_backend = ?, supports_vision = ? WHERE id = ?`);
+    for (const [id, m] of Object.entries(meta)) {
+      stmt.run(m.launcher_model, m.launcher_backend, m.supports_vision, id);
+    }
+  });
+  backfillLauncherMetadata();
 
   // Seed one row per provider in ai_account_status
   try {
@@ -486,11 +538,13 @@ This file defines who you are. You can evolve it over time as you learn and grow
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_step', '0')").run();
   db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('onboarding_complete', '0')").run();
 
-  // Phase-1 feature flag for Local Models mode (LOCAL_MODELS_PLAN.md).
-  // '0' = hidden (default); '1' = show local families in the agent model picker.
-  // Flip to '1' in the DB (or via a future Settings toggle) to enable; no UI
-  // exposes it yet — agent.model must also be set manually to 'local-gemma-4-31b'.
-  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('local_models_enabled', '0')").run();
+  // Phase-3 global mode switch. 'proprietary' (default) routes every task to
+  // cloud cascades; 'local' routes to os8-launcher families. Phase-4 onboarding
+  // flips this based on the user's choice; Phase-3 only seeds the default.
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('ai_mode', 'proprietary')").run();
+  // Sticky TTS provider for local mode — kept separate from `tts_provider` so
+  // flipping ai_mode doesn't clobber the user's non-local voice pick.
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('tts_provider_local', 'kokoro')").run();
 
   // One-time migration: auto-complete onboarding for users who existed before
   // onboarding was added (they already have agents). Gated by migration key so it
