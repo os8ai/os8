@@ -18,6 +18,31 @@ const REACTIONS = [
   { key: 'haha', emoji: '😂' },
 ]
 
+// Phase 2B: cli-runner.js's createHttpProcess prefixes stderr with
+// `launcher_error:CODE: <message>` when the os8-launcher fails an ensure or
+// returns a structured error. We surface a per-code human-readable line in
+// the chat bubble. Anything else falls through to the original message.
+const LAUNCHER_ERROR_MESSAGES = {
+  LAUNCHER_UNREACHABLE: "os8-launcher isn't running on :9000. Start it from the launcher dashboard, then try again.",
+  BAD_REQUEST:          "I tried to load a model the launcher doesn't recognize. Check the model name in your routing config.",
+  MODEL_NOT_DOWNLOADED: "The model weights aren't downloaded yet. Open the launcher dashboard's Models tab to download.",
+  BUDGET_EXCEEDED:      "VRAM is full. Stop an idle model from the launcher dashboard, or shrink the resident set in launcher config.",
+  START_FAILED:         "The model backend crashed during start. Check the launcher dashboard's logs for details.",
+  MODEL_LOAD_TIMEOUT:   "The model didn't become ready within 60 seconds. It may still be loading — check the launcher dashboard."
+}
+
+function humanizeChatError(rawMessage) {
+  if (typeof rawMessage !== 'string') return `Sorry, I encountered an error: ${rawMessage}`
+  const match = rawMessage.match(/launcher_error:([A-Z_]+):\s*(.*)$/s)
+  if (match) {
+    const [, code, detail] = match
+    const friendly = LAUNCHER_ERROR_MESSAGES[code]
+    if (friendly) return friendly
+    return `Launcher error (${code}): ${detail || rawMessage}`
+  }
+  return `Sorry, I encountered an error: ${rawMessage}`
+}
+
 /** Step progress line for tool execution */
 function StepLine({ step }) {
   const [elapsed, setElapsed] = useState(0)
@@ -688,7 +713,7 @@ function Chat({ assistantName, ownerName, agentApiBase, baseApiUrl, selectedAgen
         const errorMessage = {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
-          content: `Sorry, I encountered an error: ${err.message}`,
+          content: humanizeChatError(err.message),
           timestamp: new Date().toISOString(),
           source: 'app',
           isError: true

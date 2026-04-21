@@ -146,7 +146,7 @@ function parseBatchOutput(stdout) {
  * @param {boolean} [opts.promptViaStdin] - Backend uses stdin for prompt (Codex)
  * @returns {{ onData: Function, onExit: Function, kill: Function, pid: number }}
  */
-function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType, tools, attachments }) {
+function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType, tools, attachments, launcherModel, launcherBackend }) {
   // HTTP backends have no CLI to spawn — route to the launcher HTTP path.
   // The returned object exposes the same { onData, onExit, kill } shape so
   // message-handler.js's stream loop doesn't need to know the difference.
@@ -156,7 +156,9 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
       model,
       taskType: taskType || 'conversation',
       tools,
-      attachments
+      attachments,
+      launcherModel,
+      launcherBackend
     });
   }
 
@@ -261,8 +263,16 @@ function buildUserContent(prompt, attachments) {
  *   `messages[0].content` becomes an array of OpenAI-shape `image_url` parts
  *   followed by a `text` part (Phase 3 §4.6). Vision-capable models like
  *   qwen3-6-35b-a3b consume these directly.
+ * @param {string} [opts.launcherModel] - Phase 2B: the launcher's `models:`
+ *   key (e.g. 'qwen3-coder-30b'). When present, the dispatcher calls
+ *   `LauncherClient.ensureModel` to load this exact model on demand
+ *   instead of hoping the launcher is already serving the right thing.
+ *   Comes from `resolved.launcher_model` (set on local-container families
+ *   by routing.js).
+ * @param {string} [opts.launcherBackend] - Phase 2B: the launcher's
+ *   `backends:` key (e.g. 'ollama', 'vllm'). Pairs with launcherModel.
  */
-function createHttpProcess(backend, { prompt, model, taskType = 'conversation', tools = null, attachments = null } = {}) {
+function createHttpProcess(backend, { prompt, model, taskType = 'conversation', tools = null, attachments = null, launcherModel = null, launcherBackend = null } = {}) {
   const dataCallbacks = [];
   const exitCallbacks = [];
   let aborted = false;
@@ -290,23 +300,79 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation', 
   }); });
 
   async function _runHttp() {
-    // Phase 1: discover base_url + model_id from the launcher's capabilities map.
-    // We requery every call (cheap, <1ms on localhost) so stop/swap on the
-    // launcher side reflects immediately instead of sticking to a stale port.
-    let caps;
-    try {
-      caps = await LauncherClient.getCapabilities();
-    } catch (err) {
-      finish({ exitCode: 1, stderr: `Launcher unreachable: ${err.message}` });
-      return;
+    // Phase 2B: when the resolver supplied launcher_model + launcher_backend
+    // (set on local-container families), call /api/serve/ensure to load that
+    // exact model on demand. The launcher's resident pool / LRU eviction
+    // handles the rest. When launcher_model is absent (very old families
+    // without the column populated), fall back to the Phase 1 capabilities
+    // lookup — the same model has to be already serving, but at least the
+    // call still works.
+    let baseUrl, modelId, instanceId;
+
+    if (launcherModel) {
+      let ensured;
+      try {
+        ensured = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+      } catch (err) {
+        // err.code is one of LAUNCHER_ERROR_CODES — message-handler maps
+        // these to specific Chat.jsx toasts. Prefix with `launcher_error:`
+        // so the SSE error path can split out the code structurally.
+        const code = err.code || 'LAUNCHER_UNREACHABLE';
+        finish({ exitCode: 1, stderr: `launcher_error:${code}: ${err.message}` });
+        return;
+      }
+
+      if (ensured.status === 'loading') {
+        // Surface a status event so Chat.jsx can render an inline "loading model"
+        // banner. Then poll by re-calling ensure (idempotent on the launcher
+        // side; serializes through the per-instance lock).
+        emitLine({
+          type: 'stream_event',
+          event: { type: 'system_status', code: 'model_loading', model: launcherModel, instance_id: ensured.instance_id }
+        });
+        const start = Date.now();
+        const ceiling = 60_000;  // 60s — covers vLLM/ollama; NIM (30-60min) is opt-in via wait=true
+        while (Date.now() - start < ceiling) {
+          if (aborted) return;
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            const poll = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+            if (poll.status === 'ready') { ensured = poll; break; }
+          } catch (_e) {
+            // Transient — keep polling. Persistent failures will hit the timeout.
+          }
+        }
+        if (ensured.status !== 'ready') {
+          finish({ exitCode: 1, stderr: `launcher_error:MODEL_LOAD_TIMEOUT: ${launcherModel} did not become ready within ${ceiling/1000}s` });
+          return;
+        }
+      }
+
+      baseUrl = ensured.base_url;
+      instanceId = ensured.instance_id;
+      modelId = model || ensured.model;
+    } else {
+      // Legacy path — for HTTP backends without launcher_model populated
+      // (shouldn't happen for current local families, but keep working in
+      // case a custom integration leaves the field null).
+      let caps;
+      try {
+        caps = await LauncherClient.getCapabilities();
+      } catch (err) {
+        finish({ exitCode: 1, stderr: `launcher_error:LAUNCHER_UNREACHABLE: ${err.message}` });
+        return;
+      }
+      const entry = caps?.[taskType] || caps?.conversation;
+      if (!entry) {
+        finish({ exitCode: 1, stderr: `launcher_error:LAUNCHER_UNREACHABLE: no capability for task '${taskType}' (is a model serving?)` });
+        return;
+      }
+      // Capabilities arrays vs single objects (Phase 2 launcher returns arrays).
+      const e = Array.isArray(entry) ? entry[0] : entry;
+      baseUrl = e.base_url;
+      modelId = model || e.model_id || e.model;
+      instanceId = e.instance_id || null;
     }
-    const entry = caps?.[taskType] || caps?.conversation;
-    if (!entry) {
-      finish({ exitCode: 1, stderr: `Launcher has no capability for task '${taskType}' (is a model serving?)` });
-      return;
-    }
-    const baseUrl = entry.base_url;
-    const modelId = model || entry.model_id || entry.model;
 
     const body = {
       model: modelId,
@@ -416,6 +482,9 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation', 
                 (state.parseFailure.toolCallId ? ` (tool_call_id=${state.parseFailure.toolCallId})` : '')
       });
     } else {
+      // Phase 2B: fire-and-forget LRU touch so the launcher's eviction picks
+      // the right victims. Failures are silenced inside LauncherClient.touch.
+      if (instanceId) LauncherClient.touch(instanceId);
       finish({ exitCode: 0, stderr: '' });
     }
   }
@@ -537,6 +606,8 @@ async function sendTextPrompt(db, resolved, prompt, opts = {}) {
   const sdkModel = familyToSdkModel(resolved.familyId, sdkFallback);
 
   // HTTP path: local launcher-backed backend — no CLI, no SDK, just POST.
+  // resolved carries launcher_model/launcher_backend (Phase 2B) which the
+  // HTTP path uses to ensure the right model is loaded before the call.
   const httpBackend = getBackend(resolved.backendId);
   if (httpBackend?.type === 'http') {
     return sendTextPromptHttp(resolved, prompt, { systemPrompt, maxTokens });
@@ -616,19 +687,57 @@ async function sendTextPrompt(db, resolved, prompt, opts = {}) {
  */
 async function sendTextPromptHttp(resolved, prompt, opts = {}) {
   const { systemPrompt = null, maxTokens = 4096, taskType = 'conversation' } = opts;
-  const caps = await LauncherClient.getCapabilities();
-  const entry = caps?.[taskType] || caps?.conversation;
-  if (!entry) throw new Error(`Launcher has no capability for task '${taskType}'`);
+
+  // Phase 2B: prefer ensure when launcher_model is on resolved (set by routing.js
+  // for local-container families). Falls back to capabilities lookup for older
+  // family configurations.
+  let baseUrl, modelId, instanceId = null;
+  if (resolved.launcher_model) {
+    let ensured;
+    try {
+      ensured = await LauncherClient.ensureModel({
+        model: resolved.launcher_model,
+        backend: resolved.launcher_backend
+      });
+    } catch (err) {
+      throw new Error(`launcher_error:${err.code || 'LAUNCHER_UNREACHABLE'}: ${err.message}`);
+    }
+    // Non-streaming utility path: don't poll for >a few seconds. If the model
+    // isn't ready, surface a clear error rather than blocking on a long load.
+    if (ensured.status !== 'ready') {
+      // One short retry, then give up — keeps utility calls bounded.
+      await new Promise(r => setTimeout(r, 1500));
+      try {
+        ensured = await LauncherClient.ensureModel({ model: resolved.launcher_model, backend: resolved.launcher_backend });
+      } catch (err) {
+        throw new Error(`launcher_error:${err.code || 'LAUNCHER_UNREACHABLE'}: ${err.message}`);
+      }
+      if (ensured.status !== 'ready') {
+        throw new Error(`launcher_error:MODEL_LOAD_TIMEOUT: ${resolved.launcher_model} not ready (use createHttpProcess for long loads)`);
+      }
+    }
+    baseUrl = ensured.base_url;
+    modelId = resolved.modelArg || ensured.model;
+    instanceId = ensured.instance_id;
+  } else {
+    // Legacy capabilities-lookup path.
+    const caps = await LauncherClient.getCapabilities();
+    const entry = caps?.[taskType] || caps?.conversation;
+    if (!entry) throw new Error(`Launcher has no capability for task '${taskType}'`);
+    const e = Array.isArray(entry) ? entry[0] : entry;
+    baseUrl = e.base_url;
+    modelId = resolved.modelArg || e.model_id;
+  }
 
   const messages = [];
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: prompt });
 
-  const res = await fetch(`${entry.base_url}/v1/chat/completions`, {
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: resolved.modelArg || entry.model_id,
+      model: modelId,
       messages,
       stream: false,
       max_tokens: maxTokens
@@ -636,9 +745,10 @@ async function sendTextPromptHttp(resolved, prompt, opts = {}) {
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Launcher ${entry.base_url} returned ${res.status}: ${text.slice(0, 500)}`);
+    throw new Error(`Launcher ${baseUrl} returned ${res.status}: ${text.slice(0, 500)}`);
   }
   const json = await res.json();
+  if (instanceId) LauncherClient.touch(instanceId);  // fire-and-forget LRU signal
   return json?.choices?.[0]?.message?.content || '';
 }
 

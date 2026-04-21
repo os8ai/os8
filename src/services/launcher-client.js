@@ -2,13 +2,27 @@
  * LauncherClient — thin HTTP wrapper for the os8-launcher control plane
  * (http://localhost:9000/api/*). No business logic.
  *
- * Phase 1 uses this to discover what model is currently being served and on
- * which port, so the local backend can POST to the right /v1/chat/completions
- * endpoint. The data plane (chat completions) is hit directly via fetch in
- * backend-adapter.js — this client is control-plane only.
+ * Phase 1 used this to discover what model was currently serving (single
+ * model at a time). Phase 2B adds `ensureModel` + `touch`, which let the
+ * dispatcher request a specific (model, backend) be loaded on demand;
+ * the launcher's resident pool / LRU eviction / concurrent serving handle
+ * the rest. Data-plane calls (chat, audio, image-gen) still go directly
+ * to the per-backend ports returned by ensure.
  */
 
 const DEFAULT_BASE = 'http://localhost:9000';
+
+// Error codes returned by the launcher on ensure failures, plus the
+// transport-level codes we synthesize when fetch itself fails. Exported so
+// dispatchers can pattern-match without string-matching error messages.
+const LAUNCHER_ERROR_CODES = Object.freeze({
+  LAUNCHER_UNREACHABLE: 'LAUNCHER_UNREACHABLE',  // network error / launcher down
+  BAD_REQUEST:          'BAD_REQUEST',           // 400 — unknown model/backend
+  MODEL_NOT_DOWNLOADED: 'MODEL_NOT_DOWNLOADED',  // launcher reports weights missing
+  BUDGET_EXCEEDED:      'BUDGET_EXCEEDED',       // 409 — VRAM full, no LRU victims
+  START_FAILED:         'START_FAILED',          // 500 — container/process failed to spawn
+  MODEL_LOAD_TIMEOUT:   'MODEL_LOAD_TIMEOUT'     // synthesized by the polling caller
+});
 
 async function _fetchJson(url, { timeoutMs = 3000 } = {}) {
   const controller = new AbortController();
@@ -26,15 +40,18 @@ async function _fetchJson(url, { timeoutMs = 3000 } = {}) {
 
 const LauncherClient = {
   DEFAULT_BASE,
+  LAUNCHER_ERROR_CODES,
 
-  /** Fetch what's currently running. Shape: { backend: {...} | null, clients: {...} }. */
+  /** Fetch what's currently running. Shape: { backends: [...], backend: {...} | null, clients: {...} }. */
   async getStatus(baseUrl = DEFAULT_BASE) {
     return _fetchJson(`${baseUrl}/api/status`);
   },
 
   /**
-   * Fetch per-task capability map. Shape: { taskType: { model, base_url, model_id } }.
-   * Empty object when nothing is serving.
+   * Fetch per-task capability map. Shape (Phase 2 onward):
+   *   { taskType: [{ instance_id, model, base_url, model_id, priority }, ...] }
+   * Pre-Phase-2 launchers returned a single object per task; both shapes
+   * coexist in code that walks caps.
    */
   async getCapabilities(baseUrl = DEFAULT_BASE) {
     return _fetchJson(`${baseUrl}/api/status/capabilities`);
@@ -55,6 +72,97 @@ const LauncherClient = {
       return true;
     } catch {
       return false;
+    }
+  },
+
+  /**
+   * Idempotent "make sure this (model, backend) is loaded" — Phase 2B.
+   *
+   * Returns the launcher's response on success:
+   *   { status: 'ready' | 'loading',
+   *     instance_id, port, base_url, model, backend, evicted: [...] }
+   *
+   * Throws an Error with `.code` set to one of LAUNCHER_ERROR_CODES on
+   * failure. Callers branch on `.code` to render specific UX
+   * (BUDGET_EXCEEDED → "VRAM full", LAUNCHER_UNREACHABLE → "launcher down",
+   * etc.) — see Phase 2B §4.6 for the toast mapping.
+   *
+   * `wait: true` blocks the launcher up to the manifest's health_timeout
+   * (30-60 min for NIM, 60-120s for vLLM/ollama). The default wait=false
+   * returns immediately with status='loading' for fresh starts, and the
+   * caller polls by re-calling ensureModel (idempotent).
+   *
+   * @param {{ model: string, backend?: string|null, wait?: boolean, baseUrl?: string }} opts
+   * @returns {Promise<object>}
+   */
+  async ensureModel({ model, backend = null, wait = false, baseUrl = DEFAULT_BASE }) {
+    if (!model) {
+      const err = new Error('ensureModel: model is required');
+      err.code = LAUNCHER_ERROR_CODES.BAD_REQUEST;
+      throw err;
+    }
+    let res;
+    try {
+      res = await fetch(`${baseUrl}/api/serve/ensure`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, backend, wait })
+      });
+    } catch (e) {
+      // fetch threw — DNS, connection refused, etc. Launcher is down.
+      const err = new Error(`Launcher unreachable: ${e.message}`);
+      err.code = LAUNCHER_ERROR_CODES.LAUNCHER_UNREACHABLE;
+      err.cause = e;
+      throw err;
+    }
+    if (res.ok) {
+      return res.json();
+    }
+    // Error path — try to extract the launcher's structured detail. FastAPI
+    // wraps HTTPException(detail={...}) as { detail: { code, message } }.
+    let body = {};
+    try { body = await res.json(); } catch (_e) { /* leave body empty */ }
+    const detail = body?.detail;
+    let code, message;
+    if (detail && typeof detail === 'object') {
+      code = detail.code;
+      message = detail.message;
+    } else {
+      message = (typeof detail === 'string' ? detail : null) || `${res.status} ${res.statusText}`;
+    }
+    if (!code) {
+      // Map common HTTP codes when the launcher didn't supply a structured one.
+      if (res.status === 400) code = LAUNCHER_ERROR_CODES.BAD_REQUEST;
+      else if (res.status === 404) code = LAUNCHER_ERROR_CODES.MODEL_NOT_DOWNLOADED;
+      else if (res.status === 409) code = LAUNCHER_ERROR_CODES.BUDGET_EXCEEDED;
+      else code = LAUNCHER_ERROR_CODES.START_FAILED;
+    }
+    const err = new Error(message || `Launcher /api/serve/ensure returned ${res.status}`);
+    err.code = code;
+    err.status = res.status;
+    throw err;
+  },
+
+  /**
+   * Mark an instance as recently used — LRU signal for the launcher's
+   * eviction policy. Fire-and-forget by design: failures are silenced
+   * because nothing the caller can do is useful (launcher down → next
+   * ensure handles it; eviction race → already too late).
+   *
+   * @param {string} instanceId
+   * @param {string} [baseUrl]
+   * @returns {Promise<void>}
+   */
+  async touch(instanceId, baseUrl = DEFAULT_BASE) {
+    if (!instanceId) return;
+    try {
+      await fetch(`${baseUrl}/api/serve/touch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance_id: instanceId })
+      });
+    } catch (_e) {
+      // Swallow — see docstring.
     }
   }
 };

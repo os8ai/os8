@@ -693,5 +693,102 @@ describe('RoutingService', () => {
       const resolved = { familyId: 'local-gemma-4-31b', backendId: 'local', source: 'cascade' };
       expect(RoutingService.maybeSwapForVision(db, resolved, true)).toBe(resolved);
     });
+
+    it('attaches launcher_model + launcher_backend to vision-swap result', () => {
+      const restore = setupVisionMocks([
+        { id: 'local-qwen3-6-35b-a3b', container_id: 'local', supports_vision: 1, cli_model_arg: 'qwen3-6-35b-a3b' }
+      ]);
+      try {
+        const db = dbWithVisionFamily({
+          id: 'local-qwen3-6-35b-a3b',
+          container_id: 'local',
+          launcher_model: 'qwen3-6-35b-a3b',
+          launcher_backend: 'vllm'
+        });
+        RoutingService.setMode(db, 'local');
+        const resolved = { familyId: 'local-gemma-4-31b', backendId: 'local', source: 'cascade' };
+        const swapped = RoutingService.maybeSwapForVision(db, resolved, true);
+        expect(swapped.launcher_model).toBe('qwen3-6-35b-a3b');
+        expect(swapped.launcher_backend).toBe('vllm');
+      } finally { restore(); }
+    });
+  });
+
+  describe('resolve attaches launcher metadata for local families (Phase 2B)', () => {
+    // Inject a local family alongside the cloud FAMILIES used by other tests.
+    function withLocalFamily(testFn) {
+      const orig = AIRegistryService.getFamily;
+      const origContainer = AIRegistryService.getContainer;
+      AIRegistryService.getFamily = (_, id) => {
+        if (id === 'local-gemma-4-31b') return {
+          id: 'local-gemma-4-31b',
+          container_id: 'local',
+          name: 'Gemma 4 31B',
+          launcher_model: 'gemma-4-31B-it-nvfp4',
+          launcher_backend: 'vllm',
+          cap_chat: 3,
+          eligible_tasks: 'conversation,summary,planning'
+        };
+        return FAMILIES.find(f => f.id === id) || null;
+      };
+      AIRegistryService.getContainer = (_, id) => {
+        if (id === 'local') return { id: 'local', provider_id: 'local', type: 'http', has_login: 0 };
+        return CONTAINERS[id] || null;
+      };
+      try { testFn(); } finally {
+        AIRegistryService.getFamily = orig;
+        AIRegistryService.getContainer = origContainer;
+      }
+    }
+
+    it('agent override on local family carries launcher_model + launcher_backend', () => {
+      withLocalFamily(() => {
+        const db = createMockDb({ cascades: { conversation: [] } });
+        const result = RoutingService.resolve(db, 'conversation', 'local-gemma-4-31b');
+        expect(result.source).toBe('agent_override');
+        expect(result.launcher_model).toBe('gemma-4-31B-it-nvfp4');
+        expect(result.launcher_backend).toBe('vllm');
+      });
+    });
+
+    it('agent override on cloud family does NOT add launcher fields', () => {
+      const db = createMockDb({ cascades: { conversation: [{ family_id: 'claude-sonnet', access_method: 'login', enabled: 1, priority: 0 }] } });
+      const result = RoutingService.resolve(db, 'conversation', 'claude-haiku');
+      expect(result.source).toBe('agent_override');
+      expect(result.launcher_model).toBeUndefined();
+      expect(result.launcher_backend).toBeUndefined();
+    });
+
+    it('cascade pick on a local family carries launcher fields', () => {
+      withLocalFamily(() => {
+        const db = createMockDb({
+          cascades: { conversation: [{ family_id: 'local-gemma-4-31b', access_method: 'api', enabled: 1, priority: 0 }] }
+        });
+        const result = RoutingService.resolve(db, 'conversation');
+        expect(result.source).toBe('cascade');
+        expect(result.launcher_model).toBe('gemma-4-31B-it-nvfp4');
+        expect(result.launcher_backend).toBe('vllm');
+      });
+    });
+
+    it('local_no_fallback path under ai_mode=local carries launcher fields too', () => {
+      withLocalFamily(() => {
+        const db = createMockDb({ cascades: { summary: [] } });
+        RoutingService.setMode(db, 'local');
+        const result = RoutingService.resolve(db, 'summary');
+        expect(result.source).toBe('local_no_fallback');
+        expect(result.launcher_model).toBe('gemma-4-31B-it-nvfp4');
+        expect(result.launcher_backend).toBe('vllm');
+      });
+    });
+
+    it('proprietary fallback (claude-sonnet) leaves launcher fields off', () => {
+      const db = createMockDb({ cascades: { summary: [] } });
+      // mode default is proprietary
+      const result = RoutingService.resolve(db, 'summary');
+      expect(result.source).toBe('fallback');
+      expect(result.launcher_model).toBeUndefined();
+      expect(result.launcher_backend).toBeUndefined();
+    });
   });
 });

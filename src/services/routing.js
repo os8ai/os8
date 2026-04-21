@@ -26,13 +26,27 @@ const PROVIDER_IDS = ['anthropic', 'google', 'openai', 'xai'];
 const VALID_MODES = ['proprietary', 'local'];
 const DEFAULT_EXHAUSTION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
+/**
+ * Phase 2B: attach launcher_model + launcher_backend to a resolved entry
+ * when the family is local-container. Lets dispatchers call
+ * LauncherClient.ensureModel without a second AIRegistryService lookup.
+ * No-op for non-local families (the fields stay undefined).
+ */
+function _withLauncher(family, base) {
+  if (!family || family.container_id !== 'local') return base;
+  return { ...base, launcher_model: family.launcher_model, launcher_backend: family.launcher_backend };
+}
+
 const RoutingService = {
   /**
    * Resolve the best available model family + access method for a task type.
    * @param {object} db - SQLite database
    * @param {string} taskType - 'conversation' | 'jobs' | 'planning' | 'coding'
    * @param {string|null} agentOverride - Family ID from agent config (null or 'auto' = use cascade)
-   * @returns {{ familyId: string, backendId: string, modelArg: string|null, accessMethod: string, source: string }}
+   * @returns {{ familyId: string, backendId: string, modelArg: string|null, accessMethod: string, source: string, launcher_model?: string, launcher_backend?: string }}
+   *   For local-container families, the result also carries `launcher_model`
+   *   and `launcher_backend` from `ai_model_families` so dispatchers can
+   *   call `LauncherClient.ensureModel` without a second DB lookup.
    */
   resolve(db, taskType, agentOverride = null) {
     // 1. Agent override — try login first, then API. Honored for every task
@@ -48,22 +62,22 @@ const RoutingService = {
       const isEligible = !eligibleList || eligibleList.includes(taskType);
       if (family && isEligible) {
         if (this.isAvailable(db, agentOverride, 'login')) {
-          return {
+          return _withLauncher(family, {
             familyId: agentOverride,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, agentOverride),
             accessMethod: 'login',
             source: 'agent_override'
-          };
+          });
         }
         if (this.isAvailable(db, agentOverride, 'api')) {
-          return {
+          return _withLauncher(family, {
             familyId: agentOverride,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, agentOverride),
             accessMethod: 'api',
             source: 'agent_override'
-          };
+          });
         }
       }
       // Override unavailable or not eligible — fall through to cascade.
@@ -76,13 +90,13 @@ const RoutingService = {
       if (this.isAvailable(db, entry.family_id, entry.access_method)) {
         const family = AIRegistryService.getFamily(db, entry.family_id);
         if (family) {
-          return {
+          return _withLauncher(family, {
             familyId: entry.family_id,
             backendId: family.container_id,
             modelArg: AIRegistryService.resolveModelArg(db, entry.family_id),
             accessMethod: entry.access_method,
             source: 'cascade'
-          };
+          });
         }
       }
     }
@@ -98,13 +112,14 @@ const RoutingService = {
     // honoring the privacy promise.
     const mode = this.getMode(db);
     if (mode === 'local') {
-      return {
+      const fallbackFamily = AIRegistryService.getFamily(db, 'local-gemma-4-31b');
+      return _withLauncher(fallbackFamily, {
         familyId: 'local-gemma-4-31b',
         backendId: 'local',
         modelArg: AIRegistryService.resolveModelArg(db, 'local-gemma-4-31b') || 'gemma-4-31B-it-nvfp4',
         accessMethod: 'api',
         source: 'local_no_fallback'
-      };
+      });
     }
     return {
       familyId: 'claude-sonnet',
@@ -223,17 +238,21 @@ const RoutingService = {
     const current = AIRegistryService.getFamily(db, resolved.familyId);
     if (current?.supports_vision === 1) return resolved;
     const visionFamily = db.prepare(`
-      SELECT id, container_id FROM ai_model_families
+      SELECT id, container_id, launcher_model, launcher_backend FROM ai_model_families
       WHERE container_id = 'local' AND supports_vision = 1
       ORDER BY display_order ASC LIMIT 1
     `).get();
     if (!visionFamily) return resolved;
+    // Phase 2B: include launcher metadata so the HTTP dispatcher can ensure
+    // the vision model is loaded before the chat call.
     return {
       familyId: visionFamily.id,
       backendId: visionFamily.container_id,
       modelArg: AIRegistryService.resolveModelArg(db, visionFamily.id),
       accessMethod: 'api',
-      source: 'vision_override'
+      source: 'vision_override',
+      launcher_model: visionFamily.launcher_model,
+      launcher_backend: visionFamily.launcher_backend
     };
   },
 

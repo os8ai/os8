@@ -646,8 +646,8 @@ Phase 2's design lives at `LOCAL_MODELS_PHASE_2.md` (committed `a84d803`). Statu
 | PR | What | Status |
 |---|---|---|
 | `os8-1` (Phase-2 schema prep) | Add `launcher_model` / `launcher_backend` columns to `ai_model_families`; family seeds | **Done** — folded into Phase-3 `os8-3-1` (schema + seeds) |
-| `os8-2` | `LauncherClient.ensureModel({model, backend})` + `touch(instance_id)` + `getInstanceStatus`; `createHttpProcess` calls ensure → poll-if-loading → fetch → touch; `sendTextPromptHttp` same; thread `resolved.launcher_model`/`launcher_backend` through `message-handler.js` | **Not started** — launcher-3 endpoint now available |
-| `os8-3` | Error-code UX in Chat.jsx for `LAUNCHER_UNREACHABLE` / `MODEL_NOT_DOWNLOADED` / `MODEL_LOADING` / `BUDGET_EXCEEDED` / `START_FAILED` | **Not started** |
+| `os8-2b` (replaces os8-2 + os8-3) | `LauncherClient.ensureModel` + `touch` + `LAUNCHER_ERROR_CODES`; `createHttpProcess` + `sendTextPromptHttp` use ensure → poll-if-loading → fetch → touch; resolver returns `launcher_model`/`launcher_backend` on local families; `message-handler.js` threads them; `Chat.jsx` `humanizeChatError` maps launcher_error: codes to readable bubbles | **DONE** — see `LOCAL_MODELS_PHASE_2B.md` |
+| Loading-banner SSE plumbing | `system_status` stream-event needs to flow from `createHttpProcess` through `message-handler.js` SSE to Chat.jsx as a "Loading <model>…" inline banner | **Not started** — UX polish, deferred |
 
 **What works without Phase 2:**
 - Mode toggle, family seeds, routing decisions, ag-ui event translation, TTS provider picker, image-gen dispatch, vision dispatch, tool-call synthesis, local-status endpoint — all built in Phase 3 and exercised by 443 unit tests.

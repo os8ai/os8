@@ -829,7 +829,11 @@ function handleSend(deps) {
       // Phase 3 (os8-3-4): for HTTP backends, attachments become OpenAI
       // multimodal content parts in the request body. Non-HTTP backends
       // ignore this opt (their image paths use stdin or --image flags).
-      attachments: (backend.type === 'http' && hasImageStdin) ? userImageAttachments : null
+      attachments: (backend.type === 'http' && hasImageStdin) ? userImageAttachments : null,
+      // Phase 2B: launcher metadata for ensureModel — set by routing.js on
+      // local-container families. Non-local backends leave these undefined.
+      launcherModel: resolved.launcher_model,
+      launcherBackend: resolved.launcher_backend
     });
 
     lap('cli-spawned');

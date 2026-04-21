@@ -1,6 +1,6 @@
 # Local Models — Phase 2B: OS8-side ensureModel integration
 
-**Status:** Design doc, pre-implementation.
+**Status:** SHIPPED on `main` — see commit log. Doc kept as the executed-plan record.
 **Companion to:** [LOCAL_MODELS_PHASE_2.md](LOCAL_MODELS_PHASE_2.md) (the full Phase-2 design — launcher half done) · [LOCAL_MODELS_PHASE_3.md](LOCAL_MODELS_PHASE_3.md) (Phase 3 shipped).
 **Scope:** Wire OS8 to the launcher's `/api/serve/ensure` so the right model loads on demand. Closes the "launcher can only serve one thing" gap by using the now-multi-instance launcher correctly.
 **Non-goals:** Onboarding fork (Phase 4), model-discovery polish (Phase 5).
