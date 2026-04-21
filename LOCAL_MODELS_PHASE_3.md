@@ -631,22 +631,22 @@ Phase 3 was built on top of an unimplemented Phase 2. Most of Phase 3 works fine
 
 Phase 2's design lives at `LOCAL_MODELS_PHASE_2.md` (committed `a84d803`). Status of each PR:
 
-**Launcher side** (separate repo: `os8-launcher`):
+**Launcher side** (separate repo: `os8-launcher` — all four PRs merged into `main` as of `7246a06`):
 
-| PR | What | Status |
-|---|---|---|
-| `launcher-1` | State schema migration: `backend` (singular) → `backends` (dict keyed by instance_id); legacy-read shim; atomic state.yaml writes | **Not started** |
-| `launcher-2` | Remove the "only one backend" guard; port allocator (vllm-A on 8000, vllm-B on 8010); per-instance container/log naming; `docker rm -f` pre-start | **Not started** |
-| `launcher-3` | `POST /api/serve/ensure` (idempotent "make sure model is up"); `POST /api/serve/touch` (LRU signal); `/api/status/capabilities` returns per-task arrays | **Not started** |
-| `launcher-4` | LRU eviction; `resources.memory_budget_gb`; `resident:` config knob; auto-start resident set on launcher boot | **Not started** |
-| `launcher-5` | Polish: per-instance overrides in settings.yaml; ETA from load history; `GET /api/serve/{instance_id}/status` | **Not started (optional)** |
+| PR | What | Status | Commit |
+|---|---|---|---|
+| `launcher-1` | State schema migration: `backend` (singular) → `backends` (dict keyed by instance_id); legacy-read shim; atomic state.yaml writes | **DONE** | `8f23276` |
+| `launcher-2` | Remove the "only one backend" guard; port allocator (vllm-A on 8000, vllm-B on 8010); per-instance container/log naming; `docker rm -f` pre-start | **DONE** | `1068270` |
+| `launcher-3` | `POST /api/serve/ensure` (idempotent "make sure model is up"); `POST /api/serve/touch` (LRU signal); `/api/status/capabilities` returns per-task arrays | **DONE** | `8b8de67` |
+| `launcher-4` | LRU eviction; `resources.memory_budget_gb`; `resident:` config knob; auto-start resident set on launcher boot | **DONE** | `7246a06` |
+| `launcher-5` | Polish: per-instance overrides in settings.yaml; ETA from load history; `GET /api/serve/{instance_id}/status` | **Not started (optional)** | — |
 
 **OS8 side** (this repo):
 
 | PR | What | Status |
 |---|---|---|
 | `os8-1` (Phase-2 schema prep) | Add `launcher_model` / `launcher_backend` columns to `ai_model_families`; family seeds | **Done** — folded into Phase-3 `os8-3-1` (schema + seeds) |
-| `os8-2` | `LauncherClient.ensureModel({model, backend})` + `touch(instance_id)` + `getInstanceStatus`; `createHttpProcess` calls ensure → poll-if-loading → fetch → touch; `sendTextPromptHttp` same; thread `resolved.launcher_model`/`launcher_backend` through `message-handler.js` | **Not started** — depends on `launcher-3` |
+| `os8-2` | `LauncherClient.ensureModel({model, backend})` + `touch(instance_id)` + `getInstanceStatus`; `createHttpProcess` calls ensure → poll-if-loading → fetch → touch; `sendTextPromptHttp` same; thread `resolved.launcher_model`/`launcher_backend` through `message-handler.js` | **Not started** — launcher-3 endpoint now available |
 | `os8-3` | Error-code UX in Chat.jsx for `LAUNCHER_UNREACHABLE` / `MODEL_NOT_DOWNLOADED` / `MODEL_LOADING` / `BUDGET_EXCEEDED` / `START_FAILED` | **Not started** |
 
 **What works without Phase 2:**
@@ -657,6 +657,6 @@ Phase 2's design lives at `LOCAL_MODELS_PHASE_2.md` (committed `a84d803`). Statu
 - Auto-loading a model on demand instead of "you have to manually start the right one before chatting."
 - LRU eviction / resident-pool management on the DGX Spark's 128GB.
 
-**Recommended order when resuming:** `launcher-1` → `launcher-2` → `launcher-3` (unblocks OS8 integration) → `os8-2` (the ensureModel wire-up — the day-to-day "it just works" piece) → `launcher-4` (LRU + resident set, makes it nice) → `os8-3` (error UX polish) → `launcher-5` (optional polish).
+**What's left:** `os8-2` (ensureModel wire-up — the day-to-day "it just works" piece) → `os8-3` (error UX). `launcher-5` is optional polish.
 
-Estimated effort end-to-end: ~1 day of focused work, mostly on the launcher side.
+Estimated remaining effort: half a day, all OS8-side. The heavy launcher work landed as commits `8f23276..7246a06` on `os8-launcher@main`.
