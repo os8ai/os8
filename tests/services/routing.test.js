@@ -618,4 +618,77 @@ describe('RoutingService', () => {
       expect(next.family_id).toBe('gemini-pro');
     });
   });
+
+  describe('maybeSwapForVision (Phase 3 §4.6)', () => {
+    // The shared mock's getFamily uses FAMILIES; we add vision-capable family
+    // for these specific tests via a local override.
+    function setupVisionMocks(visionFamilies) {
+      const orig = AIRegistryService.getFamily;
+      AIRegistryService.getFamily = (_, id) => {
+        const found = visionFamilies.find(f => f.id === id);
+        if (found) return found;
+        return FAMILIES.find(f => f.id === id) || null;
+      };
+      return () => { AIRegistryService.getFamily = orig; };
+    }
+
+    function dbWithVisionFamily(visionRow, opts = {}) {
+      const db = createMockDb(opts);
+      db.prepare = ((origPrepare) => (sql) => {
+        if (sql.includes('supports_vision = 1')) {
+          return { get: () => visionRow || null, all: () => [] };
+        }
+        return origPrepare(sql);
+      })(db.prepare.bind(db));
+      return db;
+    }
+
+    it('returns the resolved object unchanged when no attachments', () => {
+      const db = createMockDb();
+      const resolved = { familyId: 'claude-sonnet', backendId: 'claude', source: 'cascade' };
+      expect(RoutingService.maybeSwapForVision(db, resolved, false)).toBe(resolved);
+    });
+
+    it('returns unchanged under ai_mode=proprietary even with attachments', () => {
+      const db = createMockDb();
+      // Default mode is proprietary
+      const resolved = { familyId: 'claude-sonnet', backendId: 'claude', source: 'cascade' };
+      expect(RoutingService.maybeSwapForVision(db, resolved, true)).toBe(resolved);
+    });
+
+    it('returns unchanged when current family already supports vision', () => {
+      const restore = setupVisionMocks([
+        { id: 'local-qwen3-6-35b-a3b', container_id: 'local', supports_vision: 1, cli_model_arg: 'qwen3-6-35b-a3b' }
+      ]);
+      try {
+        const db = createMockDb();
+        RoutingService.setMode(db, 'local');
+        const resolved = { familyId: 'local-qwen3-6-35b-a3b', backendId: 'local', source: 'cascade' };
+        expect(RoutingService.maybeSwapForVision(db, resolved, true)).toBe(resolved);
+      } finally { restore(); }
+    });
+
+    it('swaps to vision family under ai_mode=local with attachments', () => {
+      const restore = setupVisionMocks([
+        { id: 'local-qwen3-6-35b-a3b', container_id: 'local', supports_vision: 1, cli_model_arg: 'qwen3-6-35b-a3b' }
+      ]);
+      try {
+        const db = dbWithVisionFamily({ id: 'local-qwen3-6-35b-a3b', container_id: 'local' });
+        RoutingService.setMode(db, 'local');
+        const resolved = { familyId: 'local-gemma-4-31b', backendId: 'local', source: 'cascade' };
+        const swapped = RoutingService.maybeSwapForVision(db, resolved, true);
+        expect(swapped).not.toBe(resolved);
+        expect(swapped.familyId).toBe('local-qwen3-6-35b-a3b');
+        expect(swapped.backendId).toBe('local');
+        expect(swapped.source).toBe('vision_override');
+      } finally { restore(); }
+    });
+
+    it('returns unchanged when no vision-capable local family exists', () => {
+      const db = dbWithVisionFamily(null);  // SELECT returns no row
+      RoutingService.setMode(db, 'local');
+      const resolved = { familyId: 'local-gemma-4-31b', backendId: 'local', source: 'cascade' };
+      expect(RoutingService.maybeSwapForVision(db, resolved, true)).toBe(resolved);
+    });
+  });
 });

@@ -203,6 +203,41 @@ const RoutingService = {
   },
 
   /**
+   * Phase 3 §4.6 — vision dispatch override. Under ai_mode='local' with
+   * image attachments present, swap the resolved family to a vision-capable
+   * local family (one with supports_vision=1). Today that's
+   * local-qwen3-6-35b-a3b. Returns the resolved object unchanged when:
+   *   - no attachments
+   *   - ai_mode is 'proprietary' (cloud CLIs handle images via their own flags)
+   *   - the resolved family is already vision-capable
+   *   - no vision-capable local family exists (don't silently swap to a worse model)
+   *
+   * @param {object} db
+   * @param {object} resolved - the output of resolve()
+   * @param {boolean} hasAttachments - whether the current message carries image data
+   * @returns {object} resolved object — either the original or a vision-swapped one
+   */
+  maybeSwapForVision(db, resolved, hasAttachments) {
+    if (!hasAttachments) return resolved;
+    if (this.getMode(db) !== 'local') return resolved;
+    const current = AIRegistryService.getFamily(db, resolved.familyId);
+    if (current?.supports_vision === 1) return resolved;
+    const visionFamily = db.prepare(`
+      SELECT id, container_id FROM ai_model_families
+      WHERE container_id = 'local' AND supports_vision = 1
+      ORDER BY display_order ASC LIMIT 1
+    `).get();
+    if (!visionFamily) return resolved;
+    return {
+      familyId: visionFamily.id,
+      backendId: visionFamily.container_id,
+      modelArg: AIRegistryService.resolveModelArg(db, visionFamily.id),
+      accessMethod: 'api',
+      source: 'vision_override'
+    };
+  },
+
+  /**
    * Find the cascade entry that follows a given (familyId, accessMethod) under
    * the current ai_mode. Phase 3 §4.3: jobs escalation uses this to bounce
    * one step down the cascade after a tool_call parse failure on the primary.

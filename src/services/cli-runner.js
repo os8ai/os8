@@ -146,7 +146,7 @@ function parseBatchOutput(stdout) {
  * @param {boolean} [opts.promptViaStdin] - Backend uses stdin for prompt (Codex)
  * @returns {{ onData: Function, onExit: Function, kill: Function, pid: number }}
  */
-function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType }) {
+function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinData, promptViaStdin, model, taskType, tools, attachments }) {
   // HTTP backends have no CLI to spawn — route to the launcher HTTP path.
   // The returned object exposes the same { onData, onExit, kill } shape so
   // message-handler.js's stream loop doesn't need to know the difference.
@@ -154,7 +154,9 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     return createHttpProcess(backend, {
       prompt: promptViaStdin || stdinData || '',
       model,
-      taskType: taskType || 'conversation'
+      taskType: taskType || 'conversation',
+      tools,
+      attachments
     });
   }
 
@@ -202,6 +204,34 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
 }
 
 /**
+ * Build the OpenAI `messages[0].content` field. Returns a plain string when
+ * there are no image attachments (the existing text-only shape), or an array
+ * of OpenAI multimodal content parts when attachments are present:
+ *   [{type:'image_url', image_url:{url:'data:<mime>;base64,<data>'}}..., {type:'text', text}]
+ *
+ * Phase 3 (os8-3-4) — vision-capable local families (qwen3-6-35b-a3b)
+ * consume this shape directly. Non-vision families that somehow receive
+ * attachments will have the model see the prompt without the images and
+ * respond accordingly; the dispatcher (message-handler) is responsible for
+ * never sending attachments to a non-vision family. We don't filter here.
+ */
+function buildUserContent(prompt, attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) {
+    return prompt;
+  }
+  const parts = [];
+  for (const att of attachments) {
+    if (!att?.mimeType || !att?.data) continue;
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${att.mimeType};base64,${att.data}` }
+    });
+  }
+  parts.push({ type: 'text', text: prompt });
+  return parts;
+}
+
+/**
  * Create a "process" that POSTs to the launcher's OpenAI-compatible endpoint
  * and emits Claude-shape stream-json lines via onData. Returns the same
  * { onData, onExit, kill } interface as createProcess's PTY/spawn paths, so
@@ -226,8 +256,13 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
  *   tool_use blocks (Phase 3 §4.7). Malformed args close the stream with
  *   `exitCode=1` and `stderr` prefixed `tool_call_parse_failed:` so the
  *   jobs-escalation hook can detect parse failures.
+ * @param {Array<{mimeType: string, data: string}>} [opts.attachments] - Image
+ *   attachments (base64-encoded). When non-empty, the request body's
+ *   `messages[0].content` becomes an array of OpenAI-shape `image_url` parts
+ *   followed by a `text` part (Phase 3 §4.6). Vision-capable models like
+ *   qwen3-6-35b-a3b consume these directly.
  */
-function createHttpProcess(backend, { prompt, model, taskType = 'conversation', tools = null } = {}) {
+function createHttpProcess(backend, { prompt, model, taskType = 'conversation', tools = null, attachments = null } = {}) {
   const dataCallbacks = [];
   const exitCallbacks = [];
   let aborted = false;
@@ -275,7 +310,7 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation', 
 
     const body = {
       model: modelId,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: buildUserContent(prompt, attachments) }],
       stream: true
     };
     if (Array.isArray(tools) && tools.length > 0) {
@@ -615,5 +650,6 @@ module.exports = {
   attachStreamParser,
   familyToSdkModel,
   sendTextPrompt,
-  sendTextPromptHttp
+  sendTextPromptHttp,
+  buildUserContent       // exported for unit testing (Phase 3 §4.6)
 };

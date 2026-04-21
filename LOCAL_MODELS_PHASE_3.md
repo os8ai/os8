@@ -505,11 +505,26 @@ Sized for single-reviewer PRs. No commit leaves the tree broken. OS8-only — Ph
 
 **Status:** 368 tests pass (+18 from this PR). Pre-existing `routing.test.js:194` failure (stale Phase-1 expectation) unchanged.
 
-**`os8-3-4`: Vision.**
-- `createHttpProcess`: `attachments` opt → multimodal OpenAI content parts (`image_url`/`video_url` + `text`).
-- `backend-adapter.js::local`: flip `supportsImageInput: true`; add `supportsVisionForFamily(familyId, db)` helper consulting `supports_vision`.
-- `message-handler.js`: at the four image-support call-sites, switch the boolean to `(backend.supportsImageInput && backend.supportsVisionForFamily?.(familyId, db)) || backend.supportsImageViaFile`; when attachments present and `ai_mode='local'`, override the resolved family to the one with `supports_vision=1`.
-- **Test:** agent on auto-routing under local mode, message with PNG → routes to `local-qwen3-6-35b-a3b` and the model describes the image.
+**`os8-3-4`: Vision. (SHIPPED, partial)**
+- `package.json`: 0.3.2 → 0.3.3.
+- `backend-adapter.js::local`: flipped `supportsImageInput: true`; added `supportsVisionForFamily(familyId, db)` that reads `ai_model_families.supports_vision` via AIRegistryService. Non-local backends don't define the helper (optional-chain returns `undefined`; existing flag-based checks unchanged).
+- `cli-runner.js`:
+  - New `buildUserContent(prompt, attachments)` helper (exported). Returns plain string when no attachments; otherwise an OpenAI multimodal content array with `image_url` parts followed by a `text` part. Skips malformed attachment entries defensively.
+  - `createHttpProcess` accepts `opts.attachments` and uses `buildUserContent` for `messages[0].content`.
+  - `createProcess` plumbs `attachments` (and `tools`) through to the HTTP path.
+- `routing.js::maybeSwapForVision(db, resolved, hasAttachments)`: returns the resolved object unchanged unless (`ai_mode='local'`, attachments present, current family lacks vision, AND a vision-capable local family exists). Source becomes `'vision_override'`.
+- `message-handler.js`:
+  - `/send` (PTY-based) handler: pre-computes `_hasUserImageAtts` from incoming attachments; calls `maybeSwapForVision` before any attachment processing so the downstream support-flag check sees the swapped family. Updates the boolean check at line 135 (attachment read) and line 638 (dispatch) to use `(backend.supportsImageInput && (backend.supportsVisionForFamily?.(resolved.familyId, db) ?? true)) || backend.supportsImageViaFile`. Plumbs `attachments` into the `createProcess` call when the active backend is HTTP.
+  - `/chat` (spawn-based) handler: same boolean-check + family-swap updates for the proprietary path. Note that the `/chat` path uses raw `spawn()` (not `createProcess`) and doesn't currently dispatch to local HTTP at all (`spawn(null,...)` would crash); that's a pre-existing limitation, unchanged here. Local conversations route through `/send`.
+- **Tests:**
+  - `tests/services/vision-dispatch.test.js` (new) — 10 tests: `buildUserContent` shape (text-only, single image, multiple images, defensive skip of malformed entries); `local.supportsVisionForFamily` (true/false/unknown family/missing args); flag invariants (local=true after flip; Claude/Codex/Gemini/Grok unchanged; no `supportsVisionForFamily` on non-local backends).
+  - `tests/services/routing.test.js` — 5 new `maybeSwapForVision` tests: returns unchanged for no-attachments, proprietary mode, already-vision family, no-vision-family-exists; swaps under (local + attachments + non-vision current family).
+
+**Honest deferrals:**
+- **`/chat` HTTP support.** The pre-existing raw-spawn dispatch in the `/chat` path doesn't handle local backends. Out of os8-3-4 scope; local conversations work via `/send`.
+- **End-to-end smoke test (PNG → model description).** Requires a running launcher with qwen3-6-35b-a3b serving. The unit tests cover the routing + body-shape correctness; live model verification is a manual acceptance step.
+
+**Status:** 383 tests pass (+15 from this PR). Pre-existing `routing.test.js:194` failure unchanged.
 
 **`os8-3-5`: TTS (Kokoro).**
 - `src/services/tts-kokoro.js` — new file matching `tts-openai.js`'s export surface.

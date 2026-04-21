@@ -551,12 +551,39 @@ const BACKENDS = {
     type: 'http',               // dispatch flag — cli-runner routes HTTP backends to createHttpProcess
     instructionFile: 'CLAUDE.md', // reuse Claude's instruction filename for now (agent dir already has one)
     label: 'Local',
-    supportsImageInput: false,
+    // Phase 3 (os8-3-4): supportsImageInput is the per-backend boolean today.
+    // For HTTP, "supports images" actually depends on which family is serving
+    // (qwen3-6-35b-a3b yes, gemma no). We flip the flag to true here so the
+    // call-sites' first conjunct passes; the per-family decision is made by
+    // supportsVisionForFamily(familyId, db) which the call-sites combine with
+    // the flag. Non-vision local families return false from the helper and
+    // attachments fall through to the file-reference path.
+    supportsImageInput: true,
     supportsImageViaFile: false,
     supportsImageDescriptions: false,
     supportsMaxTurns: false,
     supportsStreamJson: true,   // we synthesize Claude-shape stream-json from OpenAI SSE
     promptViaStdin: true,       // causes message-handler to pass enrichedMessage via opts.promptViaStdin
+
+    /**
+     * Phase 3 (os8-3-4): per-family vision support check. Consulted by
+     * message-handler.js at the four image-attachment call-sites:
+     *   (backend.supportsImageInput && backend.supportsVisionForFamily?.(familyId, db))
+     *     || backend.supportsImageViaFile
+     * Non-local backends don't define this method — the optional-chain
+     * short-circuits to the existing supportsImageInput check, so the
+     * Claude/Codex/Gemini paths are unchanged.
+     */
+    supportsVisionForFamily(familyId, db) {
+      if (!familyId || !db) return false;
+      try {
+        const AIRegistryService = require('./ai-registry');
+        const family = AIRegistryService.getFamily(db, familyId);
+        return family?.supports_vision === 1;
+      } catch (_e) {
+        return false;
+      }
+    },
 
     buildArgs(_options = {}) {
       return [];

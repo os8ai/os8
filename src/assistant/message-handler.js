@@ -127,12 +127,29 @@ function handleSend(deps) {
     let backend = getBackend(backendId);
     console.log(`[Routing] conversation/send: ${resolved.familyId} via ${resolved.source}`);
 
+    // Phase 3 (os8-3-4): vision dispatch override. Under ai_mode='local' with
+    // image attachments incoming, swap to a vision-capable local family
+    // (qwen3-6-35b-a3b) before any attachment processing, so the support-flag
+    // check downstream sees the swapped family and the images are read +
+    // forwarded as multimodal content parts.
+    const _hasUserImageAtts = (attachments || []).some(a => a?.mimeType?.startsWith('image/'));
+    if (_hasUserImageAtts) {
+      const swapped = RoutingService.maybeSwapForVision(db, resolved, true);
+      if (swapped !== resolved) {
+        resolved = swapped;
+        backendId = resolved.backendId;
+        backend = getBackend(backendId);
+        agentModel = resolved.modelArg;
+        console.log(`[Routing] vision_override → ${resolved.familyId}`);
+      }
+    }
+
     // Process user attachments - read and compress images for the agent
     const userImageAttachments = [];
     let messageWithFileRefs = message;
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
-        if (att.mimeType && att.mimeType.startsWith('image/') && (backend.supportsImageInput || backend.supportsImageViaFile)) {
+        if (att.mimeType && att.mimeType.startsWith('image/') && ((backend.supportsImageInput && (backend.supportsVisionForFamily?.(resolved.familyId, db) ?? true)) || backend.supportsImageViaFile)) {
           const fullPath = path.join(agentBlobDir, 'chat-attachments', att.filename);
           const imageResult = await readImageAsBase64Compressed(fullPath);
           if (imageResult) {
@@ -635,8 +652,14 @@ function handleSend(deps) {
     // Check if we have images to include
     const anyImages = presentMomentImageData?.thirdPerson || presentMomentImageData?.pov
       || panoramaData?.contactSheet || ownerImage || userImageAttachments.length > 0 || timelineImages.length > 0;
-    const hasImageStdin = backend.supportsImageInput && anyImages;   // Claude: base64 via stream-json stdin
-    const hasImageFiles = backend.supportsImageViaFile && anyImages; // Codex: --image file paths
+    // Phase 3 (os8-3-4): for HTTP backends, supportsImageInput is per-backend
+    // but actual vision capability is per-family. supportsVisionForFamily
+    // gates the local backend; non-local backends don't define it (the
+    // optional-chain returns undefined → ?? true keeps current behavior).
+    const _supportsImagesNow = backend.supportsImageInput
+      && (backend.supportsVisionForFamily?.(resolved.familyId, db) ?? true);
+    const hasImageStdin = _supportsImagesNow && anyImages;             // Claude: base64 via stream-json stdin; local: multimodal content parts
+    const hasImageFiles = backend.supportsImageViaFile && anyImages;   // Codex: --image file paths
     const hasImageDescriptions = backend.supportsImageDescriptions && imageDescriptions; // Grok: text descriptions
     const hasImages = hasImageStdin || hasImageFiles;
     const presentCount = (presentMomentImageData?.thirdPerson ? 1 : 0) + (presentMomentImageData?.pov ? 1 : 0);
@@ -802,7 +825,11 @@ function handleSend(deps) {
       stdinData,
       promptViaStdin: backend.promptViaStdin ? enrichedMessage : null,
       model: agentModel,
-      taskType: 'conversation'
+      taskType: 'conversation',
+      // Phase 3 (os8-3-4): for HTTP backends, attachments become OpenAI
+      // multimodal content parts in the request body. Non-HTTP backends
+      // ignore this opt (their image paths use stdin or --image flags).
+      attachments: (backend.type === 'http' && hasImageStdin) ? userImageAttachments : null
     });
 
     lap('cli-spawned');
@@ -1275,12 +1302,24 @@ function handleChat(deps) {
     let chatBackend = getBackend(chatBackendId);
     console.log(`[Routing] conversation/chat: ${chatResolved.familyId} via ${chatResolved.source}`);
 
+    // Phase 3 (os8-3-4): vision dispatch override (mirror of the first handler).
+    const _hasUserImageAttsChat = (attachments || []).some(a => a?.mimeType?.startsWith('image/'));
+    if (_hasUserImageAttsChat) {
+      const swapped = RoutingService.maybeSwapForVision(db, chatResolved, true);
+      if (swapped !== chatResolved) {
+        chatResolved = swapped;
+        chatBackendId = chatResolved.backendId;
+        chatBackend = getBackend(chatBackendId);
+        console.log(`[Routing] vision_override → ${chatResolved.familyId}`);
+      }
+    }
+
     // Process user attachments - read and compress images for the agent
     const userImageAttachments = [];
     let messageWithFileRefs = message;
     if (attachments && attachments.length > 0) {
       for (const att of attachments) {
-        if (att.mimeType && att.mimeType.startsWith('image/') && (chatBackend.supportsImageInput || chatBackend.supportsImageViaFile)) {
+        if (att.mimeType && att.mimeType.startsWith('image/') && ((chatBackend.supportsImageInput && (chatBackend.supportsVisionForFamily?.(chatResolved.familyId, db) ?? true)) || chatBackend.supportsImageViaFile)) {
           const fullPath = path.join(chatBlobDir, 'chat-attachments', att.filename);
           const imageResult = await readImageAsBase64Compressed(fullPath);
           if (imageResult) {
@@ -1547,7 +1586,9 @@ function handleChat(deps) {
       // Check if we have images to include
       const chatAnyImages = presentMomentImageData?.thirdPerson || presentMomentImageData?.pov
         || panoramaData?.contactSheet || ownerImage || userImageAttachments.length > 0 || timelineImages.length > 0;
-      const hasImageStdin = chatBackend.supportsImageInput && chatAnyImages;   // Claude: base64 via stream-json stdin
+      const _supportsImagesNowChat = chatBackend.supportsImageInput
+        && (chatBackend.supportsVisionForFamily?.(chatResolved.familyId, db) ?? true);
+      const hasImageStdin = _supportsImagesNowChat && chatAnyImages;   // Claude: base64 via stream-json stdin; local: multimodal content parts
       const hasImageFiles = chatBackend.supportsImageViaFile && chatAnyImages; // Codex: --image file paths
       const chatHasImageDescriptions = chatBackend.supportsImageDescriptions && chatImageDescriptions; // Grok: text descriptions
       const hasImages = hasImageStdin || hasImageFiles;
