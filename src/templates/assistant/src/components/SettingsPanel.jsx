@@ -481,20 +481,48 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
                           </optgroup>
                         </select>
                       </Field>
-                      {currentVoiceId && previewUrl && (
+                      {currentVoiceId && (
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             if (playingPreview === currentVoiceId) {
                               voiceAudioRef.current?.pause()
                               setPlayingPreview(null)
-                            } else {
-                              if (voiceAudioRef.current) voiceAudioRef.current.pause()
+                              return
+                            }
+                            if (voiceAudioRef.current) voiceAudioRef.current.pause()
+                            setPlayingPreview(currentVoiceId)
+                            // Hosted preview (ElevenLabs) — fast path.
+                            if (previewUrl) {
                               const audio = new Audio(previewUrl)
                               voiceAudioRef.current = audio
-                              setPlayingPreview(currentVoiceId)
                               audio.play()
                               audio.onended = () => setPlayingPreview(null)
+                              audio.onerror = () => setPlayingPreview(null)
+                              return
+                            }
+                            // No hosted preview (Kokoro, OpenAI) — generate via /api/speak.
+                            try {
+                              const res = await fetch(`${baseApiUrl}/api/speak`, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  text: `Hi, I'm ${selectedVoice?.name || currentVoiceName || 'a voice sample'}.`,
+                                  voiceId: currentVoiceId,
+                                  returnBase64: true
+                                })
+                              })
+                              if (!res.ok) throw new Error(`speak returned ${res.status}`)
+                              const data = await res.json()
+                              if (!data.base64) throw new Error('no audio in response')
+                              const audio = new Audio(`data:${data.mimeType || 'audio/mpeg'};base64,${data.base64}`)
+                              voiceAudioRef.current = audio
+                              audio.play()
+                              audio.onended = () => setPlayingPreview(null)
+                              audio.onerror = () => setPlayingPreview(null)
+                            } catch (err) {
+                              console.warn('Voice preview failed:', err)
+                              setPlayingPreview(null)
                             }
                           }}
                           className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
@@ -807,19 +835,51 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
                     saveTtsSetting(updates)
                   }
 
-                  const playPreview = (voiceId) => {
+                  const playPreview = async (voiceId) => {
                     const voice = voices.find(v => v.voiceId === voiceId)
-                    if (!voice?.previewUrl) return
+                    if (!voice) return
+                    // Toggle: clicking the currently-playing voice stops it.
                     if (playingDefaultPreview === voiceId) {
                       defaultAudioRef.current?.pause()
                       setPlayingDefaultPreview(null)
-                    } else {
-                      if (defaultAudioRef.current) defaultAudioRef.current.pause()
+                      return
+                    }
+                    if (defaultAudioRef.current) defaultAudioRef.current.pause()
+                    setPlayingDefaultPreview(voiceId)
+
+                    // Provider-supplied previewUrl (ElevenLabs) — fast path.
+                    if (voice.previewUrl) {
                       const audio = new Audio(voice.previewUrl)
                       defaultAudioRef.current = audio
-                      setPlayingDefaultPreview(voiceId)
                       audio.play()
                       audio.onended = () => setPlayingDefaultPreview(null)
+                      audio.onerror = () => setPlayingDefaultPreview(null)
+                      return
+                    }
+                    // No hosted preview (Kokoro, OpenAI) — generate one on-demand
+                    // via /api/speak with a short canned phrase. Slower (one
+                    // round-trip + audio decode) but works for any provider.
+                    try {
+                      const res = await fetch(`${baseApiUrl}/api/speak`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          text: `Hi, I'm ${voice.name || 'a voice sample'}.`,
+                          voiceId,
+                          returnBase64: true
+                        })
+                      })
+                      if (!res.ok) throw new Error(`speak returned ${res.status}`)
+                      const data = await res.json()
+                      if (!data.base64) throw new Error('no audio in response')
+                      const audio = new Audio(`data:${data.mimeType || 'audio/mpeg'};base64,${data.base64}`)
+                      defaultAudioRef.current = audio
+                      audio.play()
+                      audio.onended = () => setPlayingDefaultPreview(null)
+                      audio.onerror = () => setPlayingDefaultPreview(null)
+                    } catch (err) {
+                      console.warn('Voice preview failed:', err)
+                      setPlayingDefaultPreview(null)
                     }
                   }
 

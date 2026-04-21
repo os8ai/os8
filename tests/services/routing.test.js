@@ -186,14 +186,17 @@ describe('RoutingService', () => {
       expect(result.source).toBe('agent_override');
     });
 
-    it('ignores agent override for jobs (uses cascade)', () => {
+    it('honors agent override for jobs (Phase 1: agent override applies to all task types)', () => {
+      // Pre-Phase-1 behavior: agent override only applied to conversation, jobs/etc
+      // fell through to cascade. Phase 1 changed this so a user pinning their agent
+      // (especially to a local family) gets the pinned model for every task type.
+      // See routing.js:39-41 comment.
       const db = createMockDb({
         cascades: { jobs: [{ family_id: 'claude-haiku', access_method: 'api', enabled: 1, priority: 0 }] }
       });
       const result = RoutingService.resolve(db, 'jobs', 'claude-opus');
-      expect(result.source).toBe('cascade');
-      expect(result.familyId).toBe('claude-haiku');
-      expect(result.accessMethod).toBe('api');
+      expect(result.source).toBe('agent_override');
+      expect(result.familyId).toBe('claude-opus');
     });
 
     it('treats auto as cascade', () => {

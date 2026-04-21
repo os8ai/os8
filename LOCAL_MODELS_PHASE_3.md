@@ -612,3 +612,51 @@ Flagged for follow-up phases or sibling tracks:
 ```
 
 Acceptance (§0) passes after `os8-3-7`. 3-3 through 3-6 are independent and can be parallelized if reviewers are available.
+
+---
+
+## 9. Phase-3 cleanups (post-acceptance polish)
+
+After the seven-PR sequence, three small cleanups landed in a single follow-up commit. None changed the Phase-3 contract; all reduce friction.
+
+- **On-demand voice sample playback.** `SettingsPanel.jsx` "Play sample" buttons (default + per-agent voice pickers) used to bail when `voice.previewUrl` was null, which it is for both Kokoro and OpenAI (only ElevenLabs has hosted previews). Now they fall back to generating a sample on-demand via `POST /api/speak` with a canned phrase ("Hi, I'm <voice name>") and play the returned base64 audio. Works for any provider that supports generation.
+- **Stale `routing.test.js:194` test.** Carried as a known fail through Phase 1's "agent override applies to all task types" fix and every subsequent PR. Updated to assert the current behavior (agent override IS honored for jobs) so CI is fully green.
+- **`prestart` rebuild hook.** `npm test` rebuilds better-sqlite3 against system Node (ABI 143); `npm start` then crashes with `NODE_MODULE_VERSION 127 vs 143` because Electron 40 expects ABI 143 from the Electron-headers build. New `tools/check-electron-abi.js` reads a `node_modules/better-sqlite3/.built-for` marker (written by `tools/rebuild-native.js` on success) and rebuilds only if the marker doesn't match the current Electron version. Wired as `prestart` and `predev` so it never bites again — happy path adds <50ms.
+
+---
+
+## 10. Phase 2 — what still needs to ship (cross-reference)
+
+Phase 3 was built on top of an unimplemented Phase 2. Most of Phase 3 works fine without Phase 2 (mode toggle, TTS picker, image-gen routing, schema, ag-ui events) — but the **launcher can only serve one model at a time**, which means a user can't have local chat + local TTS + local image-gen running concurrently. That's the day-to-day usability gap.
+
+Phase 2's design lives at `LOCAL_MODELS_PHASE_2.md` (committed `a84d803`). Status of each PR:
+
+**Launcher side** (separate repo: `os8-launcher`):
+
+| PR | What | Status |
+|---|---|---|
+| `launcher-1` | State schema migration: `backend` (singular) → `backends` (dict keyed by instance_id); legacy-read shim; atomic state.yaml writes | **Not started** |
+| `launcher-2` | Remove the "only one backend" guard; port allocator (vllm-A on 8000, vllm-B on 8010); per-instance container/log naming; `docker rm -f` pre-start | **Not started** |
+| `launcher-3` | `POST /api/serve/ensure` (idempotent "make sure model is up"); `POST /api/serve/touch` (LRU signal); `/api/status/capabilities` returns per-task arrays | **Not started** |
+| `launcher-4` | LRU eviction; `resources.memory_budget_gb`; `resident:` config knob; auto-start resident set on launcher boot | **Not started** |
+| `launcher-5` | Polish: per-instance overrides in settings.yaml; ETA from load history; `GET /api/serve/{instance_id}/status` | **Not started (optional)** |
+
+**OS8 side** (this repo):
+
+| PR | What | Status |
+|---|---|---|
+| `os8-1` (Phase-2 schema prep) | Add `launcher_model` / `launcher_backend` columns to `ai_model_families`; family seeds | **Done** — folded into Phase-3 `os8-3-1` (schema + seeds) |
+| `os8-2` | `LauncherClient.ensureModel({model, backend})` + `touch(instance_id)` + `getInstanceStatus`; `createHttpProcess` calls ensure → poll-if-loading → fetch → touch; `sendTextPromptHttp` same; thread `resolved.launcher_model`/`launcher_backend` through `message-handler.js` | **Not started** — depends on `launcher-3` |
+| `os8-3` | Error-code UX in Chat.jsx for `LAUNCHER_UNREACHABLE` / `MODEL_NOT_DOWNLOADED` / `MODEL_LOADING` / `BUDGET_EXCEEDED` / `START_FAILED` | **Not started** |
+
+**What works without Phase 2:**
+- Mode toggle, family seeds, routing decisions, ag-ui event translation, TTS provider picker, image-gen dispatch, vision dispatch, tool-call synthesis, local-status endpoint — all built in Phase 3 and exercised by 443 unit tests.
+
+**What needs Phase 2:**
+- Concurrent local services (chat + TTS + image at the same time).
+- Auto-loading a model on demand instead of "you have to manually start the right one before chatting."
+- LRU eviction / resident-pool management on the DGX Spark's 128GB.
+
+**Recommended order when resuming:** `launcher-1` → `launcher-2` → `launcher-3` (unblocks OS8 integration) → `os8-2` (the ensureModel wire-up — the day-to-day "it just works" piece) → `launcher-4` (LRU + resident set, makes it nice) → `os8-3` (error UX polish) → `launcher-5` (optional polish).
+
+Estimated effort end-to-end: ~1 day of focused work, mostly on the launcher side.

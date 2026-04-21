@@ -18,10 +18,12 @@
  */
 
 const { execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const electronVersion = require('electron/package.json').version;
 const betterSqliteDir = path.join(__dirname, '..', 'node_modules', 'better-sqlite3');
+const markerPath = path.join(betterSqliteDir, '.built-for');
 
 console.log(`[postinstall] Rebuilding better-sqlite3 against Electron ${electronVersion} headers...`);
 
@@ -29,5 +31,11 @@ execSync(
   `npx node-gyp rebuild --target=${electronVersion} --dist-url=https://electronjs.org/headers --release`,
   { cwd: betterSqliteDir, stdio: 'inherit' }
 );
+
+// Write a marker so check-electron-abi.js can skip the rebuild on subsequent
+// `npm start` invocations when nothing has changed. The marker is invalidated
+// by `npm test` (pretest rebuilds against system Node, doesn't go through this
+// script) — the prestart hook then notices and rebuilds again.
+fs.writeFileSync(markerPath, `electron-${electronVersion}\n`);
 
 console.log('[postinstall] better-sqlite3 rebuild complete');
