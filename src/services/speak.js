@@ -76,7 +76,10 @@ class SpeakService {
     }
 
     const apiKey = TTSService.getApiKey(db);
-    if (!apiKey) {
+    // Phase 3-5 follow-up: local providers (Kokoro, API_KEY_ENV=null) get a
+    // null apiKey by design. Treat that as "no auth needed", not "missing key".
+    // The provider's generateAudio ignores the apiKey arg in that case.
+    if (apiKey === null && provider.API_KEY_ENV !== null) {
       throw new Error(`${provider.PROVIDER_ID} API key not configured. Add it in Settings > API Keys.`);
     }
 
