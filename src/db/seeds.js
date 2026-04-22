@@ -52,13 +52,16 @@ function seedData(db) {
     // /v1/chat/completions expects. For ollama-served families, the launcher translates
     // to the ollama tag on its side. TTS/image-gen families don't use cli_model_arg at
     // runtime (their dispatch paths go through tts.js / imagegen.js, not the chat route).
-    insertFamily.run('local-gemma-4-31b',      'local', 'Gemma-4-31B',      'Gemma 4 31B (local)',      'gemma-4-31B-it-nvfp4', 0, 0);
-    insertFamily.run('local-gemma-4-e2b',      'local', 'Gemma-4-E2B',      'Gemma 4 E2B (local)',      'gemma-4-E2B-it',       0, 3);
-    insertFamily.run('local-qwen3-coder-30b',  'local', 'Qwen3-Coder-30B',  'Qwen3 Coder 30B (local)',  'qwen3-coder-30b',      0, 4);
-    insertFamily.run('local-qwen3-coder-next', 'local', 'Qwen3-Coder-Next', 'Qwen3 Coder Next (local)', 'qwen3-coder-next',     0, 5);
-    insertFamily.run('local-qwen3-6-35b-a3b',  'local', 'Qwen3.6-35B',      'Qwen3.6 35B (local)',      'qwen3-6-35b-a3b',      0, 6);
-    insertFamily.run('local-kokoro-v1',        'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',    'kokoro-v1',            0, 7);
-    insertFamily.run('local-flux1-schnell',    'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',   'flux1-schnell',        0, 8);
+    insertFamily.run('local-gemma-4-31b',         'local', 'Gemma-4-31B',      'Gemma 4 31B (local)',                          'gemma-4-31B-it-nvfp4', 0, 0);
+    insertFamily.run('local-gemma-4-e2b',         'local', 'Gemma-4-E2B',      'Gemma 4 E2B (local)',                          'gemma-4-E2B-it',       0, 3);
+    insertFamily.run('local-qwen3-coder-30b',     'local', 'Qwen3-Coder-30B',  'Qwen3 Coder 30B (local)',                      'qwen3-coder-30b',      0, 4);
+    insertFamily.run('local-qwen3-coder-next',    'local', 'Qwen3-Coder-Next', 'Qwen3 Coder Next (local)',                     'qwen3-coder-next',     0, 5);
+    insertFamily.run('local-qwen3-6-35b-a3b',     'local', 'Qwen3.6-35B',      'Qwen3.6 35B (local)',                          'qwen3-6-35b-a3b',      0, 6);
+    insertFamily.run('local-kokoro-v1',           'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',                        'kokoro-v1',            0, 7);
+    insertFamily.run('local-flux1-schnell',       'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',                       'flux1-schnell',        0, 8);
+    // v2 plan (LOCAL_MODELS_PLAN.md): flux1-kontext-dev is the image slot —
+    // reference-image conditioned generation/editing.
+    insertFamily.run('local-flux1-kontext-dev',   'local', 'Flux.1-Kontext',   'Flux.1 Kontext (local, reference-conditioned)', 'flux1-kontext-dev',   0, 9);
     // Image generation families (use existing containers for login auth inheritance)
     insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
     insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
@@ -284,17 +287,21 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'openai-dalle':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 },
       'grok-imagine':       { cost_tier: 3, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 3 },
       // Local families — cost_tier 1 (no marginal cost on the user's GPU).
-      // Capability scores are conservative starting points; tune after real eval (Phase 5).
-      'local-gemma-4-31b':       { cost_tier: 1, cap_chat: 3, cap_jobs: 2, cap_planning: 3, cap_coding: 2, cap_summary: 3 },
-      'local-gemma-4-e2b':       { cost_tier: 1, cap_chat: 2, cap_jobs: 1, cap_planning: 1, cap_coding: 1, cap_summary: 3 },
-      'local-qwen3-coder-30b':   { cost_tier: 1, cap_chat: 2, cap_jobs: 4, cap_planning: 3, cap_coding: 4, cap_summary: 2 },
-      'local-qwen3-coder-next':  { cost_tier: 1, cap_chat: 2, cap_jobs: 5, cap_planning: 4, cap_coding: 5, cap_summary: 2 },
-      'local-qwen3-6-35b-a3b':   { cost_tier: 1, cap_chat: 3, cap_jobs: 3, cap_planning: 3, cap_coding: 2, cap_summary: 3 },
-      // Kokoro and Flux are out of the LLM cascade — TTS goes through tts.js facade,
-      // image-gen through imagegen.js. Seed zero caps except cap_image for Flux, whose
-      // image-task eligibility is what surfaces it in the image routing cascade.
-      'local-kokoro-v1':         { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
-      'local-flux1-schnell':     { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 }
+      // v2 plan (LOCAL_MODELS_PLAN.md): qwen3-6-35b-a3b is the text workhorse,
+      // flux1-kontext-dev the image workhorse. Retired families (gemma-*,
+      // qwen3-coder-*, flux1-schnell) keep zero caps so they never win
+      // cascades but stay in the DB for rollback.
+      'local-gemma-4-31b':          { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0 },
+      'local-gemma-4-e2b':          { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0 },
+      'local-qwen3-coder-30b':      { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0 },
+      'local-qwen3-coder-next':     { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0 },
+      // qwen3-6-35b-a3b — v2 chat slot, covers all text tasks + vision.
+      'local-qwen3-6-35b-a3b':      { cost_tier: 1, cap_chat: 4, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
+      // Kokoro is out of the LLM cascade — TTS goes through tts.js facade.
+      'local-kokoro-v1':            { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
+      // flux1-schnell retired in v2; kontext-dev is the image slot.
+      'local-flux1-schnell':        { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
+      'local-flux1-kontext-dev':    { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 4 }
     };
     // Always update to latest scores (unconditional)
     const stmt = db.prepare(`UPDATE ai_model_families SET cost_tier = ?, cap_chat = ?, cap_jobs = ?, cap_planning = ?, cap_coding = ?, cap_summary = ?, cap_image = ? WHERE id = ?`);
@@ -315,16 +322,17 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'gemini-imagen':  'image',
       'openai-dalle':   'image',
       'grok-imagine':   'image',
-      // Local families — restrict to the task types each model is actually good at.
-      // qwen3-coder-* handle jobs/coding; gemma-4-31B handles conversation/summary/planning;
-      // qwen3.6-35B is conversation-only (vision is picked via supports_vision at dispatch).
-      // kokoro is out-of-cascade (TTS facade); flux1-schnell covers image.
-      'local-gemma-4-31b':       'conversation,summary,planning',
-      'local-gemma-4-e2b':       'conversation,summary',
-      'local-qwen3-coder-30b':   'coding,jobs',
-      'local-qwen3-coder-next':  'coding,jobs',
-      'local-qwen3-6-35b-a3b':   'conversation',
-      'local-flux1-schnell':     'image',
+      // v2 triplet: qwen3-6-35b-a3b is the single text workhorse (all
+      // tasks + vision at dispatch time); flux1-kontext-dev is the image
+      // workhorse (reference-conditioned). Retired families carry empty
+      // eligible_tasks so they never surface in cascades.
+      'local-gemma-4-31b':           '',
+      'local-gemma-4-e2b':           '',
+      'local-qwen3-coder-30b':       '',
+      'local-qwen3-coder-next':      '',
+      'local-qwen3-6-35b-a3b':       'conversation,summary,planning,coding,jobs',
+      'local-flux1-schnell':         '',
+      'local-flux1-kontext-dev':     'image',
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET eligible_tasks = ? WHERE id = ?`);
     for (const [id, tasks] of Object.entries(eligibility)) {
@@ -339,13 +347,14 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
   // Phase 3-2 onward.
   const backfillLauncherMetadata = db.transaction(() => {
     const meta = {
-      'local-gemma-4-31b':       { launcher_model: 'gemma-4-31B-it-nvfp4', launcher_backend: 'vllm',         supports_vision: 0 },
-      'local-gemma-4-e2b':       { launcher_model: 'gemma-4-E2B-it',       launcher_backend: 'vllm',         supports_vision: 0 },
-      'local-qwen3-coder-30b':   { launcher_model: 'qwen3-coder-30b',      launcher_backend: 'ollama',       supports_vision: 0 },
-      'local-qwen3-coder-next':  { launcher_model: 'qwen3-coder-next',     launcher_backend: 'vllm',         supports_vision: 0 },
-      'local-qwen3-6-35b-a3b':   { launcher_model: 'qwen3-6-35b-a3b',      launcher_backend: 'vllm',         supports_vision: 1 },
-      'local-kokoro-v1':         { launcher_model: 'kokoro-v1',            launcher_backend: 'kokoro',       supports_vision: 0 },
-      'local-flux1-schnell':     { launcher_model: 'flux1-schnell',        launcher_backend: 'comfyui',      supports_vision: 0 },
+      'local-gemma-4-31b':          { launcher_model: 'gemma-4-31B-it-nvfp4', launcher_backend: 'vllm',    supports_vision: 0 },
+      'local-gemma-4-e2b':          { launcher_model: 'gemma-4-E2B-it',       launcher_backend: 'vllm',    supports_vision: 0 },
+      'local-qwen3-coder-30b':      { launcher_model: 'qwen3-coder-30b',      launcher_backend: 'ollama',  supports_vision: 0 },
+      'local-qwen3-coder-next':     { launcher_model: 'qwen3-coder-next',     launcher_backend: 'vllm',    supports_vision: 0 },
+      'local-qwen3-6-35b-a3b':      { launcher_model: 'qwen3-6-35b-a3b',      launcher_backend: 'vllm',    supports_vision: 1 },
+      'local-kokoro-v1':            { launcher_model: 'kokoro-v1',            launcher_backend: 'kokoro',  supports_vision: 0 },
+      'local-flux1-schnell':        { launcher_model: 'flux1-schnell',        launcher_backend: 'comfyui', supports_vision: 0 },
+      'local-flux1-kontext-dev':    { launcher_model: 'flux1-kontext-dev',    launcher_backend: 'comfyui', supports_vision: 0 },
     };
     const stmt = db.prepare(`UPDATE ai_model_families SET launcher_model = ?, launcher_backend = ?, supports_vision = ? WHERE id = ?`);
     for (const [id, m] of Object.entries(meta)) {

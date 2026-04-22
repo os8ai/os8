@@ -147,11 +147,48 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+/**
+ * Upload a reference image to ComfyUI's `/upload/image` endpoint. Returns the
+ * filename the Kontext workflow's LoadImage node should reference. ComfyUI's
+ * response shape is `{ name, subfolder, type }`; we combine subfolder/name
+ * into the form LoadImage expects (e.g. `sub/name.png`).
+ *
+ * Used by the Kontext path (v2 plan, LOCAL_MODELS_PLAN.md) because Kontext
+ * requires a reference image. The Buffer/base64 data gets wrapped in a Blob
+ * and POSTed as multipart/form-data — same shape as the launcher's image-gen
+ * client.
+ *
+ * @param {string} baseUrl
+ * @param {Buffer|string} imageData - either a Buffer of raw bytes, or a base64 string
+ * @param {string} mimeType - e.g. 'image/png' / 'image/jpeg'
+ * @param {string} [filename='reference.png'] - display filename (ComfyUI may rewrite on disk collision)
+ * @returns {Promise<string>} the reference filename LoadImage should use
+ */
+async function uploadReference(baseUrl, imageData, mimeType = 'image/png', filename = 'reference.png') {
+  const buffer = Buffer.isBuffer(imageData) ? imageData : Buffer.from(imageData, 'base64');
+  const blob = new Blob([buffer], { type: mimeType });
+  const form = new FormData();
+  form.append('image', blob, filename);
+  form.append('overwrite', 'true');
+
+  const res = await fetch(`${baseUrl}/upload/image`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`ComfyUI /upload/image returned ${res.status}: ${text.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  if (!data?.name) {
+    throw new Error(`ComfyUI /upload/image returned no filename: ${JSON.stringify(data).slice(0, 200)}`);
+  }
+  return data.subfolder ? `${data.subfolder}/${data.name}` : data.name;
+}
+
 module.exports = {
   resolveBaseUrl,
   submitWorkflow,
   pollUntilDone,
   fetchImage,
   extractImageRefs,
+  uploadReference,
   DEFAULT_BASE
 };

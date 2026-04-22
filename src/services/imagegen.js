@@ -14,6 +14,7 @@ const { BLOB_DIR } = require('../config');
 const EnvService = require('./env');
 const ComfyUIClient = require('./comfyui-client');
 const { buildFluxText2ImageWorkflow, FLUX_MODEL_DEFAULTS } = require('./comfyui-workflows/flux-text2image');
+const { buildFluxKontextWorkflow, KONTEXT_DEFAULTS } = require('./comfyui-workflows/flux-kontext-edit');
 
 // Image files directory
 const IMAGEGEN_DIR = path.join(BLOB_DIR, 'imagegen');
@@ -204,8 +205,10 @@ class ImageGenService {
       'gemini-imagen': 'gemini',
       'openai-dalle': 'openai',
       'grok-imagine': 'grok',
-      'local-flux1-schnell': 'comfyui',
-      'local-flux1-dev':     'comfyui'
+      'local-flux1-schnell':    'comfyui',
+      'local-flux1-dev':        'comfyui',
+      // v2 plan (LOCAL_MODELS_PLAN.md): Kontext is the active image slot.
+      'local-flux1-kontext-dev': 'comfyui'
     };
     return map[familyId] || null;
   }
@@ -218,8 +221,9 @@ class ImageGenService {
       'gemini-imagen': 'google',
       'openai-dalle': 'openai',
       'grok-imagine': 'xai',
-      'local-flux1-schnell': 'local',
-      'local-flux1-dev':     'local'
+      'local-flux1-schnell':    'local',
+      'local-flux1-dev':        'local',
+      'local-flux1-kontext-dev': 'local'
     };
     return map[familyId] || null;
   }
@@ -366,10 +370,14 @@ class ImageGenService {
         } else if (entry.provider === 'grok') {
           result = await this.generateWithGrok(auth, prompt, referenceImages, genOptions);
         } else if (entry.provider === 'comfyui') {
-          // Phase 3 §4.5 — local image-gen via ComfyUI workflow templates.
-          // Reference images aren't supported here (Kontext is image-edit,
-          // out of Phase-3 scope); the workflow is text-to-image only.
-          result = await this.generateWithComfyUI(prompt, entry.familyId, genOptions);
+          // Phase 3 §4.5 / v2 plan — local image-gen via ComfyUI workflow
+          // templates. The dispatcher branches internally between text-to-
+          // image (schnell/dev) and reference-conditioned (kontext). For
+          // Kontext the caller can pass referenceImagePaths or the option
+          // `defaultReferencePath` (agent portrait).
+          // Pass `options` directly so defaultReferencePath (if present)
+          // flows through untouched.
+          result = await this.generateWithComfyUI(prompt, entry.familyId, options, referenceImages);
         } else {
           result = await this.generateWithGemini(auth, prompt, referenceImages, genOptions);
         }
@@ -631,40 +639,68 @@ class ImageGenService {
    * - With reference images: Uses Gemini generateContent API
    */
   /**
-   * Generate with ComfyUI (Phase 3 §4.5).
+   * Generate with ComfyUI. Branches by family:
+   *   - `local-flux1-schnell` / `local-flux1-dev` → text-to-image
+   *   - `local-flux1-kontext-dev` → reference-conditioned (v2 plan default)
    *
    * No auth — local ComfyUI listens on the launcher's port without keys.
-   * Reference images are not supported here (text-to-image only); the
-   * Kontext image-edit family is out of Phase-3 scope.
    *
-   * Flow:
-   *   1. Resolve ComfyUI base_url from launcher caps (fallback :8188).
-   *   2. Map family → modelName for the workflow template.
-   *   3. POST workflow to /prompt → prompt_id.
-   *   4. Poll /history/{prompt_id} until complete.
-   *   5. Fetch each output image via /view → save to imagegen blob dir.
+   * Kontext requires a reference image. When `referenceImages` is empty,
+   * falls back to `options.defaultReferencePath` (a filesystem path — the
+   * agent's portrait, typically). When neither is provided, throws a clear
+   * error rather than fabricating a blank canvas (unpredictable output).
    */
-  static async generateWithComfyUI(prompt, familyId, options = {}) {
+  static async generateWithComfyUI(prompt, familyId, options = {}, referenceImages = []) {
     const baseUrl = await ComfyUIClient.resolveBaseUrl();
 
-    // Map family → ComfyUI's model directory name. The launcher's container
-    // bind-mounts each model under /app/models/.../<modelName>/, so this name
-    // must match the launcher's `models:` key in config.yaml.
     const modelName = ({
-      'local-flux1-schnell': 'flux1-schnell',
-      'local-flux1-dev':     'flux1-dev'
+      'local-flux1-schnell':     'flux1-schnell',
+      'local-flux1-dev':         'flux1-dev',
+      'local-flux1-kontext-dev': 'flux1-kontext-dev'
     })[familyId] || 'flux1-schnell';
 
-    const defaults = FLUX_MODEL_DEFAULTS[modelName] || { steps: 4 };
-    const width = options.width || 1024;
-    const height = options.height || 1024;
-    const steps = options.steps || defaults.steps;
-    const seed = (options.seed != null) ? options.seed : -1;
-
-    const workflow = buildFluxText2ImageWorkflow({ modelName, prompt, width, height, steps, seed });
+    const isKontext = modelName === 'flux1-kontext-dev';
     const clientId = crypto.randomUUID().replace(/-/g, '');
 
-    console.log(`ImageGen: ComfyUI ${modelName} ${width}x${height} steps=${steps} seed=${seed}`);
+    let workflow;
+    if (isKontext) {
+      // Kontext path — reference-conditioned. If no references were passed,
+      // try the default-reference fallback (agent portrait) before failing.
+      let refs = referenceImages;
+      if ((!refs || refs.length === 0) && options.defaultReferencePath) {
+        const loaded = this.loadReferenceImagesFromPaths([options.defaultReferencePath]);
+        refs = loaded;
+        console.log(`ImageGen: Kontext using default reference ${options.defaultReferencePath}`);
+      }
+      if (!refs || refs.length === 0) {
+        throw new Error(
+          `flux1-kontext-dev requires a reference image. Pass referenceImages / referenceImagePaths, ` +
+          `or options.defaultReferencePath (typically the agent's portrait).`
+        );
+      }
+      // Kontext only uses one reference; upload it to ComfyUI first.
+      const ref = refs[0];
+      if (refs.length > 1) {
+        console.log(`ImageGen: Kontext uses 1 reference; ignoring ${refs.length - 1} extra.`);
+      }
+      const buffer = ref.buffer || Buffer.from(ref.data, 'base64');
+      const referenceFilename = await ComfyUIClient.uploadReference(
+        baseUrl, buffer, ref.mimeType || 'image/png', 'kontext-ref.png'
+      );
+      const steps = options.steps || (KONTEXT_DEFAULTS[modelName]?.steps ?? 28);
+      const seed = (options.seed != null) ? options.seed : -1;
+      console.log(`ImageGen: ComfyUI Kontext steps=${steps} seed=${seed} ref=${referenceFilename}`);
+      workflow = buildFluxKontextWorkflow({ prompt, referenceFilename, steps, seed });
+    } else {
+      // Schnell / dev — text-to-image, no reference.
+      const defaults = FLUX_MODEL_DEFAULTS[modelName] || { steps: 4 };
+      const width = options.width || 1024;
+      const height = options.height || 1024;
+      const steps = options.steps || defaults.steps;
+      const seed = (options.seed != null) ? options.seed : -1;
+      console.log(`ImageGen: ComfyUI ${modelName} ${width}x${height} steps=${steps} seed=${seed}`);
+      workflow = buildFluxText2ImageWorkflow({ modelName, prompt, width, height, steps, seed });
+    }
 
     const promptId = await ComfyUIClient.submitWorkflow(baseUrl, workflow, clientId);
     const outputs = await ComfyUIClient.pollUntilDone(baseUrl, promptId);
@@ -673,17 +709,10 @@ class ImageGenService {
       throw new Error('ComfyUI completed but produced no images');
     }
 
-    // Fetch each generated image, save to imagegen blob dir using the
-    // existing saveImages pipeline (matches metadata sidecar conventions).
     const imageParts = [];
     for (const ref of refs) {
       const buf = await ComfyUIClient.fetchImage(baseUrl, ref);
-      imageParts.push({
-        b64_json: buf.toString('base64'),
-        // ComfyUI emits PNG by default; magic-byte detection in saveImages
-        // handles edge cases.
-        mimeType: 'image/png'
-      });
+      imageParts.push({ b64_json: buf.toString('base64'), mimeType: 'image/png' });
     }
 
     const images = await this.saveImages(imageParts, prompt, 'comfyui', modelName);
