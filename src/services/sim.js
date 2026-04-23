@@ -510,9 +510,24 @@ const SimService = {
         const allRefs = [refs.headshot, refs.body].filter(Boolean);
         const portraitOutputBase = path.join(outputDir, `${ts}-${stem}`);
 
-        // Provider selection: use requested provider first, fall back to the other
-        const preferredProvider = lifeData.provider || 'gemini';
-        const fallbackProvider = preferredProvider === 'grok' ? 'gemini' : 'grok';
+        // Provider selection: consult the image routing cascade so ai_mode=local
+        // picks comfyui/kontext. Honor explicit lifeData.provider first, then
+        // walk the cascade in order for fallback.
+        const ImageGenService = require('./imagegen');
+        const cascade = ImageGenService.resolveImageProviders(db);
+        const cascadeProviders = [];
+        for (const entry of cascade) {
+          if (!cascadeProviders.includes(entry.provider)) cascadeProviders.push(entry.provider);
+        }
+
+        let providersToTry;
+        if (lifeData.provider) {
+          providersToTry = [lifeData.provider, ...cascadeProviders.filter(p => p !== lifeData.provider)];
+        } else if (cascadeProviders.length > 0) {
+          providersToTry = cascadeProviders;
+        } else {
+          providersToTry = ['gemini', 'grok'];
+        }
 
         const tryProvider = async (provider) => {
           const isGrok = provider === 'grok';
@@ -528,15 +543,23 @@ const SimService = {
           });
         };
 
-        try {
-          portraitResult = await tryProvider(preferredProvider);
-        } catch (err) {
-          console.warn(`SimService: ${preferredProvider} portrait failed (${err.message}), trying ${fallbackProvider}`);
+        let lastErr = null;
+        for (let i = 0; i < providersToTry.length; i++) {
+          const provider = providersToTry[i];
           try {
-            portraitResult = await tryProvider(fallbackProvider);
-          } catch (fallbackErr) {
-            console.error(`SimService: Portrait generation failed entirely: ${fallbackErr.message}`);
+            portraitResult = await tryProvider(provider);
+            lastErr = null;
+            break;
+          } catch (err) {
+            lastErr = err;
+            const next = providersToTry[i + 1];
+            if (next) {
+              console.warn(`SimService: ${provider} portrait failed (${err.message}), trying ${next}`);
+            }
           }
+        }
+        if (lastErr && !portraitResult) {
+          console.error(`SimService: Portrait generation failed entirely: ${lastErr.message}`);
         }
 
         // Store portrait in DB if generated
