@@ -731,6 +731,31 @@ const WorkQueue = {
     const backend = getBackend(backendId);
     console.log(`[Routing] jobs/spawnTextOnlyCli: ${textResolved.familyId} via ${textResolved.source}`);
 
+    // HTTP backends (local launcher) have no CLI to spawn — route through
+    // the HTTP path just like createHttpProcess does for streaming. Phase 2B
+    // wired launcher_model/launcher_backend onto textResolved for local
+    // families, so sendTextPromptHttp can ensureModel + POST without extra
+    // lookups. Returns the completion text directly; bypasses the spawn
+    // branch entirely.
+    if (backend.type === 'http') {
+      console.log(`[WorkQueue] HTTP dispatch (text-only) via ${textResolved.launcher_model || 'unknown'} [backend: ${backendId}]`);
+      const { sendTextPromptHttp } = require('./cli-runner');
+      try {
+        // Wrap in a timeout so a hung launcher doesn't block the work-queue
+        // executor indefinitely. `timeoutMs` is already bounded by the caller.
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`HTTP text-only timed out after ${Math.round(timeoutMs / 60000)} minutes`)), timeoutMs);
+        });
+        const text = await Promise.race([
+          sendTextPromptHttp(textResolved, prompt, { taskType: 'jobs' }),
+          timeoutPromise
+        ]);
+        return text;
+      } catch (err) {
+        throw new Error(`${backend.label} (text-only HTTP) failed: ${err.message}`);
+      }
+    }
+
     // Prepare environment
     const env = prepareSpawnEnv(db, backendId, textResolved.accessMethod);
 
