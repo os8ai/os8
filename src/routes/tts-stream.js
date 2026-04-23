@@ -64,7 +64,12 @@ function createTTSStreamHandler({ db, services }) {
       const providerName = TTSService.getProviderName(db)
       wss.handleUpgrade(request, socket, head, (clientWs) => {
         if (providerName === 'openai') {
-          handleOpenAIConnection(clientWs, apiKey, db)
+          handleHttpStreamingConnection(clientWs, apiKey, db, require('../services/tts-openai'), 'OpenAI')
+        } else if (providerName === 'kokoro') {
+          // Kokoro has no WebSocket endpoint (like OpenAI) — same streamAudioChunked
+          // interface, reuse the HTTP-streaming handler. apiKey will be null
+          // since Kokoro has no auth; provider.streamAudioChunked ignores it.
+          handleHttpStreamingConnection(clientWs, apiKey, db, require('../services/tts-kokoro'), 'Kokoro')
         } else {
           handleElevenLabsConnection(clientWs, apiKey, db)
         }
@@ -259,11 +264,19 @@ function handleElevenLabsConnection(clientWs, apiKey, db) {
 // OpenAI HTTP streaming path
 // ============================================
 
-function handleOpenAIConnection(clientWs, apiKey, db) {
-  console.log('TTSStream: Client connected (OpenAI)')
+/**
+ * Generic HTTP-streaming TTS handler — works for any provider whose module
+ * exports `streamAudioChunked(apiKey, text, voiceId, options, onChunk, onDone, onError)`
+ * and a `DEFAULTS.model` default. OpenAI and Kokoro both fit.
+ *
+ * The handler buffers text between flush events, POSTs the buffered text to
+ * the provider on flush, and streams PCM audio back to the browser over the
+ * already-open WebSocket. No upstream WebSocket — the provider's HTTP-streamed
+ * response is adapted to chunks on our side.
+ */
+function handleHttpStreamingConnection(clientWs, apiKey, db, provider, label) {
+  console.log(`TTSStream: Client connected (${label})`)
   activeConnections.add(clientWs)
-
-  const OpenAIProvider = require('../services/tts-openai')
 
   let textBuffer = ''
   let abortFn = null
@@ -292,13 +305,13 @@ function handleOpenAIConnection(clientWs, apiKey, db) {
 
           // If flush flag on text message, trigger immediate flush
           if (message.flush) {
-            flushOpenAI()
+            flushProvider()
           }
           break
 
         case 'flush':
           console.log('TTSStream: Received flush command from client')
-          flushOpenAI()
+          flushProvider()
           break
 
         case 'cancel':
@@ -320,7 +333,7 @@ function handleOpenAIConnection(clientWs, apiKey, db) {
     }
   })
 
-  function flushOpenAI() {
+  function flushProvider() {
     const text = textBuffer.trim()
     textBuffer = ''
 
@@ -345,13 +358,13 @@ function handleOpenAIConnection(clientWs, apiKey, db) {
     }
 
     streaming = true
-    console.log('TTSStream: Starting OpenAI stream for', text.length, 'chars')
+    console.log(`TTSStream: Starting ${label} stream for ${text.length} chars`)
 
-    abortFn = OpenAIProvider.streamAudioChunked(
+    abortFn = provider.streamAudioChunked(
       apiKey,
       text,
       voiceId,
-      { model: settings?.model || OpenAIProvider.DEFAULTS.model, speed: settings?.speed ?? 1.0 },
+      { model: settings?.model || provider.DEFAULTS.model, speed: settings?.speed ?? 1.0 },
       // onChunk
       (base64Data) => {
         if (clientWs.readyState === WebSocket.OPEN) {
@@ -362,19 +375,19 @@ function handleOpenAIConnection(clientWs, apiKey, db) {
       () => {
         streaming = false
         abortFn = null
-        console.log('TTSStream: OpenAI stream complete')
+        console.log(`TTSStream: ${label} stream complete`)
 
         // If more text was buffered during streaming, flush it
         if (textBuffer.trim()) {
           console.log('TTSStream: Processing queued text after stream complete')
-          flushOpenAI()
+          flushProvider()
         } else if (clientWs.readyState === WebSocket.OPEN) {
           clientWs.send(JSON.stringify({ type: 'done' }))
         }
       },
       // onError
       (err) => {
-        console.error('TTSStream: OpenAI stream error:', err.message)
+        console.error(`TTSStream: ${label} stream error:`, err.message)
         if (clientWs.readyState === WebSocket.OPEN) {
           clientWs.send(JSON.stringify({ type: 'error', message: err.message }))
         }
