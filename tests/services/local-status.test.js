@@ -167,4 +167,47 @@ describe('GET /api/ai/local-status (Phase 3 §0 acceptance #7)', () => {
     expect(body.families.every(f => f.id.startsWith('local-'))).toBe(true);
     expect(body.families.find(f => f.id === 'claude-opus')).toBeUndefined();
   });
+
+  it('returns slots: [chat, image, voice] reflecting triplet serving state', async () => {
+    global.fetch = vi.fn(async (url) => {
+      if (url.endsWith('/api/health')) return { ok: true, json: async () => ({}) };
+      if (url.endsWith('/api/status/capabilities')) {
+        return {
+          ok: true,
+          json: async () => ({
+            // chat slot (qwen3-6-35b-a3b) serving; image not; voice serving.
+            conversation: [{ model: 'qwen3-6-35b-a3b' }],
+            tts:          [{ model: 'kokoro-v1' }]
+          })
+        };
+      }
+    });
+    const app = makeApp(db);
+    const { body } = await get(app, '/api/ai/local-status');
+    expect(body.slots).toBeTruthy();
+    expect(body.slots.map(s => s.slot)).toEqual(['chat', 'image', 'voice']);
+
+    const bySlot = Object.fromEntries(body.slots.map(s => [s.slot, s]));
+    expect(bySlot.chat.model).toBe('qwen3-6-35b-a3b');
+    expect(bySlot.chat.serving).toBe(true);
+    expect(bySlot.chat.loading).toBe(false);
+
+    expect(bySlot.image.model).toBe('flux1-kontext-dev');
+    expect(bySlot.image.serving).toBe(false);
+    // launcher reachable + not serving → loading (may be mid-warm-up).
+    expect(bySlot.image.loading).toBe(true);
+
+    expect(bySlot.voice.model).toBe('kokoro-v1');
+    expect(bySlot.voice.serving).toBe(true);
+  });
+
+  it('slots all show loading=false when launcher is unreachable', async () => {
+    global.fetch = vi.fn(async () => { throw new Error('ECONNREFUSED'); });
+    const app = makeApp(db);
+    const { body } = await get(app, '/api/ai/local-status');
+    for (const s of body.slots) {
+      expect(s.serving).toBe(false);
+      expect(s.loading).toBe(false);
+    }
+  });
 });

@@ -498,6 +498,94 @@
       margin-bottom: 10px;
     }
 
+    /* AI Models — Local mode panel (Phase B) */
+    #aiModeSection {
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .ai-mode-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .ai-mode-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .ai-mode-label {
+      font-size: var(--text-md);
+      color: var(--color-text);
+    }
+
+    .ai-mode-hint {
+      font-size: var(--text-sm);
+      color: var(--color-text-muted);
+    }
+
+    .local-slots {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .local-slot {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px;
+      border: 1px solid var(--color-border);
+      border-radius: 6px;
+      background: var(--color-bg-secondary);
+    }
+
+    .local-slot .slot-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .local-slot .slot-label {
+      font-size: var(--text-sm);
+      font-weight: 600;
+      color: var(--color-text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .local-slot .slot-model {
+      font-size: var(--text-sm);
+      color: var(--color-text-muted);
+      font-family: var(--font-mono, monospace);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .slot-status {
+      font-size: var(--text-sm);
+    }
+
+    .slot-status[data-status="serving"] { color: var(--color-success, #1f9d55); }
+    .slot-status[data-status="loading"] { color: var(--color-warning, #d08d2f); }
+    .slot-status[data-status="offline"] { color: var(--color-text-muted); }
+    .slot-status[data-status="error"]   { color: var(--color-danger,  #c14242); }
+
+    .ai-mode-error {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(193, 66, 66, 0.12);
+      color: var(--color-danger, #c14242);
+      font-size: var(--text-sm);
+    }
+
     .provider-status-table {
       width: 100%;
       border-collapse: collapse;

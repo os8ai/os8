@@ -322,6 +322,49 @@ function createAIRegistryRouter(db) {
     }
   });
 
+  // --- Local mode lifecycle (Phase B) ---
+  //
+  // Flip + warm in one call. `start` fires ensureModel for each slot with
+  // wait=false (returns immediately whether the launcher is preloading or
+  // already serving) and writes ai_mode='local'. The UI polls /local-status
+  // for per-slot progress rather than blocking on warm-up here.
+  //
+  // `stop` only flips the flag. We don't stop launcher residents: other tools
+  // (Open WebUI, aider, etc.) may be hitting the launcher too, and the launcher
+  // owns its own lifecycle policy. Per v2 plan.
+
+  router.post('/local-mode/start', async (req, res) => {
+    try {
+      const { LOCAL_TRIPLET, SLOT_ORDER } = require('../services/local-triplet');
+      const LauncherClient = require('../services/launcher-client');
+
+      const results = await Promise.all(SLOT_ORDER.map(async (slot) => {
+        const { model, backend } = LOCAL_TRIPLET[slot];
+        try {
+          const out = await LauncherClient.ensureModel({ model, backend, wait: false });
+          return { slot, model, status: out?.status || 'unknown' };
+        } catch (err) {
+          return { slot, model, status: 'error', error: { code: err.code, message: err.message } };
+        }
+      }));
+
+      RoutingService.setMode(db, 'local');
+
+      res.json({ success: true, mode: 'local', slots: results });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.post('/local-mode/stop', (req, res) => {
+    try {
+      RoutingService.setMode(db, 'proprietary');
+      res.json({ success: true, mode: 'proprietary' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // --- Local status (Phase 3 §0 acceptance #7) ---
 
   /**
@@ -386,9 +429,30 @@ function createAIRegistryRouter(db) {
         };
       });
 
+      // Phase B — triplet slot view. Cleaner shape for the Settings UI; the
+      // `families` field above stays for consumers that want every local
+      // family (onboarding preflight, debug views).
+      const { LOCAL_TRIPLET, SLOT_ORDER } = require('../services/local-triplet');
+      const slots = SLOT_ORDER.map(slot => {
+        const { model, label } = LOCAL_TRIPLET[slot];
+        const serving = servingByModel.has(model);
+        return {
+          slot,
+          label,
+          model,
+          serving,
+          // `loading` is a best-effort inference: launcher is up, model isn't
+          // serving yet. Could be mid-warm-up, could be "never started".
+          // The start endpoint just fired ensureModel, so during the window
+          // immediately after toggle-on this will correctly read as loading.
+          loading: reachable && !serving
+        };
+      });
+
       res.json({
         ai_mode: RoutingService.getMode(db),
         launcher: { reachable, base_url: baseUrl },
+        slots,
         families: enriched
       });
     } catch (err) {

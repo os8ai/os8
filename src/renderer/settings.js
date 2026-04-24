@@ -318,11 +318,159 @@ async function loadPrivacySettings() {
 export async function loadAIModelsSettings() {
   try {
     const serverPort = await window.os8.server.getPort();
+    // Mode toggle + local-slots panel (Phase B). Load first so the user sees
+    // it at the top of the section without waiting for the provider tables.
+    await loadLocalModePanel(serverPort);
     // Load routing UI (provider status, preference, cascades)
     await loadRoutingUI(serverPort);
   } catch (err) {
     console.error('Failed to load AI models settings:', err);
   }
+}
+
+// --- Local mode toggle + slot status (Phase B) ---
+
+let _localStatusPoller = null;
+let _localPollTickHandler = null;
+
+function stopLocalStatusPoller() {
+  if (_localStatusPoller) {
+    clearInterval(_localStatusPoller);
+    _localStatusPoller = null;
+  }
+}
+
+function renderSlots(slots) {
+  const container = document.getElementById('localSlots');
+  if (!container || !Array.isArray(slots)) return;
+  for (const entry of slots) {
+    const row = container.querySelector(`.local-slot[data-slot="${entry.slot}"]`);
+    if (!row) continue;
+    const statusEl = row.querySelector('.slot-status');
+    if (!statusEl) continue;
+
+    let label, state;
+    if (entry.serving) { label = 'Serving'; state = 'serving'; }
+    else if (entry.loading) { label = 'Loading…'; state = 'loading'; }
+    else { label = 'Offline'; state = 'offline'; }
+
+    statusEl.textContent = label;
+    statusEl.dataset.status = state;
+  }
+}
+
+function renderReachabilityError(reachable) {
+  const el = document.getElementById('aiModeError');
+  if (!el) return;
+  if (reachable === false) {
+    el.hidden = false;
+    el.textContent = 'Launcher unreachable — start os8-launcher to use local mode.';
+  } else {
+    el.hidden = true;
+    el.textContent = '';
+  }
+}
+
+async function fetchLocalStatus(serverPort) {
+  const res = await fetch(`http://localhost:${serverPort}/api/ai/local-status`);
+  if (!res.ok) throw new Error(`local-status ${res.status}`);
+  return res.json();
+}
+
+function allServing(slots) {
+  return Array.isArray(slots) && slots.length > 0 && slots.every(s => s.serving);
+}
+
+async function pollTick(serverPort) {
+  // Bail if user left the AI section — we poll lazily while visible.
+  if (getCurrentSettingsSection() !== 'ai-models') {
+    stopLocalStatusPoller();
+    return;
+  }
+  try {
+    const status = await fetchLocalStatus(serverPort);
+    renderSlots(status.slots);
+    renderReachabilityError(status.launcher?.reachable);
+    // Back off to slow polling once everything is serving (residents stay up,
+    // so churn is low). Full re-sync happens on re-entry to the section.
+    if (allServing(status.slots) && _localStatusPoller) {
+      stopLocalStatusPoller();
+      _localStatusPoller = setInterval(() => pollTick(serverPort), 10000);
+    }
+  } catch (err) {
+    // Transient — let the next tick retry. Don't flash errors on the UI.
+    console.warn('local-status poll failed:', err.message);
+  }
+}
+
+function startLocalStatusPoller(serverPort, intervalMs = 2000) {
+  stopLocalStatusPoller();
+  _localPollTickHandler = () => pollTick(serverPort);
+  _localStatusPoller = setInterval(_localPollTickHandler, intervalMs);
+  // Fire once immediately so the UI updates without waiting for the first tick.
+  pollTick(serverPort);
+}
+
+async function loadLocalModePanel(serverPort) {
+  const toggle = document.getElementById('aiModeToggle');
+  const slotsEl = document.getElementById('localSlots');
+  if (!toggle || !slotsEl) return;
+
+  // Initial state from current ai_mode.
+  let status;
+  try {
+    status = await fetchLocalStatus(serverPort);
+  } catch (err) {
+    console.warn('Initial local-status fetch failed:', err.message);
+    status = { ai_mode: 'proprietary', launcher: { reachable: false }, slots: [] };
+  }
+
+  const isLocal = status.ai_mode === 'local';
+  toggle.checked = isLocal;
+  slotsEl.hidden = !isLocal;
+  renderSlots(status.slots || []);
+  renderReachabilityError(status.launcher?.reachable);
+
+  if (isLocal) {
+    startLocalStatusPoller(serverPort);
+  }
+
+  // Rebind change handler (loadAIModelsSettings may fire multiple times).
+  toggle.onchange = async () => {
+    const wantLocal = toggle.checked;
+    const endpoint = wantLocal ? 'start' : 'stop';
+    // Disable during the flip to prevent double-clicks racing the ensure calls.
+    toggle.disabled = true;
+    try {
+      const res = await fetch(
+        `http://localhost:${serverPort}/api/ai/local-mode/${endpoint}`,
+        { method: 'POST' }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `local-mode/${endpoint} ${res.status}`);
+      }
+      if (wantLocal) {
+        slotsEl.hidden = false;
+        startLocalStatusPoller(serverPort);
+      } else {
+        stopLocalStatusPoller();
+        slotsEl.hidden = true;
+        renderReachabilityError(true); // clear any banner
+      }
+    } catch (err) {
+      console.error('Toggle local mode failed:', err);
+      // Revert the checkbox so UI doesn't lie about state.
+      toggle.checked = !wantLocal;
+      const errEl = document.getElementById('aiModeError');
+      if (errEl) {
+        errEl.hidden = false;
+        errEl.textContent = `Could not ${wantLocal ? 'start' : 'stop'} local mode: ${err.message}`;
+      }
+    } finally {
+      toggle.disabled = false;
+    }
+  };
 }
 
 // Current cascade task type for tab state

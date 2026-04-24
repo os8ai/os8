@@ -863,6 +863,45 @@
           </div>
 <!-- AI Models Section -->
           <div class="settings-section" id="section-ai-models">
+            <!-- Mode (Phase B) -->
+            <div class="ai-section-group" id="aiModeSection">
+              <h4 class="ai-section-title">Mode</h4>
+              <div class="ai-mode-row">
+                <label class="toggle-switch">
+                  <input type="checkbox" id="aiModeToggle">
+                  <span class="toggle-slider"></span>
+                </label>
+                <div class="ai-mode-text">
+                  <div class="ai-mode-label">Local mode</div>
+                  <div class="ai-mode-hint">Route chat, image, and voice through models on this machine.</div>
+                </div>
+              </div>
+              <div class="local-slots" id="localSlots" hidden>
+                <div class="local-slot" data-slot="chat">
+                  <div class="slot-head">
+                    <span class="slot-label">Chat</span>
+                    <span class="slot-status" data-status="unknown">—</span>
+                  </div>
+                  <span class="slot-model">qwen3-6-35b-a3b</span>
+                </div>
+                <div class="local-slot" data-slot="image">
+                  <div class="slot-head">
+                    <span class="slot-label">Image</span>
+                    <span class="slot-status" data-status="unknown">—</span>
+                  </div>
+                  <span class="slot-model">flux1-kontext-dev</span>
+                </div>
+                <div class="local-slot" data-slot="voice">
+                  <div class="slot-head">
+                    <span class="slot-label">Voice</span>
+                    <span class="slot-status" data-status="unknown">—</span>
+                  </div>
+                  <span class="slot-model">kokoro-v1</span>
+                </div>
+              </div>
+              <div class="ai-mode-error" id="aiModeError" hidden></div>
+            </div>
+
             <!-- Provider Status -->
             <div class="ai-section-group" id="providerStatusSection">
               <h4 class="ai-section-title">Provider Status</h4>
