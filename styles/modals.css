@@ -534,6 +534,12 @@
       margin-top: 12px;
     }
 
+    /* The `display: grid` above outranks the UA [hidden] { display: none }
+       rule, so the hidden attribute has no effect without this. */
+    .local-slots[hidden] {
+      display: none;
+    }
+
     .local-slot {
       display: flex;
       flex-direction: column;
