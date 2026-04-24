@@ -411,6 +411,27 @@ function startLocalStatusPoller(serverPort, intervalMs = 2000) {
   pollTick(serverPort);
 }
 
+/**
+ * Show/hide AI-section children based on the active ai_mode.
+ *
+ * Under local mode the Provider Status + Model API Constraints tables
+ * become semantically empty (both are cloud-provider-only by construction),
+ * so we hide them outright rather than render empty shells.
+ *
+ * Local slots show/hide follows the toggle too. The Mode toggle itself and
+ * Model Priority (cascade table, which is already mode-aware server-side)
+ * stay visible in both modes.
+ */
+function applyModeVisibility(mode) {
+  const isLocal = mode === 'local';
+  const slotsEl = document.getElementById('localSlots');
+  if (slotsEl) slotsEl.hidden = !isLocal;
+  const providerSection = document.getElementById('providerStatusSection');
+  if (providerSection) providerSection.hidden = isLocal;
+  const constraintsSection = document.getElementById('apiConstraintsSection');
+  if (constraintsSection) constraintsSection.hidden = isLocal;
+}
+
 async function loadLocalModePanel(serverPort) {
   const toggle = document.getElementById('aiModeToggle');
   const slotsEl = document.getElementById('localSlots');
@@ -427,7 +448,7 @@ async function loadLocalModePanel(serverPort) {
 
   const isLocal = status.ai_mode === 'local';
   toggle.checked = isLocal;
-  slotsEl.hidden = !isLocal;
+  applyModeVisibility(status.ai_mode);
   renderSlots(status.slots || []);
   renderReachabilityError(status.launcher?.reachable);
 
@@ -450,14 +471,17 @@ async function loadLocalModePanel(serverPort) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || `local-mode/${endpoint} ${res.status}`);
       }
+      applyModeVisibility(wantLocal ? 'local' : 'proprietary');
       if (wantLocal) {
-        slotsEl.hidden = false;
         startLocalStatusPoller(serverPort);
       } else {
         stopLocalStatusPoller();
-        slotsEl.hidden = true;
         renderReachabilityError(true); // clear any banner
       }
+      // Refresh the rest of the AI panel so Model Priority redraws against
+      // the new cascade (local vs proprietary) and Provider Status/Constraints
+      // rehydrate correctly if the user flips back.
+      await loadRoutingUI(serverPort);
     } catch (err) {
       console.error('Toggle local mode failed:', err);
       // Revert the checkbox so UI doesn't lie about state.

@@ -541,7 +541,7 @@
       padding: 8px 10px;
       border: 1px solid var(--color-border);
       border-radius: 6px;
-      background: var(--color-bg-secondary);
+      background: var(--color-bg-panel);
     }
 
     .local-slot .slot-head {
@@ -624,10 +624,19 @@
       font-size: var(--text-sm);
       padding: 3px 4px;
       border: 1px solid var(--color-border);
-      background: var(--color-bg-primary);
+      background: var(--color-bg-panel);
       color: var(--color-text-light);
       border-radius: var(--radius-sm);
       cursor: pointer;
+    }
+
+    /* Native <option> background isn't inherited from <select> across
+       platforms, so set it explicitly — without this the expanded options
+       list renders white-on-white in Electron. */
+    .constraint-select option,
+    .routing-preference-select option {
+      background: var(--color-bg-panel);
+      color: var(--color-text);
     }
 
     .provider-api-link,
@@ -647,7 +656,7 @@
       font-size: var(--text-base);
       border: 1px solid var(--color-border);
       border-radius: var(--radius-md);
-      background: var(--color-bg-secondary);
+      background: var(--color-bg-panel);
       color: var(--color-text-light);
       cursor: pointer;
     }
