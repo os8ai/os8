@@ -22,7 +22,8 @@ function registerAgentsHandlers({ db, services }) {
         name: config.assistantName || agent.name,
         slug: agent.slug,
         backend: agent.backend || config.agentBackend || 'claude',
-        model: agent.model || config.agentModel || null,
+        // Per-mode model pin — config.agentModel is the authoritative source.
+        model: config.agentModel || agent.model || null,
         color: agent.color,
         visibility: agent.visibility || 'visible',
         isDefault: agent.id === defaultId
@@ -41,7 +42,7 @@ function registerAgentsHandlers({ db, services }) {
       name: config.assistantName || agent.name,
       slug: agent.slug,
       backend: agent.backend || config.agentBackend || 'claude',
-      model: agent.model || config.agentModel || null,
+      model: config.agentModel || agent.model || null,
       color: agent.color,
       isDefault: agent.id === defaultAgent?.id,
       config

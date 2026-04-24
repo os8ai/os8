@@ -309,6 +309,21 @@ function createSchema(db) {
     );
   `);
 
+  // Per-mode agent model override (Phase B follow-up). Mirrors agent_voices:
+  // each agent can pin a different model family per ai_mode, and the "other"
+  // mode's pin is remembered when flipping back. Only the row matching the
+  // current ai_mode drives routing; writes are mode-scoped as well. The
+  // legacy `agents.model` column stays in place but is no longer read/written.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_models (
+      agent_id TEXT NOT NULL,
+      mode TEXT NOT NULL,
+      family_id TEXT,
+      PRIMARY KEY (agent_id, mode),
+      FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+    );
+  `);
+
   // Cached last-assembled memory context per agent (survives restart)
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_context_cache (

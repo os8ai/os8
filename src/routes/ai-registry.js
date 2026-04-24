@@ -58,8 +58,20 @@ function createAIRegistryRouter(db) {
       for (const c of containers) {
         containerMap[c.id] = c;
       }
-      // Only show families eligible for conversation (chat)
+      // Narrow by current ai_mode so the agent dropdown can only pick
+      // families compatible with the master Local-mode toggle. Local mode →
+      // container_id='local' only; proprietary mode → everything else. The
+      // per-mode pin saved in agent_models preserves the other mode's choice
+      // so a switch-back restores it.
+      const mode = RoutingService.getMode(db);
+      const modeMatches = (f) => mode === 'local'
+        ? f.container_id === 'local'
+        : f.container_id !== 'local';
+
+      // Only show families eligible for conversation (chat) AND compatible
+      // with the active mode.
       const chatFamilies = families.filter(f => {
+        if (!modeMatches(f)) return false;
         if (f.eligible_tasks) {
           const eligible = f.eligible_tasks.split(',').map(s => s.trim());
           if (!eligible.includes('conversation')) return false;

@@ -30,7 +30,8 @@ function createAgentsRouter(db, deps) {
         name: agent.name,
         slug: agent.slug,
         backend: agent.backend || 'claude',
-        model: agent.model || null,
+        // Per-mode model pin — reflects the current ai_mode's selection.
+        model: AgentService.getAgentModel(db, agent.id) || agent.model || null,
         color: agent.color,
         visibility: agent.visibility || 'visible',
         isDefault: agent.id === defaultId
@@ -196,7 +197,7 @@ function createAgentsRouter(db, deps) {
       role: agent.role || '',
       appearance: agent.appearance || '',
       backend: agent.backend || 'claude',
-      model: agent.model || null,
+      model: AgentService.getAgentModel(db, agent.id) || agent.model || null,
       color: agent.color,
       ownerName: config?.ownerName || '',
       pronouns: agent.pronouns || 'she',
@@ -221,7 +222,7 @@ function createAgentsRouter(db, deps) {
       name: agent.name,
       slug: agent.slug,
       backend: agent.backend || 'claude',
-      model: agent.model || null,
+      model: AgentService.getAgentModel(db, agent.id) || agent.model || null,
       color: agent.color,
       isDefault: agent.id === defaultAgent?.id,
       config

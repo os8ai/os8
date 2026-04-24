@@ -48,15 +48,17 @@ function generateMyselfMd(db, agentId) {
     ? appearanceParts.join('\n')
     : '- (not yet set)';
 
-  // Build model info section
+  // Build model info section. Reads the per-mode pin from agent_models;
+  // falls back to the legacy agents.model column for pre-migration safety.
+  const activeModelId = AgentService.getAgentModel(db, agentId) || agent.model;
   let modelSection;
-  if (agent.model) {
+  if (activeModelId) {
     const AIRegistryService = require('../services/ai-registry');
-    const family = AIRegistryService.getFamily(db, agent.model);
-    const displayName = family ? family.name : agent.model;
+    const family = AIRegistryService.getFamily(db, activeModelId);
+    const displayName = family ? family.name : activeModelId;
     modelSection = `## Current Model
 
-- **Model:** ${displayName} (\`${agent.model}\`)
+- **Model:** ${displayName} (\`${activeModelId}\`)
 - **To change:** \`PATCH /api/agents/${agent.id}/model\` with \`{ "model": "<family_id>" }\` or \`{ "model": "auto" }\``;
   } else {
     // Resolve what auto actually maps to right now
