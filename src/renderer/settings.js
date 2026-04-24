@@ -81,10 +81,12 @@ async function loadTimeSettings() {
     const select = document.getElementById('timezoneSelect');
     if (select) select.value = data.timezone || 'America/New_York';
 
-    // Load paths
+    // Load paths + version
     const paths = await window.os8.paths.get();
+    const versionEl = document.getElementById('os8VersionDisplay');
     const installPathEl = document.getElementById('installPathDisplay');
     const userDataPathEl = document.getElementById('userDataPathDisplay');
+    if (versionEl) versionEl.textContent = paths.version ? `v${paths.version}` : '—';
     if (installPathEl) installPathEl.textContent = paths.install || '—';
     if (userDataPathEl) userDataPathEl.textContent = paths.userData || '—';
   } catch (err) {

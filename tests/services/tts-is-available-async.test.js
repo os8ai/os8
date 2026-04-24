@@ -16,7 +16,14 @@ function makeDb({ provider, kokoroFamily = true } = {}) {
     );
   `);
   if (provider) {
-    db.prepare(`INSERT INTO settings (key, value) VALUES ('tts_provider', ?)`).run(provider);
+    // Post-migration storage: provider lives in the mode-scoped slot that
+    // matches its IS_LOCAL classification, and ai_mode is set accordingly so
+    // getProviderName reads the right key.
+    const isLocal = provider === 'kokoro';
+    const mode = isLocal ? 'local' : 'proprietary';
+    const key = isLocal ? 'tts_provider_local' : 'tts_provider_proprietary';
+    db.prepare(`INSERT INTO settings (key, value) VALUES ('ai_mode', ?)`).run(mode);
+    db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).run(key, provider);
   }
   if (kokoroFamily) {
     db.prepare(`INSERT INTO ai_model_families (id, container_id, name, launcher_model) VALUES ('local-kokoro-v1', 'local', 'Kokoro', 'kokoro-v1')`).run();

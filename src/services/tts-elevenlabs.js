@@ -7,6 +7,7 @@
 
 const PROVIDER_ID = 'elevenlabs'
 const API_KEY_ENV = 'ELEVENLABS_API_KEY'
+const IS_LOCAL = false
 
 const DEFAULT_VOICES = {
   female: { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Rachel' },
@@ -131,6 +132,7 @@ function getDefaultVoices() {
 module.exports = {
   PROVIDER_ID,
   API_KEY_ENV,
+  IS_LOCAL,
   DEFAULT_VOICES,
   DEFAULTS,
   getVoices,

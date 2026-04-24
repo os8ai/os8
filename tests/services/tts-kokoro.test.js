@@ -204,8 +204,8 @@ describe('TTSService facade — Kokoro integration (Phase 3 §4.4)', () => {
   });
 
   it('isAvailable returns true for kokoro without an API key', () => {
-    // Mock db that reports tts_provider=kokoro
-    const settings = { tts_provider: 'kokoro' };
+    // Post-migration storage: ai_mode='local' + tts_provider_local='kokoro'.
+    const settings = { ai_mode: 'local', tts_provider_local: 'kokoro' };
     const db = {
       prepare: () => ({
         get: (...args) => {

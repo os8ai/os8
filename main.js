@@ -262,6 +262,18 @@ app.whenReady().then(async () => {
     throw err;
   }
 
+  // Reconcile TTS provider state with the current ai_mode. An ai_mode flip
+  // during a prior session (or the 0.4.2 migration splitting tts_provider
+  // into per-mode slots) can leave agents.voice_id and tts.defaultVoice*
+  // pointing at the previous mode's voice IDs. Running the resolver at
+  // startup is cheap (no-op when active already matches) and heals stuck
+  // state without waiting for the user to open the settings panel.
+  try {
+    TTSService.resolveActiveProvider(db);
+  } catch (err) {
+    console.warn('[startup] TTS resolveActiveProvider failed:', err.message);
+  }
+
   // Request microphone permission on macOS (triggers system dialog if needed)
   if (process.platform === 'darwin') {
     const micStatus = systemPreferences.getMediaAccessStatus('microphone');

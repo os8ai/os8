@@ -15,7 +15,13 @@ function makeDb({ provider } = {}) {
     CREATE TABLE env_variables (id TEXT PRIMARY KEY, key TEXT UNIQUE NOT NULL, value TEXT NOT NULL, encrypted INTEGER DEFAULT 0);
   `);
   if (provider) {
-    db.prepare(`INSERT INTO settings (key, value) VALUES ('tts_provider', ?)`).run(provider);
+    // Post-migration storage: provider in the mode-scoped slot, ai_mode set
+    // to match its classification.
+    const isLocal = provider === 'kokoro';
+    const mode = isLocal ? 'local' : 'proprietary';
+    const key = isLocal ? 'tts_provider_local' : 'tts_provider_proprietary';
+    db.prepare(`INSERT INTO settings (key, value) VALUES ('ai_mode', ?)`).run(mode);
+    db.prepare(`INSERT INTO settings (key, value) VALUES (?, ?)`).run(key, provider);
   }
   return db;
 }

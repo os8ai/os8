@@ -7,6 +7,7 @@
 
 const PROVIDER_ID = 'openai'
 const API_KEY_ENV = 'OPENAI_API_KEY'
+const IS_LOCAL = false
 
 const VOICES = [
   { voiceId: 'alloy',   name: 'Alloy',   gender: 'neutral' },
@@ -219,6 +220,7 @@ function getWebSocketUrl() {
 module.exports = {
   PROVIDER_ID,
   API_KEY_ENV,
+  IS_LOCAL,
   DEFAULT_VOICES,
   DEFAULTS,
   VOICES,

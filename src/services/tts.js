@@ -33,6 +33,34 @@ const PROVIDER_HELP = {
   kokoro:     'Free, fully local; runs in os8-launcher (no API key); 54 prebuilt voices.'
 }
 
+// Derived from each provider module's IS_LOCAL export. Single source of truth:
+// provider classification lives with the provider, not duplicated in UIs.
+const PROVIDER_IS_LOCAL = Object.fromEntries(
+  Object.entries(PROVIDERS).map(([id, mod]) => [id, !!mod.IS_LOCAL])
+)
+
+// Per-mode settings keys. Mirrors agent_models(agent_id, mode) — the user's
+// pick in each mode is preserved when they flip ai_mode, and each mode only
+// ever shows compatible providers.
+const PROVIDER_KEY_BY_MODE = {
+  local:       'tts_provider_local',
+  proprietary: 'tts_provider_proprietary'
+}
+
+// Legacy single-slot key. Read as a fallback during the transition window so a
+// fresh install that somehow lands before the migrator runs still resolves a
+// provider; writes always go to the mode-scoped key.
+const LEGACY_PROVIDER_KEY = 'tts_provider'
+
+// Auto-pick preference order per mode. First configured provider wins. Mirrors
+// the onboarding flow's priority (src/renderer/onboarding.js) so an upgrader
+// who's been living in proprietary mode sees the same pick the onboarding
+// would have made for them.
+const PROVIDER_PREFERENCE_BY_MODE = {
+  local:       ['kokoro'],
+  proprietary: ['elevenlabs', 'openai']
+}
+
 /**
  * TextChunker - Buffers text and emits chunks at sentence boundaries
  * Used for streaming TTS to ensure natural speech breaks
@@ -153,6 +181,156 @@ class TTSService {
   static PROVIDERS = PROVIDERS
   static PROVIDER_LABELS = PROVIDER_LABELS
   static PROVIDER_HELP = PROVIDER_HELP
+  static PROVIDER_IS_LOCAL = PROVIDER_IS_LOCAL
+
+  /** True if the named provider is a local (launcher-backed) provider. */
+  static isLocalProvider(name) {
+    return !!PROVIDER_IS_LOCAL[name]
+  }
+
+  /**
+   * Current ai_mode, or 'proprietary' if unset. Matches RoutingService.getMode
+   * semantics; duplicated here so tts doesn't take a hard service dep.
+   */
+  static getMode(db) {
+    const SettingsService = require('./settings')
+    return SettingsService.get(db, 'ai_mode') === 'local' ? 'local' : 'proprietary'
+  }
+
+  /**
+   * List providers eligible for a given mode. Server-side filter, consumed by
+   * the Personal Assistant settings UI and anywhere else that picks a
+   * provider. Providers are filtered by their own IS_LOCAL, so adding a new
+   * provider module drops into the right slot automatically. There is no
+   * "None" entry — voice on/off is the separate `enabled` flag in TTS
+   * settings; when no provider for the mode is configured, the UI falls back
+   * to an informational "no provider configured" state instead of a picker.
+   */
+  static listProvidersForMode(db, mode) {
+    const active = mode || TTSService.getMode(db)
+    const wantLocal = active === 'local'
+    return Object.keys(PROVIDERS)
+      .filter(id => !!PROVIDER_IS_LOCAL[id] === wantLocal)
+      .map(id => ({
+        value: id,
+        label: PROVIDER_LABELS[id],
+        help: PROVIDER_HELP[id],
+        isLocal: !!PROVIDER_IS_LOCAL[id]
+      }))
+  }
+
+  /**
+   * True if the named provider is configured on this machine. Cloud providers
+   * need a non-empty API key in env_variables; local providers report true
+   * when the sync isAvailable branch returns available (it's optimistic about
+   * launcher state — the async probe is for the status banner, not auto-pick,
+   * since we don't want this call to block on the launcher's TCP socket).
+   */
+  static isConfigured(db, providerId) {
+    const mod = PROVIDERS[providerId]
+    if (!mod) return false
+    if (mod.API_KEY_ENV === null) return true  // local — treat as configured
+    const EnvService = require('./env')
+    const record = EnvService.get(db, mod.API_KEY_ENV)
+    return !!(record && record.value)
+  }
+
+  /**
+   * Resolve the provider that should be active for the current ai_mode, with
+   * auto-pick on first access of a never-set slot AND a remap pass whenever
+   * the effective provider has changed since the last resolve (e.g. user
+   * flipped ai_mode, which swaps the pinned value but doesn't itself remap
+   * the global default voices or agents.voice_id). Return shape:
+   *   { provider, source, mode }
+   * where `source` is 'pinned' (slot held a valid provider), 'auto' (the
+   * resolver picked one and persisted it), or 'none' (no eligible configured
+   * provider — UI should render a "no provider configured" explanation).
+   */
+  static resolveActiveProvider(db) {
+    const mode = TTSService.getMode(db)
+    const pinned = TTSService.getProviderName(db)
+
+    if (pinned) {
+      // Pinned, but the currently-active provider (the one whose voices
+      // populate tts.defaultVoice* and agents.voice_id) might be stale if
+      // the user just flipped ai_mode. Reconcile before returning.
+      TTSService._makeActive(db, pinned)
+      return { provider: pinned, source: 'pinned', mode }
+    }
+
+    const preferences = PROVIDER_PREFERENCE_BY_MODE[mode] || []
+    for (const candidate of preferences) {
+      if (!PROVIDERS[candidate]) continue
+      if (TTSService.isConfigured(db, candidate)) {
+        TTSService.setProvider(db, candidate)
+        TTSService._makeActive(db, candidate)
+        return { provider: candidate, source: 'auto', mode }
+      }
+    }
+    return { provider: null, source: 'none', mode }
+  }
+
+  /**
+   * Make `toProvider` the active TTS provider — remap every agent's voice to
+   * one valid for toProvider (prefer a previously-saved per-agent voice from
+   * agent_voices, else the provider's gender default), snapshot the outgoing
+   * provider's defaults into perProvider, restore the incoming provider's
+   * defaults, and update tts.activeProvider to track which provider the
+   * global voice fields currently reflect. Idempotent: no-op when
+   * tts.activeProvider already equals toProvider.
+   *
+   * This is the reconciliation step between "the user's pick" (per-mode pin,
+   * via setProvider) and "what the voices are actually rendered against"
+   * (agent.voice_id + tts.defaultVoice*). Called by switchProvider (explicit
+   * pick) and resolveActiveProvider (implicit transitions like mode flips).
+   */
+  static _makeActive(db, toProvider) {
+    const AgentService = require('./agent')
+    const current = TTSService.getSettings(db)
+    const fromActive = current.activeProvider || null
+    if (fromActive === toProvider) return { changed: false }
+
+    const agents = db.prepare(`SELECT id, voice_id, voice_name, gender FROM agents`).all()
+
+    const transaction = db.transaction(() => {
+      for (const agent of agents) {
+        // Remember the outgoing voice so round-tripping this provider later
+        // restores the user's prior pick.
+        if (fromActive && agent.voice_id) {
+          TTSService.saveAgentVoice(db, agent.id, fromActive, agent.voice_id, agent.voice_name)
+        }
+        if (toProvider && PROVIDERS[toProvider]) {
+          const saved = TTSService.getAgentVoice(db, agent.id, toProvider)
+          if (saved) {
+            AgentService.update(db, agent.id, {
+              voice_id: saved.voiceId,
+              voice_name: saved.voiceName
+            })
+          } else {
+            const defaults = TTSService.getProviderDefaults(toProvider)
+            if (defaults) {
+              const gender = agent.gender || 'female'
+              const defaultVoice = defaults[gender] || defaults.female
+              AgentService.update(db, agent.id, {
+                voice_id: defaultVoice.id,
+                voice_name: defaultVoice.name
+              })
+            }
+          }
+        }
+      }
+
+      if (fromActive) TTSService._snapshotProviderDefaults(db, fromActive)
+      if (toProvider && PROVIDERS[toProvider]) TTSService._restoreProviderDefaults(db, toProvider)
+
+      // Record which provider the global voice fields now reflect. Used by
+      // the next _makeActive call to decide whether to remap.
+      TTSService.setSettings(db, { activeProvider: toProvider || null })
+    })
+
+    transaction()
+    return { changed: true, fromActive, toActive: toProvider, agentCount: agents.length }
+  }
 
   /**
    * Get TTS settings from database
@@ -173,17 +351,86 @@ class TTSService {
   }
 
   /**
-   * Update TTS settings in database
-   * @param {Database} db - SQLite database
-   * @param {object} settings - Settings to merge
-   * @returns {object} Updated settings
+   * Update TTS settings in database. When the caller edits default voices
+   * (defaultVoiceFemale/Male), the change is also written through to the
+   * perProvider[currentProvider] sub-object so switching providers and back
+   * restores the user's pick instead of clobbering it with the provider
+   * module's generic DEFAULTS.
    */
   static setSettings(db, settings) {
     const SettingsService = require('./settings')
     const current = TTSService.getSettings(db)
     const merged = { ...current, ...settings }
+
+    // Write-through: if the user changed a default voice and we have a
+    // currently-active provider, stash the pick under perProvider[provider].
+    const providerName = TTSService.getProviderName(db)
+    const touchedVoiceFields = (
+      'defaultVoiceFemale' in settings ||
+      'defaultVoiceMale' in settings ||
+      'defaultVoiceFemaleName' in settings ||
+      'defaultVoiceMaleName' in settings
+    )
+    if (providerName && touchedVoiceFields) {
+      const perProvider = { ...(merged.perProvider || {}) }
+      perProvider[providerName] = {
+        ...(perProvider[providerName] || {}),
+        defaultVoiceFemale: merged.defaultVoiceFemale,
+        defaultVoiceFemaleName: merged.defaultVoiceFemaleName,
+        defaultVoiceMale: merged.defaultVoiceMale,
+        defaultVoiceMaleName: merged.defaultVoiceMaleName
+      }
+      merged.perProvider = perProvider
+    }
+
     SettingsService.set(db, 'tts', JSON.stringify(merged))
     return merged
+  }
+
+  /**
+   * Snapshot the current active default voices into perProvider[providerName].
+   * Called before a provider switch so the user's pick under the outgoing
+   * provider survives the round-trip.
+   */
+  static _snapshotProviderDefaults(db, providerName) {
+    if (!providerName) return
+    const current = TTSService.getSettings(db)
+    const perProvider = { ...(current.perProvider || {}) }
+    perProvider[providerName] = {
+      defaultVoiceFemale: current.defaultVoiceFemale,
+      defaultVoiceFemaleName: current.defaultVoiceFemaleName,
+      defaultVoiceMale: current.defaultVoiceMale,
+      defaultVoiceMaleName: current.defaultVoiceMaleName
+    }
+    const SettingsService = require('./settings')
+    SettingsService.set(db, 'tts', JSON.stringify({ ...current, perProvider }))
+  }
+
+  /**
+   * Restore the active default voices from perProvider[providerName] if a
+   * snapshot exists; otherwise seed from the provider module's DEFAULTS. This
+   * is what switchProvider and resolveActiveProvider call after landing on a
+   * new provider, so the "default voices for agents without a voice assigned"
+   * row always reflects the user's last pick for that provider.
+   */
+  static _restoreProviderDefaults(db, providerName) {
+    const mod = PROVIDERS[providerName]
+    if (!mod) return
+    const current = TTSService.getSettings(db)
+    const saved = current.perProvider?.[providerName]
+    const providerDefaults = mod.DEFAULTS || {}
+    const next = {
+      ...current,
+      model: providerDefaults.model || current.model,
+      voiceId: providerDefaults.voiceId || current.voiceId,
+      voiceName: providerDefaults.voiceName || current.voiceName,
+      defaultVoiceFemale: saved?.defaultVoiceFemale || providerDefaults.defaultVoiceFemale || current.defaultVoiceFemale,
+      defaultVoiceFemaleName: saved?.defaultVoiceFemaleName || providerDefaults.defaultVoiceFemaleName || current.defaultVoiceFemaleName,
+      defaultVoiceMale: saved?.defaultVoiceMale || providerDefaults.defaultVoiceMale || current.defaultVoiceMale,
+      defaultVoiceMaleName: saved?.defaultVoiceMaleName || providerDefaults.defaultVoiceMaleName || current.defaultVoiceMaleName
+    }
+    const SettingsService = require('./settings')
+    SettingsService.set(db, 'tts', JSON.stringify(next))
   }
 
   /**
@@ -197,25 +444,52 @@ class TTSService {
   }
 
   /**
-   * Get active provider name from settings
+   * Get the active provider name for the current ai_mode. Reads the
+   * mode-scoped key (tts_provider_local / tts_provider_proprietary), with a
+   * one-shot fallback to the legacy single-slot key for pre-migration safety.
    * @param {Database} db
-   * @returns {'elevenlabs'|'openai'|null}
+   * @returns {string|null}
    */
   static getProviderName(db) {
     const SettingsService = require('./settings')
-    const provider = SettingsService.get(db, 'tts_provider')
+    const mode = TTSService.getMode(db)
+    const key = PROVIDER_KEY_BY_MODE[mode]
+    let provider = SettingsService.get(db, key)
+    if (!provider) {
+      // Pre-migration / fresh-install fallback: use the legacy key only if its
+      // value's classification matches the current mode. Avoids routing an
+      // elevenlabs pick through local mode just because the migrator hasn't
+      // run yet.
+      const legacy = SettingsService.get(db, LEGACY_PROVIDER_KEY)
+      if (legacy && PROVIDERS[legacy] && PROVIDER_IS_LOCAL[legacy] === (mode === 'local')) {
+        provider = legacy
+      }
+    }
     if (provider && PROVIDERS[provider]) return provider
     return null
   }
 
   /**
-   * Set TTS provider
+   * Set the active TTS provider. Writes to the slot that matches the
+   * provider's own IS_LOCAL classification — not the current ai_mode — so
+   * configuring each mode's pick is independent of the live mode. Empty
+   * string clears the *current* mode's slot.
    * @param {Database} db
-   * @param {string|null} provider - 'elevenlabs', 'openai', or null
+   * @param {string|null} provider - 'elevenlabs', 'openai', 'kokoro', or ''
    */
   static setProvider(db, provider) {
     const SettingsService = require('./settings')
-    SettingsService.set(db, 'tts_provider', provider || '')
+    if (!provider) {
+      // Clear only the active mode's slot — the other mode's pick is preserved.
+      const currentMode = TTSService.getMode(db)
+      SettingsService.set(db, PROVIDER_KEY_BY_MODE[currentMode], '')
+      return
+    }
+    if (!PROVIDERS[provider]) {
+      throw new Error(`Unknown TTS provider: ${provider}`)
+    }
+    const targetMode = PROVIDER_IS_LOCAL[provider] ? 'local' : 'proprietary'
+    SettingsService.set(db, PROVIDER_KEY_BY_MODE[targetMode], provider)
   }
 
   /**
@@ -385,70 +659,45 @@ class TTSService {
   }
 
   /**
-   * Switch global TTS provider, saving/restoring per-agent voices
+   * Switch the active TTS provider for the current ai_mode, saving/restoring
+   * per-agent voices as appropriate. If `toProvider` is for the *other* mode
+   * (e.g. user is in local mode but passes 'elevenlabs'), this writes that
+   * mode's slot without touching agents — the pick is remembered for when the
+   * user next flips mode, but no active voice transition is happening now.
    * @param {Database} db
-   * @param {string} toProvider - 'elevenlabs', 'openai', or '' (none)
-   * @returns {{ previousProvider, newProvider, agentCount }}
+   * @param {string} toProvider - provider id or '' (none, clears active slot)
+   * @returns {{ previousProvider, newProvider, agentCount, crossMode }}
    */
   static switchProvider(db, toProvider) {
-    const AgentService = require('./agent')
-    const fromProvider = TTSService.getProviderName(db)
-    const agents = db.prepare(`SELECT id, voice_id, voice_name, gender FROM agents`).all()
+    const currentMode = TTSService.getMode(db)
+    const classMatchesMode = !toProvider
+      || PROVIDER_IS_LOCAL[toProvider] === (currentMode === 'local')
 
-    const transaction = db.transaction(() => {
-      for (const agent of agents) {
-        // Save current voice for outgoing provider
-        if (fromProvider && agent.voice_id) {
-          TTSService.saveAgentVoice(db, agent.id, fromProvider, agent.voice_id, agent.voice_name)
-        }
-
-        // Restore saved voice for incoming provider, or use gender default
-        if (toProvider && PROVIDERS[toProvider]) {
-          const saved = TTSService.getAgentVoice(db, agent.id, toProvider)
-          if (saved) {
-            AgentService.update(db, agent.id, {
-              voice_id: saved.voiceId,
-              voice_name: saved.voiceName
-            })
-          } else {
-            const defaults = TTSService.getProviderDefaults(toProvider)
-            if (defaults) {
-              const gender = agent.gender || 'female'
-              const defaultVoice = defaults[gender] || defaults.female
-              AgentService.update(db, agent.id, {
-                voice_id: defaultVoice.id,
-                voice_name: defaultVoice.name
-              })
-            }
-          }
-        }
-      }
-
+    // Cross-mode write: just update the other mode's slot; no agent remap.
+    if (!classMatchesMode) {
+      const fromProvider = TTSService.getProviderName(db)
       TTSService.setProvider(db, toProvider)
-
-      // Update shared TTS settings with new provider's defaults (model, voices)
-      if (toProvider && PROVIDERS[toProvider]) {
-        const providerDefaults = PROVIDERS[toProvider].DEFAULTS || {}
-        const settingsUpdate = {}
-        if (providerDefaults.model) settingsUpdate.model = providerDefaults.model
-        if (providerDefaults.voiceId) settingsUpdate.voiceId = providerDefaults.voiceId
-        if (providerDefaults.voiceName) settingsUpdate.voiceName = providerDefaults.voiceName
-        if (providerDefaults.defaultVoiceFemale) settingsUpdate.defaultVoiceFemale = providerDefaults.defaultVoiceFemale
-        if (providerDefaults.defaultVoiceFemaleName) settingsUpdate.defaultVoiceFemaleName = providerDefaults.defaultVoiceFemaleName
-        if (providerDefaults.defaultVoiceMale) settingsUpdate.defaultVoiceMale = providerDefaults.defaultVoiceMale
-        if (providerDefaults.defaultVoiceMaleName) settingsUpdate.defaultVoiceMaleName = providerDefaults.defaultVoiceMaleName
-        if (Object.keys(settingsUpdate).length > 0) {
-          TTSService.setSettings(db, settingsUpdate)
-        }
+      return {
+        previousProvider: fromProvider,
+        newProvider: toProvider,
+        agentCount: 0,
+        crossMode: true
       }
-    })
+    }
 
-    transaction()
+    const fromProvider = TTSService.getProviderName(db)
+    const agentCount = db.prepare(`SELECT COUNT(*) AS c FROM agents`).get().c
+
+    db.transaction(() => {
+      TTSService.setProvider(db, toProvider)
+      TTSService._makeActive(db, toProvider)
+    })()
 
     return {
       previousProvider: fromProvider,
       newProvider: toProvider,
-      agentCount: agents.length
+      agentCount,
+      crossMode: false
     }
   }
 }

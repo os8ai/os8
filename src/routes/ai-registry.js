@@ -324,6 +324,16 @@ function createAIRegistryRouter(db) {
         return res.status(400).json({ error: `Invalid mode: ${mode}. Expected one of: ${RoutingService.VALID_MODES.join(', ')}` });
       }
       RoutingService.setMode(db, mode);
+      // Reconcile TTS state with the new mode so agents.voice_id and
+      // tts.defaultVoice* flip from (say) Kokoro IDs to ElevenLabs IDs
+      // immediately — otherwise the next agent reply would hit the TTS
+      // provider with a voice ID from the previous mode and 404.
+      try {
+        const TTSService = require('../services/tts');
+        TTSService.resolveActiveProvider(db);
+      } catch (ttsErr) {
+        console.warn('[mode-flip] TTS resolveActiveProvider failed:', ttsErr.message);
+      }
       // TODO(phase-4): broadcast a CUSTOM `mode-switch` ag-ui event to all open
       // agent SSE streams so the UI re-renders model badges. Requires a global
       // broadcaster that doesn't exist yet (per-agent state.responseClients is
@@ -361,6 +371,12 @@ function createAIRegistryRouter(db) {
       }));
 
       RoutingService.setMode(db, 'local');
+      try {
+        const TTSService = require('../services/tts');
+        TTSService.resolveActiveProvider(db);
+      } catch (ttsErr) {
+        console.warn('[local-mode/start] TTS resolveActiveProvider failed:', ttsErr.message);
+      }
 
       res.json({ success: true, mode: 'local', slots: results });
     } catch (err) {
@@ -371,6 +387,12 @@ function createAIRegistryRouter(db) {
   router.post('/local-mode/stop', (req, res) => {
     try {
       RoutingService.setMode(db, 'proprietary');
+      try {
+        const TTSService = require('../services/tts');
+        TTSService.resolveActiveProvider(db);
+      } catch (ttsErr) {
+        console.warn('[local-mode/stop] TTS resolveActiveProvider failed:', ttsErr.message);
+      }
       res.json({ success: true, mode: 'proprietary' });
     } catch (err) {
       res.status(500).json({ error: err.message });

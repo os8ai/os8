@@ -20,6 +20,7 @@ const LauncherClient = require('./launcher-client');
 
 const PROVIDER_ID = 'kokoro';
 const API_KEY_ENV = null;     // local — no auth
+const IS_LOCAL = true;
 
 // Default voices by gender. Picked from Kokoro's prebuilt set:
 //   af_bella — American Female, warm, neutral pace
@@ -291,6 +292,7 @@ function kokoroLabelsOf(voiceId) {
 module.exports = {
   PROVIDER_ID,
   API_KEY_ENV,
+  IS_LOCAL,
   DEFAULT_VOICES,
   DEFAULTS,
   getVoices,

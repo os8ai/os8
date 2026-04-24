@@ -211,10 +211,38 @@ function createVoiceRouter(db, { EnvService, SettingsService }) {
   });
 
   /**
+   * GET /api/voice/tts-providers
+   * List TTS providers eligible for the current ai_mode. Used by the Personal
+   * Assistant settings UI so it never has to know which providers are local
+   * vs cloud — the server is the single source of truth. Returns
+   *   { mode, providers, current, source }
+   * where `current` is the resolver's answer for the active mode (may be
+   * auto-picked + persisted on first access of a never-set slot) and `source`
+   * is one of 'pinned' | 'auto' | 'none'. 'none' means no eligible provider
+   * is configured — UI should render a "configure a key / start the launcher"
+   * explanation rather than a picker.
+   */
+  router.get('/tts-providers', (req, res) => {
+    try {
+      const resolved = TTSService.resolveActiveProvider(db)
+      const providers = TTSService.listProvidersForMode(db, resolved.mode)
+      res.json({
+        mode: resolved.mode,
+        providers,
+        current: resolved.provider || '',
+        source: resolved.source
+      })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
+  })
+
+  /**
    * POST /api/voice/tts-provider
    * Switch TTS provider. Whitelist comes from TTSService.PROVIDERS so adding
    * a new provider module automatically widens the accepted set; empty string
-   * deselects.
+   * deselects. The service writes to the mode-scoped slot matching the
+   * provider's own IS_LOCAL classification.
    */
   router.post('/tts-provider', express.json(), (req, res) => {
     try {

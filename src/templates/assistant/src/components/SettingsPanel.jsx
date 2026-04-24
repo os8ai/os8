@@ -23,21 +23,10 @@ const AWAY_OPTIONS = [
   { value: 900000, label: '15 min' },
 ]
 
-// TTS provider labels — keep in sync with src/services/tts.js::PROVIDER_LABELS.
-// (This is a React app served separately, so we duplicate rather than import
-// across the shell/template boundary.)
-const PROVIDER_LABELS = {
-  elevenlabs: 'ElevenLabs',
-  openai:     'OpenAI',
-  kokoro:     'Kokoro (local)'
-}
-
-const PROVIDER_OPTIONS = [
-  { value: '',           label: 'None' },
-  { value: 'elevenlabs', label: PROVIDER_LABELS.elevenlabs },
-  { value: 'openai',     label: PROVIDER_LABELS.openai },
-  { value: 'kokoro',     label: PROVIDER_LABELS.kokoro }
-]
+// TTS provider list is fetched from the server at /api/voice/tts-providers —
+// the shell filters by ai_mode and enforces the local/proprietary taxonomy,
+// so the template stays dumb about provider classification. `aiMode` is
+// returned alongside for the subtitle/explanation text.
 
 // Human-readable status banner text per backend `reason` code. Cloud
 // providers use 'no_api_key'; local providers use 'launcher_down' or
@@ -85,6 +74,9 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
   const [ttsSpeed, setTtsSpeed] = useState(100)
   const [ttsProvider, setTtsProvider] = useState(null)
   const [ttsStatus, setTtsStatus] = useState(null)
+  const [providerOptions, setProviderOptions] = useState([])
+  const [aiMode, setAiMode] = useState(null)
+  const [providerSource, setProviderSource] = useState(null)
   const [playingDefaultPreview, setPlayingDefaultPreview] = useState(null)
   const defaultAudioRef = useRef(null)
   const [localOverrides, setLocalOverrides] = useState({})
@@ -153,6 +145,18 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
       .then(r => r.json())
       .then(data => setTtsStatus(data))
       .catch(() => {})
+    // Load mode-filtered provider list. Server auto-picks a configured
+    // provider on first access so this call may persist a slot for us; we
+    // just reflect whatever `current` it returns.
+    fetch(`${baseApiUrl}/api/voice/tts-providers`)
+      .then(r => r.json())
+      .then(data => {
+        setProviderOptions(Array.isArray(data?.providers) ? data.providers : [])
+        setAiMode(data?.mode || null)
+        setProviderSource(data?.source || null)
+        if (data?.current !== undefined) setTtsProvider(data.current || null)
+      })
+      .catch(() => {})
     // Load TTS settings
     fetch(`${baseApiUrl}/api/voice/tts-settings`)
       .then(r => r.json())
@@ -203,11 +207,13 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider })
       })
-      // Re-fetch voices, TTS settings, and status
-      const [voicesRes, settingsRes, statusRes] = await Promise.all([
+      // Re-fetch voices, TTS settings, status, and the providers list (for
+      // source transitions pinned↔auto↔none).
+      const [voicesRes, settingsRes, statusRes, providersRes] = await Promise.all([
         fetch(`${baseApiUrl}/api/agents/voices`),
         fetch(`${baseApiUrl}/api/voice/tts-settings`),
-        fetch(`${baseApiUrl}/api/voice/tts-status`)
+        fetch(`${baseApiUrl}/api/voice/tts-status`),
+        fetch(`${baseApiUrl}/api/voice/tts-providers`)
       ])
       const voicesData = await voicesRes.json()
       setVoiceReady(voicesData.ready || false)
@@ -223,6 +229,12 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
       setTtsSpeed(Math.round((settingsData.speed || 1.0) * 100))
       const statusData = await statusRes.json()
       setTtsStatus(statusData)
+      const providersData = await providersRes.json().catch(() => null)
+      if (providersData) {
+        setProviderOptions(Array.isArray(providersData.providers) ? providersData.providers : [])
+        setAiMode(providersData.mode || null)
+        setProviderSource(providersData.source || null)
+      }
       window.dispatchEvent(new CustomEvent('tts-provider-changed'))
       onConfigUpdated?.()
     } catch (err) {
@@ -789,11 +801,17 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
           {activeTab === 'system' && (
             <>
               {/* Default Voices */}
-              <Section title="Voice" subtitle={voiceReady && ttsProvider ? `${PROVIDER_LABELS[ttsProvider] || ttsProvider} — default voices for agents without a voice assigned` : 'Default voices for agents without a voice assigned'}>
+              <Section title="Voice" subtitle={(() => {
+                const currentLabel = providerOptions.find(p => p.value === (ttsProvider || ''))?.label
+                if (voiceReady && ttsProvider && currentLabel) {
+                  return `${currentLabel} — default voices for agents without a voice assigned`
+                }
+                return 'Default voices for agents without a voice assigned'
+              })()}>
                 {/* TTS Provider Toggle */}
                 <Field label="Provider">
                   <div className="flex gap-1">
-                    {PROVIDER_OPTIONS.map(opt => (
+                    {providerOptions.map(opt => (
                       <button
                         key={opt.value}
                         type="button"
@@ -803,11 +821,26 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
                             ? 'bg-blue-600 text-white'
                             : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
                         }`}
+                        title={opt.help || undefined}
                       >
                         {opt.label}
                       </button>
                     ))}
                   </div>
+                  {aiMode && (
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      {aiMode === 'local'
+                        ? 'os8 is in local mode — only local providers are shown.'
+                        : 'os8 is in cloud mode — only cloud providers are shown.'}
+                    </p>
+                  )}
+                  {providerSource === 'none' && (
+                    <p className="text-[11px] text-amber-400 mt-1">
+                      {aiMode === 'local'
+                        ? 'No local TTS provider is available — start os8-launcher and ensure the Kokoro model is serving.'
+                        : 'No cloud TTS provider is configured — add an ElevenLabs or OpenAI API key in os8 Settings → API Keys.'}
+                    </p>
+                  )}
                   {ttsStatus && ttsProvider && (
                     <p className={`text-[10px] mt-1 ${ttsStatus.available ? 'text-green-400' : 'text-red-400'}`}>
                       {ttsStatus.available ? 'Ready' : (TTS_STATUS_MESSAGES[ttsStatus.reason] || ttsStatus.reason || 'Unknown')}
@@ -816,7 +849,7 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
                 </Field>
 
                 {!voiceReady ? (
-                  <p className="text-[11px] text-gray-500">{ttsProvider ? 'Configuring provider...' : 'Select a TTS provider above to configure voices.'}</p>
+                  <p className="text-[11px] text-gray-500">{ttsProvider ? 'Configuring provider...' : 'Voice output will be available once a provider is configured.'}</p>
                 ) : (() => {
                   const femaleVoices = voices.filter(v => {
                     const g = v.labels?.gender

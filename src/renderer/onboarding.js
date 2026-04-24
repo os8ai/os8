@@ -701,11 +701,16 @@ function renderStep4Voice(container) {
   const kokoroBtn = container.querySelector('.onboarding-kokoro-pick');
   if (kokoroBtn) {
     kokoroBtn.addEventListener('click', async () => {
-      await window.os8.settings.set('tts_provider', 'kokoro');
       providerStatuses.kokoro = { selected: true };
-      // Mirror the cloud-provider behavior: enable voice output globally.
+      // Route through the TTS endpoint so the per-mode slot (tts_provider_local
+      // for kokoro) is written correctly; then enable voice output globally.
       try {
         const port = await window.os8.server.getPort();
+        await fetch(`http://localhost:${port}/api/voice/tts-provider`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: 'kokoro' })
+        });
         await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -728,17 +733,25 @@ function renderStep4Voice(container) {
       const envKey = btn.dataset.envKey;
       await window.os8.env.set(envKey, key, 'Set during onboarding');
 
+      // Route provider picks through the TTS endpoint so per-mode slots are
+      // written correctly (both elevenlabs/openai go to tts_provider_proprietary).
+      const port = await window.os8.server.getPort();
+      const setProvider = (provider) => fetch(`http://localhost:${port}/api/voice/tts-provider`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider })
+      }).catch(() => {});
+
       if (envKey === 'ELEVENLABS_API_KEY') {
         providerStatuses.elevenlabs = { apiKey: true };
-        await window.os8.settings.set('tts_provider', 'elevenlabs');
+        await setProvider('elevenlabs');
       } else if (envKey === 'OPENAI_API_KEY') {
         providerStatuses.openai = { ...providerStatuses.openai, apiKey: true };
         if (!providerStatuses.elevenlabs?.apiKey) {
-          await window.os8.settings.set('tts_provider', 'openai');
+          await setProvider('openai');
         }
       }
       // Enable voice output when a TTS key is saved during onboarding
-      const port = await window.os8.server.getPort();
       await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1111,7 +1124,14 @@ async function handleContinue() {
 
   // Auto-set TTS provider and enable voice output when leaving voice step
   if (currentStep === 4) {
-    const currentProvider = await window.os8.settings.get('tts_provider');
+    const port = await window.os8.server.getPort();
+    // Read the active mode's provider through the endpoint so we see the
+    // correct mode-scoped slot, not the legacy single-slot key.
+    let currentProvider = '';
+    try {
+      const r = await fetch(`http://localhost:${port}/api/voice/tts-providers`);
+      if (r.ok) currentProvider = (await r.json()).current || '';
+    } catch {}
     if (!currentProvider) {
       let selectedProvider = null;
       if (providerStatuses.elevenlabs?.apiKey) {
@@ -1120,9 +1140,12 @@ async function handleContinue() {
         selectedProvider = 'openai';
       }
       if (selectedProvider) {
-        await window.os8.settings.set('tts_provider', selectedProvider);
+        await fetch(`http://localhost:${port}/api/voice/tts-provider`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: selectedProvider })
+        }).catch(() => {});
         // Enable voice output by default when a provider is configured during onboarding
-        const port = await window.os8.server.getPort();
         await fetch(`http://localhost:${port}/api/voice/tts-settings`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

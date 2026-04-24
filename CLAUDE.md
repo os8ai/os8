@@ -115,7 +115,7 @@ For code patterns and conventions, see [OS8-project-design-principles.md](OS8-pr
 | `telegram.js` | TelegramService (Telegram Bot API client) |
 | `thread-orchestrator.js` | ThreadOrchestrator (group/DM response coordination, DM circuit breaker with auto-reset, Telegram group delivery) |
 | `transcribe.js` | TranscribeService (video to text via ffmpeg + whisper) |
-| `tts.js` | TTSService facade (routes to active provider: ElevenLabs or OpenAI) |
+| `tts.js` | TTSService facade (per-mode provider pin: routes to the active provider for the current ai_mode — ElevenLabs/OpenAI under proprietary, Kokoro under local) |
 | `tts-elevenlabs.js` | ElevenLabs TTS provider (voice listing, audio generation, WebSocket streaming) |
 | `tts-openai.js` | OpenAI TTS provider (voice listing, audio generation, PCM streaming) |
 | `tunnel.js` | TunnelService (Cloudflare tunnel for public call URLs) |

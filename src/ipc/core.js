@@ -32,12 +32,14 @@ function registerCoreHandlers({ mainWindow, services, helpers }) {
   });
   ipcMain.handle('core:path', () => CoreService.getPath());
 
-  // Paths
+  // Paths + version metadata. Version comes from package.json — the same
+  // source the migrator reads, so Settings always shows the installed build.
   ipcMain.handle('paths:get', () => ({
     apps: APPS_DIR,
     blob: BLOB_DIR,
     install: path.resolve(__dirname, '..', '..'),
     userData: require('../config').OS8_DIR,
+    version: require('../../package.json').version,
   }));
 
   // Server info
