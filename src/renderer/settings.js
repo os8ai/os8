@@ -414,22 +414,28 @@ function startLocalStatusPoller(serverPort, intervalMs = 2000) {
 /**
  * Show/hide AI-section children based on the active ai_mode.
  *
- * Under local mode the Provider Status + Model API Constraints tables
- * become semantically empty (both are cloud-provider-only by construction),
- * so we hide them outright rather than render empty shells.
- *
- * Local slots show/hide follows the toggle too. The Mode toggle itself and
- * Model Priority (cascade table, which is already mode-aware server-side)
- * stay visible in both modes.
+ * Local slots card follows the toggle — only visible under local mode.
+ * Provider Status and Model API Constraints stay visible in both modes;
+ * their row-level content is filtered in loadRoutingUI / loadConstraintsUI
+ * via currentModeRowFilter() so local mode shows only the Local row and
+ * proprietary mode shows only the cloud providers.
  */
 function applyModeVisibility(mode) {
   const isLocal = mode === 'local';
   const slotsEl = document.getElementById('localSlots');
   if (slotsEl) slotsEl.hidden = !isLocal;
-  const providerSection = document.getElementById('providerStatusSection');
-  if (providerSection) providerSection.hidden = isLocal;
-  const constraintsSection = document.getElementById('apiConstraintsSection');
-  if (constraintsSection) constraintsSection.hidden = isLocal;
+}
+
+/**
+ * Returns a filter predicate that keeps the statuses matching the current
+ * ai_mode: local mode → only provider_id === 'local'; proprietary mode →
+ * everything except 'local'. Reads the toggle checkbox since it's the
+ * authoritative UI-side source after loadLocalModePanel initializes it.
+ */
+function currentModeRowFilter() {
+  const toggle = document.getElementById('aiModeToggle');
+  const isLocal = !!toggle?.checked;
+  return (s) => isLocal ? s.provider_id === 'local' : s.provider_id !== 'local';
 }
 
 async function loadLocalModePanel(serverPort) {
@@ -509,10 +515,14 @@ async function loadRoutingUI(serverPort) {
     const statuses = await statusRes.json();
     const { preferences } = await prefRes.json();
 
+    // Filter rows by current ai_mode — local mode shows only the Local
+    // provider; proprietary mode shows only the cloud providers.
+    const displayedStatuses = statuses.filter(currentModeRowFilter());
+
     // Provider status table
     const bodyEl = document.getElementById('providerStatusBody');
     if (bodyEl) {
-      bodyEl.innerHTML = statuses.map(s => {
+      bodyEl.innerHTML = displayedStatuses.map(s => {
         const hasLogin = !!s.has_login;
 
         // Login column
@@ -659,8 +669,8 @@ async function loadRoutingUI(serverPort) {
       };
     }
 
-    // Load constraints table
-    await loadConstraintsUI(serverPort, statuses);
+    // Load constraints table (same row filter as Provider Status).
+    await loadConstraintsUI(serverPort, displayedStatuses);
 
     // Load initial cascade
     await loadCascade(serverPort, currentCascadeTask);
