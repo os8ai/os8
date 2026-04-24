@@ -67,6 +67,15 @@
       color: var(--color-text-light);
     }
 
+    /* Global fallback for native <option> rendering. Belt-and-suspenders
+       alongside :root { color-scheme: dark } — ensures any <select> in the
+       shell without a selector-scoped option rule still renders readable
+       options. Individual .class option rules above override when present. */
+    option {
+      background: var(--color-bg-panel);
+      color: var(--color-text);
+    }
+
 /* ==========================================================================
    BASE / RESET
    ========================================================================== */

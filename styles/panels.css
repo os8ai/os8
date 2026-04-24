@@ -1116,10 +1116,10 @@
 }
 
 .panel-mode-select {
-  background: var(--bg-primary);
+  background: var(--color-bg-panel);
   border: 1px solid var(--hover-bg);
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
+  color: var(--color-text);
   font-size: var(--text-sm);
   padding: 2px 6px;
   cursor: pointer;
@@ -1223,7 +1223,7 @@
 .job-name {
   font-size: var(--text-md);
   font-weight: 500;
-  color: var(--text-primary);
+  color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1349,7 +1349,7 @@
 .job-detail-section p {
   margin: 0;
   font-size: var(--text-md);
-  color: var(--text-primary);
+  color: var(--color-text);
 }
 
 /* Runs section */
@@ -1523,10 +1523,10 @@
 .form-input {
   width: 100%;
   padding: 8px 12px;
-  background: var(--bg-primary);
+  background: var(--color-bg-panel);
   border: 1px solid var(--hover-bg);
   border-radius: var(--radius-md);
-  color: var(--text-primary);
+  color: var(--color-text);
   font-size: var(--text-md);
   transition: border-color 0.15s;
 }
@@ -1545,10 +1545,10 @@
 .form-select {
   width: 100%;
   padding: 8px 12px;
-  background: var(--bg-primary);
+  background: var(--color-bg-panel);
   border: 1px solid var(--hover-bg);
   border-radius: var(--radius-md);
-  color: var(--text-primary);
+  color: var(--color-text);
   font-size: var(--text-md);
   cursor: pointer;
 }
@@ -1619,10 +1619,10 @@
 .frequency-options select,
 .frequency-options input[type="time"] {
   padding: 6px 10px;
-  background: var(--bg-primary);
+  background: var(--color-bg-panel);
   border: 1px solid var(--hover-bg);
   border-radius: var(--radius-sm);
-  color: var(--text-primary);
+  color: var(--color-text);
   font-size: var(--text-base);
 }
 

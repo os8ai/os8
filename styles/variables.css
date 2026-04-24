@@ -3,6 +3,13 @@
    ========================================================================== */
 
     :root {
+      /* Opt every native form control popup (select options, date pickers,
+         context menus) into Chromium's dark UA defaults. Without this the
+         native <option> dropdown popup renders light-mode white even when
+         the <select> itself is dark — because native popups live in a
+         platform layer that doesn't inherit page CSS. */
+      color-scheme: dark;
+
       /* Primary colors */
       --color-primary: #3b82f6;
       --color-primary-rgb: 59, 130, 246;
