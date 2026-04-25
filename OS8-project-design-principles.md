@@ -328,6 +328,9 @@ state.tabs.push(newTab);
 addTab(newTab);
 ```
 
+### Never Destroy DOM That Owns Live State
+xterm cell grids, open SSE connections, and timer-driven panels can't be reconstructed from a server snapshot or replayed buffer. On tab switch / view swap, **park** them (detach + hide) — see §13. Destroy-and-recreate silently corrupts the UI (e.g. an alt-screen TUI repainted from a truncated PTY buffer).
+
 ### Never Put Repetitive HTML in index.html
 Generate dynamic content with JavaScript. The HTML file should contain:
 - Structural containers
@@ -427,6 +430,45 @@ const text = await sendTextPrompt(db, resolved, prompt, {
 | `moderator.js` | summary | Group chat turn-taking decisions |
 | `principles.js` | summary, conversation | Principle extraction (SDK-only, uses `familyToSdkModel` directly) |
 | `plan-generator.js` | planning | Plan generation (SDK-only, uses `familyToSdkModel` directly) |
+
+---
+
+## 13. DOM Lifecycle: Park vs Reload
+
+When a panel goes off-screen (tab switch, modal close, view swap), decide whether to **park** its DOM (keep alive, hidden) or **reload** it on next show. Picking wrong in either direction causes a real bug class.
+
+### The Test
+Ask: *"If I delete this DOM right now, where do I get it back from?"*
+
+| Component                  | Source of truth              | Strategy |
+|----------------------------|------------------------------|----------|
+| File tree, tasks, jobs     | SQLite / filesystem          | Reload   |
+| Preview (BrowserView)      | Main process                 | Persist there, not in renderer |
+| xterm scrollback           | The xterm cell grid itself   | **Park** |
+| Agent SSE stream           | The live EventSource         | **Park** |
+| Build status timer/output  | `setInterval` + DOM accumulator | **Park** |
+
+### When to Park
+The DOM owns state that exists nowhere else AND can't be reconstructed from a server snapshot:
+- A live byte stream rendered into a stateful surface (xterm).
+- An open network connection accumulating events (SSE, WebSocket).
+- Wall-clock state captured at instantiation (timers, recordings).
+
+Park by **detaching the DOM into a hidden container** (e.g. per-tab park element on `document.body`) — not by destroying it. JS objects, listeners, internal buffers, and network connections all stay alive. On unpark, reattach + reflow + force-refresh.
+
+Reference implementation: `parkTabInstances` / `unparkTabInstances` in `src/renderer/tabs.js`.
+
+### When to Reload
+The DOM is a rendering of authoritative data held elsewhere:
+- Server-backed lists (tasks, jobs, files, agents).
+- Anything that other tabs / processes / agents could mutate while parked.
+
+Reload on show. Staleness is the bug; reloading is the cheapest fix.
+
+### The Anti-Pattern
+Treating a "park" component like a "reload" component (destroy it, then try to reconstruct from a server snapshot or cached buffer) silently corrupts state — alt-screen TUIs repainted from a truncated PTY buffer are the canonical example. The reverse mistake (parking what should reload) produces silent staleness and stale-action bugs.
+
+> **Rule of thumb:** If a server-side change wouldn't show up after a tab switch, you're parking something that should be reloaded. If reattaching shows a corrupted/blank view, you're reloading something that should be parked.
 
 ---
 

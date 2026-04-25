@@ -13,7 +13,7 @@ import {
   getDraggedTab, setDraggedTab,
   getTabDropPosition, setTabDropPosition,
   getTerminalInstances, setTerminalInstances,
-  getTerminalIdCounter, setTerminalIdCounter,
+  getTerminalInstancesForTab,
   getShowHiddenFiles, setShowHiddenFiles,
   getPanelMode, setPanelMode, setJobsView, setSelectedJobId,
   getJobsFilterView, setJobsFilterView,
@@ -24,9 +24,76 @@ import { hideAllPreviews, hidePreviewForApp, loadPreview, updatePreviewBounds, d
 import { switchStorageView, loadStorageView } from './file-tree.js';
 import { loadTasks } from './tasks.js';
 import { loadJobs } from './jobs.js';
-import { createTerminalInstance, reconnectTerminalInstance, createBuildStatusTab } from './terminal.js';
+import { createTerminalInstance, createBuildStatusTab, fitAllTerminals, fitTerminalInstance } from './terminal.js';
 import { createAgentInstance } from './agent-panel.js';
 import { attachModeToggleListeners, renderUserModeView } from './view-mode.js';
+
+// --- Per-tab parking lot -----------------------------------------------------
+//
+// On tab switch, instead of disposing xterm/agent-panel/build-status DOM and
+// rebuilding from saved metadata (which corrupts alt-screen TUIs like
+// OpenCode — the rolling 50KB PTY buffer can't be safely replayed), we move
+// each tab's instance DOM nodes into a per-tab park element on document.body.
+// xterm objects, SSE EventSources, and build polling all stay alive. Switching
+// back is a DOM move + fit + refresh — no replay, no recreate.
+//
+// Park elements are created lazily in createAppTab and removed in
+// cleanupTabResources. Lookup by tabId via data-tab-id attribute.
+
+function getOrCreateParkForTab(tabId) {
+  let park = document.querySelector(`.terminal-park[data-tab-id="${CSS.escape(tabId)}"]`);
+  if (!park) {
+    park = document.createElement('div');
+    park.className = 'terminal-park';
+    park.dataset.tabId = tabId;
+    park.hidden = true;
+    park.style.display = 'none';
+    document.body.appendChild(park);
+  }
+  return park;
+}
+
+function removeParkForTab(tabId) {
+  const park = document.querySelector(`.terminal-park[data-tab-id="${CSS.escape(tabId)}"]`);
+  if (park) park.remove();
+}
+
+function parkTabInstances(tab) {
+  if (!tab || tab.type !== 'app') return;
+  const park = getOrCreateParkForTab(tab.id);
+  const instances = getTerminalInstancesForTab(tab.id);
+  // Preserve current DOM order (the order in terminalsContainer) by appending
+  // each element to the park in that visible order.
+  for (const inst of instances) {
+    if (inst.element && inst.element.parentNode) {
+      park.appendChild(inst.element);
+    }
+  }
+}
+
+function unparkTabInstances(tab) {
+  if (!tab || tab.type !== 'app') return false;
+  const park = document.querySelector(`.terminal-park[data-tab-id="${CSS.escape(tab.id)}"]`);
+  if (!park || park.children.length === 0) return false;
+  // Move children in their existing order from the park back into terminalsContainer.
+  while (park.firstChild) {
+    elements.terminalsContainer.appendChild(park.firstChild);
+  }
+  // Reflow xterm to the (possibly new) container size and force a full
+  // repaint of the visible buffer — covers the rare case where xterm's DOM
+  // renderer dropped pixels during the detached interval.
+  const instances = getTerminalInstancesForTab(tab.id);
+  fitAllTerminals(instances);
+  for (const inst of instances) {
+    if (inst.terminal) {
+      try { inst.terminal.refresh(0, inst.terminal.rows - 1); } catch (e) {}
+    }
+    if (typeof inst._onUnpark === 'function') {
+      try { inst._onUnpark(); } catch (e) {}
+    }
+  }
+  return true;
+}
 
 // Callbacks for functions still in index.html
 let callbacks = {
@@ -213,10 +280,14 @@ export async function switchToTab(tabId) {
   const targetTab = getTabById(tabId);
   if (!targetTab) return;
 
-  // Save current tab state before switching
+  // Save current tab state before switching, then park its live instance DOM.
+  // Parking detaches xterm/agent-panel/build-status elements from the visible
+  // container and stows them on document.body — JS objects, PTY data flow,
+  // SSE connections, and polling all keep running while parked.
   const currentTab = getTabById(getActiveTabId());
   if (currentTab && currentTab.type === 'app') {
     await saveTabState(currentTab);
+    parkTabInstances(currentTab);
     // Hide the current app's preview before switching
     await hidePreviewForApp(currentTab.app.id);
   }
@@ -371,36 +442,13 @@ export async function saveTabState(tab) {
   const { tasksViewSelect, storageSelect } = elements;
 
   // Save terminal instances (just metadata, PTY sessions continue running)
-  tab.state.terminalInstances = getTerminalInstances().map(inst => {
-    if (inst.isBuildStatus) {
-      // Save build tab metadata for restoration on tab switch
-      return {
-        id: inst.id,
-        sessionId: null,
-        activeType: 'build',
-        isBuildStatus: true,
-        buildId: inst.buildId,
-        appId: inst._buildAppId,
-        appName: inst._buildAppName,
-        backend: inst._buildBackend
-      };
-    }
-    if (inst.isAgentPanel) {
-      return {
-        id: inst.id,
-        sessionId: null,
-        activeType: 'agent',
-        isAgentPanel: true,
-        agentId: inst.agentId
-      };
-    }
-    return {
-      id: inst.id,
-      sessionId: inst.sessionId,
-      activeType: inst.activeType
-    };
-  });
-  tab.state.terminalIdCounter = getTerminalIdCounter();
+  // Live instance objects ARE the source of truth across tab switches now
+  // (they get parked in document.body, not destroyed). We no longer snapshot
+  // metadata into tab.state.terminalInstances or terminalIdCounter — the
+  // global registry survives.
+  //
+  // The DB layout below remains — it covers cold-start across full app
+  // restart, where PTY processes have died and we need a recipe to recreate.
 
   // Save view states
   tab.state.tasksView = tasksViewSelect.value;
@@ -411,8 +459,9 @@ export async function saveTabState(tab) {
   tab.state.panelMode = getPanelMode();
   tab.state.jobsFilterView = getJobsFilterView();
 
-  // Persist terminal layout + UI settings to database (all apps)
-  const terminalLayout = tab.state.terminalInstances
+  // Persist terminal layout + UI settings to database (all apps).
+  // Read directly from live instances since we no longer snapshot metadata.
+  const terminalLayout = getTerminalInstancesForTab(tab.id)
     .filter(inst => !inst.isBuildStatus)
     .map(inst => {
       if (inst.isAgentPanel) {
@@ -555,43 +604,19 @@ export async function restoreTabState(tab) {
   // Switch storage view
   switchStorageView(storageSelect.value);
 
-  // Clean up agent panel EventSource connections before clearing DOM
-  // (prevents orphaned SSE connections that keep running server-side)
-  for (const inst of getTerminalInstances()) {
-    if (inst.isAgentPanel && inst._cleanup) {
-      inst._cleanup();
-    }
-  }
-
-  // Clear existing terminal instances from DOM (they belong to another tab)
-  terminalsContainer.innerHTML = '';
-
   // Terminal handling - skip for assistant app
   if (!isAssistant) {
-    // If tab has saved terminal state, restore it
-    if (tab.state.terminalInstances && tab.state.terminalInstances.length > 0) {
-      // Clear current instances array
-      setTerminalInstances([]);
-      setTerminalIdCounter(tab.state.terminalIdCounter || 0);
-
-      // Reconnect to existing PTY sessions (or restore build/agent tabs)
-      for (const savedInst of tab.state.terminalInstances) {
-        if (savedInst.isAgentPanel) {
-          await createAgentInstance(tab.app.id, { agentId: savedInst.agentId });
-        } else if (savedInst.isBuildStatus) {
-          await createBuildStatusTab(savedInst.buildId, savedInst.appId, savedInst.appName, savedInst.backend);
-        } else {
-          await reconnectTerminalInstance(savedInst);
-        }
-      }
-    } else if (!tab.state.skipDefaultTerminal) {
-      // Fresh tab — try loading persisted terminal layout from DB
+    // Hot path: this tab has live instances parked from an earlier visit.
+    // Move them back into terminalsContainer; xterm/SSE/polling never died.
+    const unparked = unparkTabInstances(tab);
+    if (!unparked && !tab.state.skipDefaultTerminal) {
+      // Cold path: first time the tab is being opened in this session.
+      // Try to rehydrate from the DB-persisted terminal layout, otherwise
+      // fall back to a single default Claude terminal.
       let restored = false;
       try {
         const savedUi = await window.os8.settings.getAppUi(tab.app.id);
         if (savedUi?.terminalLayout?.length > 0) {
-          setTerminalInstances([]);
-          setTerminalIdCounter(0);
           for (const entry of savedUi.terminalLayout) {
             if (entry.type === 'agent') {
               await createAgentInstance(tab.app.id, { agentId: entry.agentId });
@@ -605,20 +630,11 @@ export async function restoreTabState(tab) {
         console.warn('Failed to load terminal layout:', err);
       }
       if (!restored) {
-        // Fallback: default single Claude terminal
-        setTerminalInstances([]);
-        setTerminalIdCounter(0);
         await createTerminalInstance('claude');
       }
-    } else {
-      // Agent panel will be created by caller — just init empty state
-      setTerminalInstances([]);
-      setTerminalIdCounter(0);
     }
-  } else {
-    // Assistant app - no terminal needed
-    setTerminalInstances([]);
-    setTerminalIdCounter(0);
+    // skipDefaultTerminal=true means the caller (e.g. createAppTab during a
+    // build flow) will create the agent panel itself — nothing to do here.
   }
 
   // Ensure preview exists and position it
@@ -663,33 +679,32 @@ export async function cleanupTabResources(tab) {
     await destroyPreviewForApp(tab.app.id);
   }
 
-  // Kill PTY sessions for this tab
-  if (tab.state.terminalInstances) {
-    for (const inst of tab.state.terminalInstances) {
-      if (inst.sessionId) {
-        await window.os8.terminal.kill(inst.sessionId);
-      }
+  // Dispose every live instance owned by this tab. Single per-tab pass —
+  // works whether the instance's DOM is currently in terminalsContainer
+  // (active tab) or parked on document.body (inactive tab).
+  const owned = getTerminalInstancesForTab(tab.id);
+  for (const instance of owned) {
+    if (instance.sessionId) {
+      await window.os8.terminal.kill(instance.sessionId);
     }
-  }
-
-  // If this is the current tab, also clean up DOM terminals
-  if (getActiveTabId() === tab.id) {
-    for (const instance of getTerminalInstances()) {
-      if (instance.sessionId) {
-        await window.os8.terminal.kill(instance.sessionId);
-      }
-      if (instance.isBuildStatus) {
-        clearInterval(instance._pollInterval);
-        clearInterval(instance._timerInterval);
-      }
-      if (instance.isAgentPanel && instance._cleanup) {
-        instance._cleanup();
-      }
-      if (instance.terminal) {
-        instance.terminal.dispose();
-      }
+    if (instance.isBuildStatus) {
+      clearInterval(instance._pollInterval);
+      clearInterval(instance._timerInterval);
+    }
+    if (instance.isAgentPanel && instance._cleanup) {
+      instance._cleanup();
+    }
+    if (instance.terminal) {
+      instance.terminal.dispose();
+    }
+    if (instance.element) {
       instance.element.remove();
     }
-    setTerminalInstances([]);
   }
+  // Drop them from the global registry.
+  const remaining = getTerminalInstances().filter(i => i.tabId !== tab.id);
+  setTerminalInstances(remaining);
+
+  // Remove the tab's parking element from document.body.
+  removeParkForTab(tab.id);
 }

@@ -6,11 +6,12 @@
 
 import { elements } from './elements.js';
 import {
-  getCurrentApp,
+  getCurrentApp, getActiveTabId,
   getPtyHandlersInitialized, setPtyHandlersInitialized,
   getTerminalInstanceBySessionId,
-  addTerminalInstance, removeTerminalInstance, getTerminalInstances,
-  setTerminalInstances, incrementTerminalIdCounter
+  addTerminalInstance, removeTerminalInstance,
+  getTerminalInstances, getTerminalInstancesForActiveTab,
+  incrementTerminalIdCounter
 } from './state.js';
 import * as voice from './voice.js';
 import { createVoiceClickHandler } from '../shared/voice-click-handler.js';
@@ -49,17 +50,15 @@ export const terminalTheme = {
   brightWhite: '#f8fafc',
 };
 
-// Cached terminal container options fetched from AI registry
-let _terminalOptionsCache = null;
+// Terminal container options are fetched fresh each time — the server filters
+// by current ai_mode, so caching would leave stale options after a mode flip.
 export async function getTerminalSelectOptions() {
-  if (_terminalOptionsCache) return _terminalOptionsCache;
   const port = await window.os8.server.getPort();
   const res = await fetch(`http://localhost:${port}/api/ai/containers/terminal`);
   const containers = await res.json();
-  _terminalOptionsCache = containers.map(c =>
+  return containers.map(c =>
     `<option value="${c.id}">${c.name}</option>`
   ).join('') + '<option value="terminal">Command Line</option><option value="agent">Agent</option>';
-  return _terminalOptionsCache;
 }
 
 export function fitTerminalInstance(instance) {
@@ -82,7 +81,7 @@ export function fitAllTerminals(terminalInstances) {
 
 // For backwards compatibility
 export function fitTerminal() {
-  fitAllTerminals(getTerminalInstances());
+  fitAllTerminals(getTerminalInstancesForActiveTab());
 }
 
 /**
@@ -142,7 +141,10 @@ export function initPtyHandlers() {
 }
 
 export function updateCloseButtonVisibility() {
-  const instances = getTerminalInstances();
+  // Per-tab — the X button hides when only one instance remains in the
+  // current tab (preventing the user from closing their last terminal),
+  // independent of how many instances exist in other tabs' parks.
+  const instances = getTerminalInstancesForActiveTab();
   const showClose = instances.length > 1;
   instances.forEach(instance => {
     const closeBtn = instance.element.querySelector('.close-terminal-btn');
@@ -372,9 +374,12 @@ export async function createTerminalInstance(type = 'claude') {
   terminal.open(container);
   attachCopyPasteHandler(terminal);
 
-  // Create instance object
+  // Create instance object. tabId pins this instance to its owning tab so
+  // park/unpark and per-tab queries (close-button visibility, fit-all,
+  // cleanup-on-tab-close) can find the right set without scanning DOM.
   const instance = {
     id: instanceId,
+    tabId: getActiveTabId(),
     element: instanceEl,
     terminal,
     fitAddon,
@@ -448,144 +453,6 @@ export async function createTerminalInstance(type = 'claude') {
   setTimeout(() => {
     fitTerminalInstance(instance);
     terminal.focus();
-  }, 100);
-
-  // Update close button visibility
-  updateCloseButtonVisibility();
-
-  return instance;
-}
-
-export async function reconnectTerminalInstance(savedInst) {
-  if (!getCurrentApp()) return;
-
-  initPtyHandlers();
-
-  const instanceId = savedInst.id;
-  const type = savedInst.activeType || 'claude';
-  const terminalOptions = await getTerminalSelectOptions();
-
-  // Create DOM structure
-  const instanceEl = document.createElement('div');
-  instanceEl.className = 'terminal-instance';
-  instanceEl.dataset.instanceId = instanceId;
-  instanceEl.innerHTML = `
-    <div class="panel-bar terminal-instance-toolbar">
-      <select class="panel-select terminal-select">
-        ${terminalOptions}
-      </select>
-      <button class="terminal-switch-btn" style="display: none;">Exit & Switch</button>
-      <div class="terminal-instance-actions">
-        ${voice.isSupported() ? `<button class="terminal-voice-btn" title="Click: one-shot, Double-click: continuous">
-          <span class="voice-badge" style="display:none;"></span>
-          <svg class="voice-icon-muted" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 1a4 4 0 00-4 4v6a4 4 0 008 0V5a4 4 0 00-4-4z"/>
-            <path d="M6 11a1 1 0 00-2 0 8 8 0 0014.93 4.03l-1.5-1.5A6 6 0 016 11z"/>
-            <path d="M12 17a5.98 5.98 0 01-3.58-1.18l-1.43 1.43A7.97 7.97 0 0011 18.93V21H8a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07a7.97 7.97 0 001.76-.35l-1.44-1.44A5.97 5.97 0 0112 17z"/>
-            <path d="M3.71 2.29a1 1 0 00-1.42 1.42l18 18a1 1 0 001.42-1.42l-18-18z"/>
-          </svg>
-          <svg class="voice-icon-active" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 20 20" fill="currentColor" style="display:none;">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z" clip-rule="evenodd"/>
-          </svg>
-          <svg class="voice-icon-spinner" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none;">
-            <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
-          </svg>
-        </button>` : ''}
-        <button class="close-terminal-btn" title="Close terminal">&times;</button>
-      </div>
-    </div>
-    <div class="terminal-instance-container"></div>
-  `;
-
-  elements.terminalsContainer.appendChild(instanceEl);
-
-  const container = instanceEl.querySelector('.terminal-instance-container');
-  const select = instanceEl.querySelector('.terminal-select');
-  const switchBtn = instanceEl.querySelector('.terminal-switch-btn');
-  const closeBtn = instanceEl.querySelector('.close-terminal-btn');
-  const voiceBtn = instanceEl.querySelector('.terminal-voice-btn');
-
-  // Set initial selection
-  select.value = type;
-
-  // Create xterm instance
-  const terminal = new Terminal({
-    theme: terminalTheme,
-    fontFamily: 'Menlo, Monaco, "Cascadia Code", monospace',
-    fontSize: 13,
-    lineHeight: 1.2,
-    cursorBlink: true,
-    scrollback: 5000,
-  });
-
-  const fitAddon = new FitAddon.FitAddon();
-  terminal.loadAddon(fitAddon);
-  terminal.open(container);
-  attachCopyPasteHandler(terminal);
-
-  // Create instance object
-  const instance = {
-    id: instanceId,
-    element: instanceEl,
-    terminal,
-    fitAddon,
-    sessionId: savedInst.sessionId,
-    activeType: type,
-    select,
-    switchBtn
-  };
-
-  addTerminalInstance(instance);
-
-  // Handle terminal input (restored terminals are considered already used)
-  instance.hasInput = true;
-  terminal.onData((data) => {
-    if (instance.sessionId) {
-      window.os8.terminal.write(instance.sessionId, data);
-    }
-  });
-
-  // Restore buffer from PTY session if available
-  if (savedInst.sessionId) {
-    const buffer = await window.os8.terminal.getBuffer(savedInst.sessionId);
-    if (buffer) {
-      terminal.write(buffer);
-    }
-  }
-
-  // Event listeners
-  select.addEventListener('change', () => {
-    if (select.value !== instance.activeType) {
-      switchBtn.style.display = 'inline-block';
-    } else {
-      switchBtn.style.display = 'none';
-    }
-  });
-
-  switchBtn.addEventListener('click', async () => {
-    if (select.value === 'agent') {
-      if (instance.sessionId) await window.os8.terminal.kill(instance.sessionId);
-      if (instance.terminal) instance.terminal.dispose();
-      instance.element.remove();
-      removeTerminalInstance(instanceId);
-      const createAgent = await getCreateAgentInstance();
-      await createAgent();
-      return;
-    }
-    await createSessionForInstance(instance, select.value);
-  });
-
-  closeBtn.addEventListener('click', async () => {
-    await closeTerminalInstance(instanceId);
-  });
-
-  // Voice input (streaming mode with double-click for continuous)
-  setupVoiceButton(voiceBtn, instance);
-
-  // Fit after a delay to ensure container is sized
-  setTimeout(() => {
-    fitTerminalInstance(instance);
   }, 100);
 
   // Update close button visibility
@@ -738,9 +605,13 @@ export async function createBuildStatusTab(buildId, appId, appName, backend, mod
     }
   }, 2000);
 
-  // Create instance object (no xterm, no sessionId)
+  // Create instance object (no xterm, no sessionId).
+  // tabId pins the build panel to the tab that initiated it; polling and
+  // timer intervals continue running while the tab is parked, so on
+  // switch-back the user sees current state with no flash of stale content.
   const instance = {
     id: instanceId,
+    tabId: getActiveTabId(),
     element: instanceEl,
     terminal: null,
     fitAddon: null,
@@ -773,14 +644,14 @@ export function escapeHtmlStr(str) {
 }
 
 export async function closeTerminalInstance(instanceId) {
-  const instances = getTerminalInstances();
-  const index = instances.findIndex(t => t.id === instanceId);
-  if (index === -1) return;
+  const instance = getTerminalInstances().find(t => t.id === instanceId);
+  if (!instance) return;
 
-  // Don't remove if it's the last one
-  if (instances.length <= 1) return;
-
-  const instance = instances[index];
+  // Don't remove if it's the last one in the OWNING tab (per-tab guard, not
+  // global — closing the last terminal in tab A shouldn't be blocked just
+  // because tab B has parked terminals).
+  const siblingsInTab = getTerminalInstances().filter(t => t.tabId === instance.tabId);
+  if (siblingsInTab.length <= 1) return;
 
   // Clean up build status polling
   if (instance.isBuildStatus) {

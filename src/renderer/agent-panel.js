@@ -7,7 +7,7 @@
 
 import { elements } from './elements.js';
 import {
-  getCurrentApp,
+  getCurrentApp, getActiveTabId,
   addTerminalInstance, removeTerminalInstance, incrementTerminalIdCounter
 } from './state.js';
 import {
@@ -760,9 +760,12 @@ export async function createAgentInstance(appId, options = {}) {
     document.removeEventListener('build-proposal', onBuildProposal);
   }
 
-  // Create instance object
+  // Create instance object. tabId pins this panel to the tab that owns it
+  // so the SSE EventSource keeps streaming while parked, and unpark can
+  // restore scroll position.
   const instance = {
     id: instanceId,
+    tabId: getActiveTabId(),
     element: instanceEl,
     terminal: null,
     fitAddon: null,
@@ -774,6 +777,15 @@ export async function createAgentInstance(appId, options = {}) {
     switchBtn: null,
     _cleanup: cleanup,
     _agentSelect: agentSelect,
+    // Called by unparkTabInstances after the DOM is re-attached. While the
+    // panel was parked in document.body (display:none), scrollHeight reads
+    // were essentially meaningless; restore the bottom-pin now that layout
+    // is real again.
+    _onUnpark: () => {
+      requestAnimationFrame(() => {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+    },
     aguiReducer
   };
 

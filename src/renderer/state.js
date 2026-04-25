@@ -332,6 +332,16 @@ export function updateTabById(id, updates) {
 }
 
 // Terminal Instances
+//
+// `terminalInstances` is a flat global array of all live instances across
+// every tab — xterm sessions, agent panels, and build-status panels. Each
+// instance is stamped with `tabId` at creation, so per-tab views are derived
+// at call sites rather than maintained as separate state.
+//
+// Why a flat global rather than per-tab arrays: PTY output events arrive via
+// `terminal:output` IPC and are dispatched by `getTerminalInstanceBySessionId`,
+// which has to find the right xterm regardless of which tab is currently
+// active (parked-but-alive instances still receive PTY data).
 export function addTerminalInstance(instance) { state.terminalInstances.push(instance); }
 export function removeTerminalInstance(id) {
   const idx = state.terminalInstances.findIndex(t => t.id === id);
@@ -342,6 +352,12 @@ export function getTerminalInstanceById(id) {
 }
 export function getTerminalInstanceBySessionId(sessionId) {
   return state.terminalInstances.find(t => t.sessionId === sessionId);
+}
+export function getTerminalInstancesForTab(tabId) {
+  return state.terminalInstances.filter(t => t.tabId === tabId);
+}
+export function getTerminalInstancesForActiveTab() {
+  return state.terminalInstances.filter(t => t.tabId === state.activeTabId);
 }
 export function incrementTerminalIdCounter() {
   return ++state.terminalIdCounter;

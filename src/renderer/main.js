@@ -16,7 +16,7 @@ import {
 } from './preview.js';
 import {
   terminalTheme, fitTerminalInstance, fitAllTerminals, fitTerminal,
-  initPtyHandlers, createTerminalInstance, reconnectTerminalInstance, closeTerminalInstance,
+  initPtyHandlers, createTerminalInstance, closeTerminalInstance,
   createBuildStatusTab
 } from './terminal.js';
 import { createAgentInstance } from './agent-panel.js';
@@ -81,7 +81,8 @@ import {
   getTabs, getTabById, getAppTabByAppId, getAppTabs,
   getActiveTabId, setActiveTabId,
   getTabsInitialized, setTabsInitialized,
-  getTerminalInstances, setTerminalInstances, addTerminalInstance,
+  getTerminalInstances, getTerminalInstancesForActiveTab,
+  setTerminalInstances, addTerminalInstance,
   removeTerminalInstance, getTerminalInstanceBySessionId,
   getTerminalIdCounter, setTerminalIdCounter, incrementTerminalIdCounter,
   getPtyHandlersInitialized, setPtyHandlersInitialized,
@@ -1279,7 +1280,7 @@ async function init() {
     }
 
     // Ensure agent panel exists with the building agent selected
-    const instances = getTerminalInstances();
+    const instances = getTerminalInstancesForActiveTab();
     const agentPanel = instances.find(i => i.isAgentPanel);
     if (!agentPanel) {
       await createAgentInstance(appId, { agentId });
@@ -1292,7 +1293,7 @@ async function init() {
     createBuildStatusTab(buildId, appId, appName, backend, model);
 
     // Remove unused terminal instances (no user input yet) to reduce clutter
-    const toRemove = getTerminalInstances().filter(i =>
+    const toRemove = getTerminalInstancesForActiveTab().filter(i =>
       !i.isAgentPanel && !i.isBuildStatus && !i.hasInput
     );
     for (const inst of toRemove) {
@@ -1323,12 +1324,14 @@ async function init() {
     loadStorageView();
   });
 
-  // ResizeObserver for terminals container
+  // ResizeObserver for terminals container — only fits the active tab's
+  // terminals. Parked instances on document.body don't have meaningful
+  // layout to fit; they get re-fit at unpark time.
   let terminalResizeTimeout;
   const terminalResizeObserver = new ResizeObserver(() => {
     clearTimeout(terminalResizeTimeout);
     terminalResizeTimeout = setTimeout(() => {
-      fitAllTerminals(getTerminalInstances());
+      fitAllTerminals(getTerminalInstancesForActiveTab());
     }, 50);
   });
   terminalResizeObserver.observe(terminalsContainer);
