@@ -30,7 +30,8 @@ function createAIRegistryRouter(db) {
 
   router.get('/containers/terminal', (req, res) => {
     try {
-      res.json(AIRegistryService.getTerminalContainers(db));
+      const mode = RoutingService.getMode(db);
+      res.json(AIRegistryService.getTerminalContainers(db, mode));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }

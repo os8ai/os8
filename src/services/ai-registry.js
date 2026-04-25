@@ -30,14 +30,20 @@ const AIRegistryService = {
     `).get(id);
   },
 
-  getTerminalContainers(db) {
-    return db.prepare(`
+  getTerminalContainers(db, mode) {
+    const rows = db.prepare(`
       SELECT c.*, p.name AS provider_name
       FROM ai_containers c
       JOIN ai_providers p ON p.id = c.provider_id
       WHERE c.show_in_terminal = 1
       ORDER BY c.display_order
     `).all();
+    if (!mode) return rows;
+    // Mirrors /api/ai/models/options: 'local' mode shows provider_id='local'
+    // only; 'proprietary' mode shows everything else.
+    return rows.filter(c => mode === 'local'
+      ? c.provider_id === 'local'
+      : c.provider_id !== 'local');
   },
 
   getModels(db) {

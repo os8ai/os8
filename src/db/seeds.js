@@ -31,6 +31,9 @@ function seedData(db) {
     // reuses CLAUDE.md so agent dirs don't need a new file generator for Phase 1.
     // Container id matches the BACKENDS key in backend-adapter.js ('local').
     insertContainer.run('local', 'local', 'http', 'Local (os8-launcher)', 'local', 'CLAUDE.md', 0, null, '[]', null, null, null, 4);
+    // OpenCode — local-mode CLI. User configures its providers to point at the
+    // os8-launcher (http://localhost:9000) via `opencode providers`.
+    insertContainer.run('opencode', 'local', 'cli', 'OpenCode', 'opencode', 'CLAUDE.md', 0, null, '[]', null, null, null, 5);
 
     // Seed model families (the thing users pick in the dropdown)
     const insertFamily = db.prepare(
@@ -139,6 +142,10 @@ function seedData(db) {
       .run('.gemini/oauth_creds.json', '["-p","hi"]', 'gemini');
     db.prepare(`UPDATE ai_containers SET auth_file_path = ? WHERE id = ? AND auth_file_path IS NULL`)
       .run('.codex/auth.json', 'codex');
+    // Hide the 'local' (os8-launcher) row from the terminal dropdown. It's an
+    // HTTP container with no PTY command — selecting it only ever opened a
+    // bare shell. Can't DELETE it: ai_model_families.container_id has FK refs.
+    db.prepare(`UPDATE ai_containers SET show_in_terminal = 0 WHERE id = 'local'`).run();
 
     // Models: api_model_id
     db.prepare(`UPDATE ai_models SET api_model_id = ? WHERE id = ? AND api_model_id IS NULL`).run('claude-opus-4-6', 'claude-opus');

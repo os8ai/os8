@@ -77,6 +77,7 @@ class PTYService {
     if (type === 'gemini') return 'clear && gemini';
     if (type === 'codex') return 'clear && codex';
     if (type === 'grok') return 'clear && grok';
+    if (type === 'opencode') return 'clear && opencode';
     if (type === 'terminal') return 'clear';
     return null;
   }
