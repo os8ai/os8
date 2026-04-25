@@ -14,6 +14,7 @@ const EmbodiedService = require('../services/embodiment');
 const { loadJSON } = require('../utils/file-helpers');
 const { describeImagesForContext, buildImageDescriptionsContext, buildTimelineDescriptionItems } = require('../utils/image-describe');
 const AgentService = require('../services/agent');
+const { getContextLimitTokens } = require('../services/context-limits');
 const {
   detectImageMediaType,
   findCurrentImages,
@@ -372,13 +373,27 @@ const buildAgentDMContext = buildAgentThreadContext;
 /**
  * Calculate memory budgets after accounting for identity context
  * Context ordering: myself → grok → present_moment → user → semantic → conversation+timeline
+ *
+ * Token budget resolution order:
+ *   1. Caller passes an explicit `totalBudgetTokens` → use it as-is
+ *   2. Caller passes `options.resolved` and we have a `db` → look up the
+ *      per-mode setting via getContextLimitTokens (local vs. proprietary)
+ *   3. Fall back to DEFAULT_TOTAL_BUDGET_TOKENS (preserves legacy behavior)
+ *
  * @param {string} appPath - Path to the assistant app directory
  * @param {object} db - Database instance (optional, falls back to file-based if not provided)
- * @param {number} totalBudgetTokens - Total token budget (default 100,000)
+ * @param {number|null} totalBudgetTokens - Explicit override; null/undefined defers to settings
+ * @param {object} options
+ * @param {object} [options.resolved] - RoutingService.resolve() output; used to pick local vs. proprietary limit
  * @returns {object} Context components and budget allocations
  */
-async function calculateContextBudgets(appPath, db = null, totalBudgetTokens = DEFAULT_TOTAL_BUDGET_TOKENS, options = {}) {
-  const { includeImages = true, backend = null, threadParticipantIds = null } = options;
+async function calculateContextBudgets(appPath, db = null, totalBudgetTokens = null, options = {}) {
+  const { includeImages = true, backend = null, threadParticipantIds = null, resolved = null } = options;
+  if (totalBudgetTokens == null) {
+    totalBudgetTokens = (db && resolved)
+      ? getContextLimitTokens(db, resolved)
+      : DEFAULT_TOTAL_BUDGET_TOKENS;
+  }
   const appId = path.basename(appPath);
 
   // Look up agent to get parent app_id for correct path resolution

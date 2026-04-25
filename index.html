@@ -907,6 +907,31 @@
               <div class="ai-mode-error" id="aiModeError" hidden></div>
             </div>
 
+            <!-- Memory Context Limit -->
+            <div class="ai-section-group" id="contextLimitSection">
+              <h4 class="ai-section-title">Memory Context Limit</h4>
+              <div class="context-limit-row" id="contextLimitLocalRow" hidden>
+                <label class="context-limit-label" for="contextLimitLocalInput">Local models — token limit</label>
+                <input type="number" id="contextLimitLocalInput" class="context-limit-input"
+                       min="1024" max="1000000" step="1000">
+                <div class="ai-mode-hint">
+                  Maximum tokens packed into each prompt when running on a local model.
+                  Stay below the launcher's <code>max-model-len</code>
+                  (currently <strong>65,536</strong> for Qwen3.6-35B).
+                </div>
+              </div>
+              <div class="context-limit-row" id="contextLimitProprietaryRow" hidden>
+                <label class="context-limit-label" for="contextLimitProprietaryInput">Proprietary models — token limit</label>
+                <input type="number" id="contextLimitProprietaryInput" class="context-limit-input"
+                       min="1024" max="1000000" step="1000">
+                <div class="ai-mode-hint">
+                  Maximum tokens packed into each prompt when running on a cloud model
+                  (Claude, Gemini, GPT, Grok).
+                </div>
+              </div>
+              <div class="ai-mode-error" id="contextLimitError" hidden></div>
+            </div>
+
             <!-- Provider Status -->
             <div class="ai-section-group" id="providerStatusSection">
               <h4 class="ai-section-title">Provider Status</h4>

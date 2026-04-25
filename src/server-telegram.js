@@ -271,7 +271,7 @@ function startTelegramWatcherForAgent(db, agent) {
           ownerImage,
           presentMomentContext: tgPresentMomentContext,
           imageDescriptions: tgImageDescriptions
-        } = await calculateContextBudgets(appPath, db, undefined, { backend: tgBackend });
+        } = await calculateContextBudgets(appPath, db, undefined, { backend: tgBackend, resolved: tgResolved });
 
         // Build memory context
         let memoryContext = '';

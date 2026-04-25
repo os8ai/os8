@@ -725,13 +725,22 @@ function handleCallConnection(clientWs, callId, deps) {
 
       clientWs.send(JSON.stringify({ type: 'agent_thinking', requestId: thisRequestId }));
 
-      // Calculate unified budget: 50K tokens total, MYSELF+USER+images first, remaining 50/50
-      // Note: Phone calls don't include images to keep streaming simple
+      // Resolve backend + model via routing cascade BEFORE budget calc so the
+      // context limit picks the right local-vs-proprietary value for this mode.
+      const callAssistantConfig = loadJSON(path.join(appPath, 'assistant-config.json'), {});
+      const callAgentOverride = callAssistantConfig.agentModel || null;
+      const callResolved = db ? RoutingService.resolve(db, 'conversation', callAgentOverride) : {
+        familyId: null, backendId: callAssistantConfig.agentBackend || 'claude',
+        modelArg: callAgentOverride, source: 'fallback'
+      };
+
+      // Calculate unified budget — token cap is mode-aware (local vs. proprietary).
+      // Phone calls don't include images to keep streaming simple.
       const {
         identityContext,
         conversationBudgetChars,
         semanticBudgetChars
-      } = await calculateContextBudgets(appPath, undefined, undefined, { includeImages: false });
+      } = await calculateContextBudgets(appPath, db, undefined, { includeImages: false, resolved: callResolved });
 
       // Build memory context with allocated budgets
       let memoryContext = '';
@@ -749,14 +758,6 @@ function handleCallConnection(clientWs, callId, deps) {
       // Combine identity and memory context
       const fullContext = identityContext + memoryContext;
       const enrichedMessage = enrichMessageWithContext(text, fullContext);
-
-      // Resolve backend + model via routing cascade
-      const callAssistantConfig = loadJSON(path.join(appPath, 'assistant-config.json'), {});
-      const callAgentOverride = callAssistantConfig.agentModel || null;
-      const callResolved = db ? RoutingService.resolve(db, 'conversation', callAgentOverride) : {
-        familyId: null, backendId: callAssistantConfig.agentBackend || 'claude',
-        modelArg: callAgentOverride, source: 'fallback'
-      };
       const callBackendId = callResolved.backendId;
       const callModel = callResolved.modelArg;
       const callBackend = getBackend(callBackendId);

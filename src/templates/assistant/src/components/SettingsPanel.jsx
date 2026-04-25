@@ -439,7 +439,10 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
               </Section>
 
               {/* Voice */}
-              <Section title="Voice" subtitle={ttsProvider ? `${ttsProvider === 'elevenlabs' ? 'ElevenLabs' : 'OpenAI'} voices` : undefined}>
+              <Section title="Voice" subtitle={(() => {
+                const label = providerOptions.find(p => p.value === (ttsProvider || ''))?.label
+                return label ? `${label} voices` : undefined
+              })()}>
                 {loadingVoices ? (
                   <p className="text-[11px] text-gray-500">Loading voices...</p>
                 ) : !voiceReady ? (

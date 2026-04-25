@@ -323,6 +323,9 @@ export async function loadAIModelsSettings() {
     // Mode toggle + local-slots panel (Phase B). Load first so the user sees
     // it at the top of the section without waiting for the provider tables.
     await loadLocalModePanel(serverPort);
+    // Memory context limit (per-mode token budget). Sits between the mode
+    // toggle and the provider tables.
+    await loadContextLimitsPanel(serverPort);
     // Load routing UI (provider status, preference, cascades)
     await loadRoutingUI(serverPort);
   } catch (err) {
@@ -426,6 +429,11 @@ function applyModeVisibility(mode) {
   const isLocal = mode === 'local';
   const slotsEl = document.getElementById('localSlots');
   if (slotsEl) slotsEl.hidden = !isLocal;
+  // Context limit: show only the input matching the active mode.
+  const localRow = document.getElementById('contextLimitLocalRow');
+  const propRow = document.getElementById('contextLimitProprietaryRow');
+  if (localRow) localRow.hidden = !isLocal;
+  if (propRow) propRow.hidden = isLocal;
 }
 
 /**
@@ -503,6 +511,77 @@ async function loadLocalModePanel(serverPort) {
       toggle.disabled = false;
     }
   };
+}
+
+// --- Memory Context Limit panel ---
+
+async function loadContextLimitsPanel(serverPort) {
+  const localInput = document.getElementById('contextLimitLocalInput');
+  const propInput = document.getElementById('contextLimitProprietaryInput');
+  const errEl = document.getElementById('contextLimitError');
+  if (!localInput || !propInput) return;
+
+  // Visibility is owned by applyModeVisibility(); load both values regardless
+  // of current mode so flipping the toggle doesn't blank an input.
+  try {
+    const res = await fetch(`http://localhost:${serverPort}/api/settings/context-limits`);
+    if (!res.ok) throw new Error(`context-limits ${res.status}`);
+    const { localTokens, proprietaryTokens } = await res.json();
+    localInput.value = localTokens;
+    propInput.value = proprietaryTokens;
+  } catch (err) {
+    console.warn('Failed to load context limits:', err.message);
+    return;
+  }
+
+  const showError = (msg) => {
+    if (!errEl) return;
+    errEl.hidden = false;
+    errEl.textContent = msg;
+  };
+  const clearError = () => {
+    if (!errEl) return;
+    errEl.hidden = true;
+    errEl.textContent = '';
+  };
+
+  // Save-on-blur. Each input PATCHes only its own field. The server validates
+  // the range; on rejection we restore the previous value.
+  const bindInput = (input, fieldName) => {
+    let prev = input.value;
+    input.addEventListener('focus', () => { prev = input.value; clearError(); });
+    input.addEventListener('blur', async () => {
+      const next = input.value.trim();
+      if (next === prev) return;
+      const n = parseInt(next, 10);
+      if (!Number.isFinite(n)) {
+        input.value = prev;
+        showError('Enter a whole number.');
+        return;
+      }
+      try {
+        const res = await fetch(`http://localhost:${serverPort}/api/settings/context-limits`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [fieldName]: n })
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+        const updated = await res.json();
+        input.value = fieldName === 'localTokens' ? updated.localTokens : updated.proprietaryTokens;
+        prev = input.value;
+        clearError();
+      } catch (err) {
+        input.value = prev;
+        showError(err.message);
+      }
+    });
+  };
+
+  bindInput(localInput, 'localTokens');
+  bindInput(propInput, 'proprietaryTokens');
 }
 
 // Current cascade task type for tab state

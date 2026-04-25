@@ -212,7 +212,7 @@ function handleSend(deps) {
       presentMomentContext,
       imageDescriptions,
       _profile
-    } = await calculateContextBudgets(appPath, db, undefined, { backend });
+    } = await calculateContextBudgets(appPath, db, undefined, { backend, resolved });
     lap('context-budgets');
 
     // Build memory context with allocated budgets
@@ -1383,7 +1383,7 @@ function handleChat(deps) {
         presentMomentContext: chatPresentMomentContext,
         imageDescriptions: chatImageDescriptions,
         _profile
-      } = await calculateContextBudgets(appPath, db, undefined, { backend: chatBackend });
+      } = await calculateContextBudgets(appPath, db, undefined, { backend: chatBackend, resolved: chatResolved });
 
       // Build memory context with allocated budgets
       let memoryContext = null;

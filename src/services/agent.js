@@ -485,9 +485,32 @@ const AgentService = {
       // Setup state
       setupComplete: !!agent.setup_complete,
 
-      // Voice (DB is source of truth)
-      voiceId: agent.voice_id || undefined,
-      voiceName: agent.voice_name || undefined,
+      // Voice (per-active-provider, mirroring the per-mode model pin pattern).
+      // The active TTS provider is mode-scoped (Kokoro under local; ElevenLabs/
+      // OpenAI under proprietary), so a voice ID from one provider is meaningless
+      // to another. Lookup order:
+      //   1. agent_voices[agentId][activeProvider] — provider-correct pin
+      //   2. agents.voice_id (legacy column) — only when no provider is resolvable
+      //      (pre-migration agents, or TTS not configured at all)
+      // Falling through to the legacy column when a provider IS active would feed
+      // a wrong-format voice ID to the wrong provider (the bug Penny hit on import).
+      ...(() => {
+        // Lazy require to dodge the agent ↔ tts circular import.
+        const TTSService = require('./tts');
+        const provider = (db && TTSService.getProviderName) ? TTSService.getProviderName(db) : null;
+        if (provider) {
+          // getAgentVoice returns camelCase { voiceId, voiceName } (or null).
+          const row = TTSService.getAgentVoice ? TTSService.getAgentVoice(db, agentId, provider) : null;
+          return {
+            voiceId: row?.voiceId || undefined,
+            voiceName: row?.voiceName || undefined,
+          };
+        }
+        return {
+          voiceId: agent.voice_id || undefined,
+          voiceName: agent.voice_name || undefined,
+        };
+      })(),
 
       // Backend (DB is source of truth)
       agentBackend: agent.backend || diskConfig.agentBackend || 'claude',

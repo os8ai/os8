@@ -442,7 +442,7 @@ const WorkQueue = {
       ownerName: wqOwnerName,
       assistantName: wqAssistantName,
       imageDescriptions: wqImageDescriptions
-    } = await calculateContextBudgets(appPath, db, undefined, { backend, threadParticipantIds });
+    } = await calculateContextBudgets(appPath, db, undefined, { backend, threadParticipantIds, resolved: wqResolved });
 
     let memoryContext = '';
     if (db) {

@@ -170,6 +170,25 @@ function createSettingsApiRouter(db, deps) {
     res.json({ success: true });
   });
 
+  // Per-mode agent memory context limit (tokens)
+  // GET returns both values regardless of current mode so the UI can
+  // populate both inputs and just toggle visibility.
+  const ContextLimits = require('../services/context-limits');
+  router.get('/settings/context-limits', (req, res) => {
+    res.json(ContextLimits.getAllLimits(db));
+  });
+  router.patch('/settings/context-limits', (req, res) => {
+    try {
+      const updated = ContextLimits.setLimits(db, {
+        localTokens: req.body.localTokens,
+        proprietaryTokens: req.body.proprietaryTokens
+      });
+      res.json(updated);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // ============ Environment Variables ============
 
   const ALLOWED_ENV_KEYS = new Set(AIRegistryService.getAllowedEnvKeys(db));
