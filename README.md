@@ -1,5 +1,7 @@
 # OS8
 
+![How OS8 works](docs/images/os8-infographic.jpeg)
+
 A personal operating system for building custom web apps with AI agents. Everything local, everything yours.
 
 Learn more at [os8.ai](https://os8.ai)
