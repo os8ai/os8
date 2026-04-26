@@ -6,6 +6,7 @@ const {
   ClaudeTranslator,
   GeminiTranslator,
   CodexTranslator,
+  OpenCodeTranslator,
   createTranslator
 } = require('../../src/services/backend-events');
 const {
@@ -285,6 +286,127 @@ describe('CodexTranslator — fixture replay', () => {
   });
 });
 
+describe('OpenCodeTranslator — fixture replay', () => {
+  let fixture;
+  beforeAll(() => { fixture = loadFixture('opencode-toolcall.jsonl'); });
+
+  it('emits expected ag-ui event sequence', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+
+    // First event must be RUN_STARTED (from sessionID capture on the first event).
+    expect(events[0].type).toBe(RUN_STARTED);
+    // Last event must be RUN_FINISHED (from the terminal step_finish/reason=stop).
+    expect(events[events.length - 1].type).toBe(RUN_FINISHED);
+
+    // Two atomic tool calls in this fixture (bash, then read).
+    const toolStarts = events.filter(e => e.type === TOOL_CALL_START);
+    expect(toolStarts).toHaveLength(2);
+    expect(toolStarts[0].toolCallName).toBe('bash');
+    expect(toolStarts[1].toolCallName).toBe('read');
+
+    // Each tool call → START + END + RESULT trio (atomic shape, mirrors Codex).
+    const toolEnds = events.filter(e => e.type === TOOL_CALL_END);
+    const toolResults = events.filter(e => e.type === TOOL_CALL_RESULT);
+    expect(toolEnds).toHaveLength(2);
+    expect(toolResults).toHaveLength(2);
+
+    // One text turn at the end (collapsed START/CONTENT/END).
+    const textStarts = events.filter(e => e.type === TEXT_MESSAGE_START);
+    const textContents = events.filter(e => e.type === TEXT_MESSAGE_CONTENT);
+    const textEnds = events.filter(e => e.type === TEXT_MESSAGE_END);
+    expect(textStarts).toHaveLength(1);
+    expect(textContents).toHaveLength(1);
+    expect(textEnds).toHaveLength(1);
+    expect(textContents[0].delta).toContain('AGENTS.md');
+  });
+
+  it('uses sessionID as runId, callID as toolCallId, messageID as parentMessageId', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+    expect(tr.runId).toBe('ses_235dde604ffe4Xrj9EYwEv7ZTH');
+
+    const firstTool = events.find(e => e.type === TOOL_CALL_START);
+    expect(firstTool.toolCallId).toBe('chatcmpl-tool-be71b16c281ea269');
+    expect(firstTool.parentMessageId).toBe('msg_dca221a4d001NtDBvNLXxpRWj2');
+
+    const textStart = events.find(e => e.type === TEXT_MESSAGE_START);
+    expect(textStart.messageId).toBe('msg_dca221f73001IBENPC5c2Pi3MU');
+  });
+
+  it('emits TOOL_CALL_RESULT with content and isError=false for completed status', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+    const results = events.filter(e => e.type === TOOL_CALL_RESULT);
+    expect(results[0].isError).toBe(false);
+    expect(results[0].content).toBe('AGENTS.md\nhello.txt\n');
+    expect(results[1].isError).toBe(false);
+    expect(results[1].content).toContain('helpful assistant');
+  });
+
+  it('passes tool args through verbatim', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+    const starts = events.filter(e => e.type === TOOL_CALL_START);
+    expect(starts[0].args).toEqual({ command: 'ls -F', description: 'list all files in the current directory' });
+    expect(starts[1].args).toEqual({ filePath: 'AGENTS.md' });
+  });
+
+  it('emits RUN_STARTED exactly once across the run', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+    expect(events.filter(e => e.type === RUN_STARTED)).toHaveLength(1);
+  });
+
+  it('emits RUN_FINISHED exactly once and only on reason="stop"', () => {
+    const tr = new OpenCodeTranslator();
+    const events = replay(tr, fixture);
+    expect(events.filter(e => e.type === RUN_FINISHED)).toHaveLength(1);
+
+    // Intermediate step_finish/reason="tool-calls" must NOT trigger RUN_FINISHED.
+    const tr2 = new OpenCodeTranslator();
+    const partial = tr2.translate({
+      type: 'step_finish',
+      sessionID: 'ses_x',
+      part: { reason: 'tool-calls' }
+    });
+    expect(partial.filter(e => e.type === RUN_FINISHED)).toHaveLength(0);
+  });
+
+  it('honors a pre-assigned runId via constructor', () => {
+    const tr = new OpenCodeTranslator({ runId: 'preassigned' });
+    tr.translate({ type: 'step_start', sessionID: 'ses_other', part: {} });
+    // Pre-assigned runId wins; sessionID does not overwrite.
+    expect(tr.runId).toBe('preassigned');
+  });
+
+  it('reset() clears run-started/finished flags so the translator can be reused', () => {
+    const tr = new OpenCodeTranslator();
+    replay(tr, fixture);
+    tr.reset();
+    expect(tr._runStartedEmitted).toBe(false);
+    expect(tr._runFinishedEmitted).toBe(false);
+  });
+
+  it('marks isError=true when tool state.status is not completed', () => {
+    const tr = new OpenCodeTranslator();
+    tr.translate({ type: 'step_start', sessionID: 'ses_e', part: {} });
+    const out = tr.translate({
+      type: 'tool_use',
+      sessionID: 'ses_e',
+      part: {
+        type: 'tool',
+        tool: 'bash',
+        callID: 'cc_err',
+        messageID: 'msg_e',
+        state: { status: 'error', input: { command: 'false' }, output: 'oops' }
+      }
+    });
+    const result = out.find(e => e.type === TOOL_CALL_RESULT);
+    expect(result.isError).toBe(true);
+  });
+});
+
 describe('createTranslator factory', () => {
   it('returns a ClaudeTranslator for "claude"', () => {
     expect(createTranslator('claude')).toBeInstanceOf(ClaudeTranslator);
@@ -296,6 +418,10 @@ describe('createTranslator factory', () => {
 
   it('returns a CodexTranslator for "codex"', () => {
     expect(createTranslator('codex')).toBeInstanceOf(CodexTranslator);
+  });
+
+  it('returns an OpenCodeTranslator for "opencode"', () => {
+    expect(createTranslator('opencode')).toBeInstanceOf(OpenCodeTranslator);
   });
 
   it('returns null for unknown backend', () => {

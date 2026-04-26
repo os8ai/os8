@@ -929,6 +929,43 @@
                   (Claude, Gemini, GPT, Grok).
                 </div>
               </div>
+
+              <!-- CLI Overhead Reserve subsection -->
+              <div class="cli-overhead-subsection">
+                <div class="cli-overhead-heading">CLI Overhead Reserve</div>
+                <div class="ai-mode-hint cli-overhead-intro">
+                  Tokens subtracted from the budget above to reserve room for the CLI's
+                  own request envelope (system prompt + tool schemas + auto-loaded
+                  instruction file). Adjust if telemetry shows the default is too high
+                  or too low for your environment.
+                </div>
+                <div class="context-limit-row cli-overhead-row" id="cliOverheadOpencodeRow" hidden>
+                  <label class="context-limit-label" for="cliOverheadOpencodeInput">opencode (local)</label>
+                  <input type="number" id="cliOverheadOpencodeInput" class="context-limit-input"
+                         min="0" max="1000000" step="1000">
+                </div>
+                <div class="context-limit-row cli-overhead-row" id="cliOverheadClaudeRow" hidden>
+                  <label class="context-limit-label" for="cliOverheadClaudeInput">claude</label>
+                  <input type="number" id="cliOverheadClaudeInput" class="context-limit-input"
+                         min="0" max="1000000" step="1000">
+                </div>
+                <div class="context-limit-row cli-overhead-row" id="cliOverheadGeminiRow" hidden>
+                  <label class="context-limit-label" for="cliOverheadGeminiInput">gemini</label>
+                  <input type="number" id="cliOverheadGeminiInput" class="context-limit-input"
+                         min="0" max="1000000" step="1000">
+                </div>
+                <div class="context-limit-row cli-overhead-row" id="cliOverheadCodexRow" hidden>
+                  <label class="context-limit-label" for="cliOverheadCodexInput">codex</label>
+                  <input type="number" id="cliOverheadCodexInput" class="context-limit-input"
+                         min="0" max="1000000" step="1000">
+                </div>
+                <div class="context-limit-row cli-overhead-row" id="cliOverheadGrokRow" hidden>
+                  <label class="context-limit-label" for="cliOverheadGrokInput">grok</label>
+                  <input type="number" id="cliOverheadGrokInput" class="context-limit-input"
+                         min="0" max="1000000" step="1000">
+                </div>
+              </div>
+
               <div class="ai-mode-error" id="contextLimitError" hidden></div>
             </div>
 
@@ -1001,6 +1038,7 @@
                   <!-- Populated dynamically -->
                 </tbody>
               </table>
+              <div id="cascadeCaption" class="cascade-caption" hidden></div>
               <button class="btn-small" id="cascadeRegenerateBtn" style="margin-top: 8px;">Regenerate</button>
             </div>
           </div>

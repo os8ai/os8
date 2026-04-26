@@ -43,6 +43,7 @@ function parseStreamJsonOutput(output) {
   let raw = null;
   let geminiDeltaContent = '';  // Accumulate Gemini's delta messages
   let codexContent = '';  // Accumulate Codex agent_message text
+  let opencodeContent = '';  // Last OpenCode `text` part wins (single-shot)
 
   for (const line of lines) {
     try {
@@ -62,6 +63,14 @@ function parseStreamJsonOutput(output) {
       if (parsed.type === 'item.completed' && parsed.item?.type === 'agent_message'
           && parsed.item?.text) {
         codexContent = parsed.item.text;
+      }
+      // OpenCode: text part arrives once at the final step; last one wins.
+      if (parsed.type === 'text' && parsed.part?.type === 'text' && typeof parsed.part?.text === 'string') {
+        opencodeContent = parsed.part.text;
+      }
+      // OpenCode: capture sessionID as a sessionId fallback for callers.
+      if (parsed.sessionID && !sessionId) {
+        sessionId = parsed.sessionID;
       }
       // Grok: {"role":"assistant","content":"..."} — last assistant message wins
       // Skip tool-call progress messages ("Using tools to help you...")
@@ -86,6 +95,9 @@ function parseStreamJsonOutput(output) {
   }
   if (!result && codexContent) {
     result = codexContent;
+  }
+  if (!result && opencodeContent) {
+    result = opencodeContent;
   }
 
   return { result, sessionId, raw };

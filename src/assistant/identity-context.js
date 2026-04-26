@@ -14,7 +14,7 @@ const EmbodiedService = require('../services/embodiment');
 const { loadJSON } = require('../utils/file-helpers');
 const { describeImagesForContext, buildImageDescriptionsContext, buildTimelineDescriptionItems } = require('../utils/image-describe');
 const AgentService = require('../services/agent');
-const { getContextLimitTokens } = require('../services/context-limits');
+const { getEffectiveContextBudget } = require('../services/context-limits');
 const {
   detectImageMediaType,
   findCurrentImages,
@@ -377,7 +377,10 @@ const buildAgentDMContext = buildAgentThreadContext;
  * Token budget resolution order:
  *   1. Caller passes an explicit `totalBudgetTokens` → use it as-is
  *   2. Caller passes `options.resolved` and we have a `db` → look up the
- *      per-mode setting via getContextLimitTokens (local vs. proprietary)
+ *      per-mode setting via getEffectiveContextBudget, which subtracts the
+ *      CLI's own request envelope (system prompt + tool schemas) from the
+ *      user-configured budget so we don't overflow the model's input window
+ *      when opencode/claude/etc. add their overhead on top of our context
  *   3. Fall back to DEFAULT_TOTAL_BUDGET_TOKENS (preserves legacy behavior)
  *
  * @param {string} appPath - Path to the assistant app directory
@@ -391,7 +394,7 @@ async function calculateContextBudgets(appPath, db = null, totalBudgetTokens = n
   const { includeImages = true, backend = null, threadParticipantIds = null, resolved = null } = options;
   if (totalBudgetTokens == null) {
     totalBudgetTokens = (db && resolved)
-      ? getContextLimitTokens(db, resolved)
+      ? getEffectiveContextBudget(db, resolved)
       : DEFAULT_TOTAL_BUDGET_TOKENS;
   }
   const appId = path.basename(appPath);

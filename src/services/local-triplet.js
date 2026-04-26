@@ -1,21 +1,68 @@
 /**
  * LOCAL_TRIPLET — the three local-model slots OS8 uses under ai_mode='local'.
  *
- * Mirrors the `roles:` map in os8-launcher/config.yaml. Keep the two in sync:
- * the launcher is the source of truth for what models exist; OS8 is the source
- * of truth for which subset powers the three active slots.
+ * The launcher is the source of truth for what's actually serving each
+ * slot. `resolveTriplet()` fetches /api/triplet/roles and returns the
+ * launcher's currently-selected option for each role.
  *
- * Keyed by slot name (chat|image|voice). Each entry:
- *   - model: launcher model id (matches config.yaml roles.<role>.model)
- *   - backend: launcher backend id (matches config.yaml roles.<role>.backend)
- *   - label: user-facing slot label rendered in Settings
+ * `STATIC_FALLBACK` mirrors the launcher's config.yaml defaults so OS8 can
+ * still render a sensible triplet when the launcher is unreachable or
+ * running an older build that doesn't expose /api/triplet/roles. Keep it
+ * in sync with `roles:` in os8-launcher/config.yaml.
+ *
+ * Slot keys (chat|image|voice) are OS8-internal labels — they map to the
+ * launcher's role names via SLOT_TO_ROLE.
  */
-const LOCAL_TRIPLET = {
+
+const STATIC_FALLBACK = {
   chat:  { model: 'qwen3-6-35b-a3b',   backend: 'vllm',    label: 'Chat'  },
   image: { model: 'flux1-kontext-dev', backend: 'comfyui', label: 'Image' },
   voice: { model: 'kokoro-v1',         backend: 'kokoro',  label: 'Voice' }
 };
 
+const SLOT_TO_ROLE = { chat: 'chat', image: 'image-gen', voice: 'tts' };
 const SLOT_ORDER = ['chat', 'image', 'voice'];
 
-module.exports = { LOCAL_TRIPLET, SLOT_ORDER };
+/**
+ * Fetch the active triplet from the launcher and return one entry per slot:
+ *   { model, backend, label, options?, selected?, needs_apply? }
+ * The optional fields are populated when the launcher reports them so the
+ * settings UI can show what the active selection is and whether the user
+ * has a pending change waiting for Stop & Apply in the launcher.
+ *
+ * Always resolves — never throws — so callers can render unconditionally.
+ * On any failure (launcher down, old launcher, network error) returns the
+ * static fallback so OS8 still functions in offline-launcher scenarios.
+ */
+async function resolveTriplet() {
+  let roles;
+  try {
+    const LauncherClient = require('./launcher-client');
+    roles = await LauncherClient.getRoles();
+  } catch {
+    return { ...STATIC_FALLBACK };
+  }
+  const out = {};
+  for (const slot of SLOT_ORDER) {
+    const roleKey = SLOT_TO_ROLE[slot];
+    const role = roles ? roles[roleKey] : null;
+    if (!role || !Array.isArray(role.options) || role.options.length === 0) {
+      out[slot] = STATIC_FALLBACK[slot];
+      continue;
+    }
+    const opt = role.options.find(o => o.model === role.selected) || role.options[0];
+    out[slot] = {
+      model: opt.model,
+      backend: opt.backend || STATIC_FALLBACK[slot].backend,
+      label: opt.label || STATIC_FALLBACK[slot].label,
+      options: role.options,
+      selected: role.selected,
+      default: role.default,
+      needs_apply: !!role.needs_apply,
+      running_model: role.running_model || null,
+    };
+  }
+  return out;
+}
+
+module.exports = { resolveTriplet, STATIC_FALLBACK, SLOT_ORDER, SLOT_TO_ROLE };

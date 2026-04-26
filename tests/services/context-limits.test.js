@@ -122,30 +122,40 @@ describe('getAllLimits', () => {
   });
   afterEach(() => { db.close(); });
 
-  it('returns both stored values', () => {
+  it('returns both stored budget values plus a cliOverhead map', () => {
     setSetting(db, 'context_limit_local_tokens', 50000);
     setSetting(db, 'context_limit_proprietary_tokens', 175000);
-    expect(ContextLimits.getAllLimits(db)).toEqual({
-      localTokens: 50000,
-      proprietaryTokens: 175000
-    });
+    const got = ContextLimits.getAllLimits(db);
+    expect(got.localTokens).toBe(50000);
+    expect(got.proprietaryTokens).toBe(175000);
+    // cliOverhead map carries every catalogued backend with its fallback value.
+    expect(got.cliOverhead).toEqual(ContextLimits.CLI_OVERHEAD);
   });
 
-  it('returns fallbacks for missing keys', () => {
+  it('returns fallbacks for missing budget keys, defaults for cliOverhead', () => {
     // Empty settings table.
-    expect(ContextLimits.getAllLimits(db)).toEqual({
-      localTokens: ContextLimits.FALLBACK_LOCAL,
-      proprietaryTokens: ContextLimits.FALLBACK_PROPRIETARY
-    });
+    const got = ContextLimits.getAllLimits(db);
+    expect(got.localTokens).toBe(ContextLimits.FALLBACK_LOCAL);
+    expect(got.proprietaryTokens).toBe(ContextLimits.FALLBACK_PROPRIETARY);
+    expect(got.cliOverhead).toEqual(ContextLimits.CLI_OVERHEAD);
   });
 
-  it('treats below-MIN stored values as missing', () => {
+  it('treats below-MIN stored budget values as missing', () => {
     setSetting(db, 'context_limit_local_tokens', 100);
     setSetting(db, 'context_limit_proprietary_tokens', 100);
-    expect(ContextLimits.getAllLimits(db)).toEqual({
-      localTokens: ContextLimits.FALLBACK_LOCAL,
-      proprietaryTokens: ContextLimits.FALLBACK_PROPRIETARY
-    });
+    const got = ContextLimits.getAllLimits(db);
+    expect(got.localTokens).toBe(ContextLimits.FALLBACK_LOCAL);
+    expect(got.proprietaryTokens).toBe(ContextLimits.FALLBACK_PROPRIETARY);
+  });
+
+  it('reads stored cliOverhead values when present', () => {
+    setSetting(db, 'cli_overhead_opencode_tokens', 12345);
+    setSetting(db, 'cli_overhead_claude_tokens',   17000);
+    const got = ContextLimits.getAllLimits(db);
+    expect(got.cliOverhead.opencode).toBe(12345);
+    expect(got.cliOverhead.claude).toBe(17000);
+    // Other backends still report their hardcoded fallback.
+    expect(got.cliOverhead.gemini).toBe(ContextLimits.CLI_OVERHEAD.gemini);
   });
 });
 
@@ -176,7 +186,9 @@ describe('setLimits', () => {
 
   it('accepts both fields in one call', () => {
     const after = ContextLimits.setLimits(db, { localTokens: 50000, proprietaryTokens: 150000 });
-    expect(after).toEqual({ localTokens: 50000, proprietaryTokens: 150000 });
+    expect(after.localTokens).toBe(50000);
+    expect(after.proprietaryTokens).toBe(150000);
+    expect(after.cliOverhead).toEqual(ContextLimits.CLI_OVERHEAD);
   });
 
   it('rejects values below MIN_TOKENS', () => {
@@ -208,5 +220,60 @@ describe('setLimits', () => {
     // localTokens NOT written — validation runs before any persistence.
     const row = db.prepare(`SELECT value FROM settings WHERE key = 'context_limit_local_tokens'`).get();
     expect(row.value).toBe('50000');
+  });
+
+  it('writes cliOverhead values to the right settings keys', () => {
+    const after = ContextLimits.setLimits(db, {
+      cliOverhead: { opencode: 12000, claude: 18000 }
+    });
+    expect(after.cliOverhead.opencode).toBe(12000);
+    expect(after.cliOverhead.claude).toBe(18000);
+    // Persisted under the canonical key shape.
+    const oc = db.prepare(`SELECT value FROM settings WHERE key = 'cli_overhead_opencode_tokens'`).get();
+    expect(oc.value).toBe('12000');
+  });
+
+  it('accepts 0 as a valid cliOverhead value', () => {
+    const after = ContextLimits.setLimits(db, {
+      cliOverhead: { opencode: 0 }
+    });
+    expect(after.cliOverhead.opencode).toBe(0);
+  });
+
+  it('rejects negative cliOverhead values', () => {
+    expect(() => ContextLimits.setLimits(db, {
+      cliOverhead: { opencode: -1 }
+    })).toThrow(/between 0 and/);
+  });
+
+  it('rejects unknown backendId in cliOverhead (defensive)', () => {
+    expect(() => ContextLimits.setLimits(db, {
+      cliOverhead: { mystery: 5000 }
+    })).toThrow(/Unknown backend/);
+  });
+
+  it('all-or-nothing for cliOverhead: an invalid value rolls back the whole call', () => {
+    const after = ContextLimits.setLimits(db, {
+      cliOverhead: { opencode: 12000 }   // first write a known-good value
+    });
+    expect(after.cliOverhead.opencode).toBe(12000);
+
+    // Now attempt a mixed update with an invalid claude value.
+    expect(() => ContextLimits.setLimits(db, {
+      cliOverhead: { gemini: 11000, claude: -50 }   // -50 invalid
+    })).toThrow();
+
+    // Gemini must NOT have been written — validation precedes persistence.
+    const row = db.prepare(`SELECT value FROM settings WHERE key = 'cli_overhead_gemini_tokens'`).get();
+    expect(row).toBeUndefined();
+  });
+
+  it('mixed budget + overhead update writes everything in one call', () => {
+    const after = ContextLimits.setLimits(db, {
+      localTokens: 70000,
+      cliOverhead: { opencode: 14000 }
+    });
+    expect(after.localTokens).toBe(70000);
+    expect(after.cliOverhead.opencode).toBe(14000);
   });
 });

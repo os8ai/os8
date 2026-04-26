@@ -37,19 +37,116 @@ function _withLauncher(family, base) {
   return { ...base, launcher_model: family.launcher_model, launcher_backend: family.launcher_backend };
 }
 
+// Local-mode chat dispatch follows the launcher's chooser. The chooser lives
+// in os8-launcher (config.yaml::roles.chat + ~/.config/os8-launcher/settings.yaml::role_selections),
+// surfaced via /api/triplet/roles. We cache the active chat model in-process
+// for 30s — short enough that a Stop & Apply in the launcher takes effect
+// quickly, long enough to keep this off the critical path.
+const CHAT_TASKS = new Set(['conversation', 'summary', 'planning', 'coding', 'jobs']);
+const LAUNCHER_CHAT_CACHE_TTL_MS = 30_000;
+let _launcherChatCache = { model: null, ts: 0, inflight: false };
+
+function _refreshLauncherChat() {
+  if (_launcherChatCache.inflight) return;
+  _launcherChatCache.inflight = true;
+  const LauncherClient = require('./launcher-client');
+  LauncherClient.getRoles().then(roles => {
+    const chat = roles && roles.chat;
+    if (chat && chat.selected) {
+      _launcherChatCache = { model: chat.selected, ts: Date.now(), inflight: false };
+    } else {
+      _launcherChatCache.inflight = false;
+    }
+  }).catch(() => {
+    // Leave cached value alone; the static fallback below will fill in until
+    // the launcher comes back or a successful poll updates the cache.
+    _launcherChatCache.inflight = false;
+  });
+}
+
+/**
+ * Return the local family that should serve chat tasks under ai_mode='local'
+ * — whichever one the launcher's chooser currently points at. Falls back to
+ * the lowest display_order chat-capable local family on first call (before
+ * the async refresh has populated the cache) or when the launcher is down.
+ */
+function _resolveLocalChatFamily(db) {
+  const age = Date.now() - _launcherChatCache.ts;
+  if (age > LAUNCHER_CHAT_CACHE_TTL_MS) _refreshLauncherChat();
+  const targetModel = _launcherChatCache.model;
+  if (targetModel) {
+    const family = db.prepare(
+      `SELECT * FROM ai_model_families WHERE container_id = 'local' AND launcher_model = ?`
+    ).get(targetModel);
+    if (family) return family;
+  }
+  // First-call / launcher-down fallback: pick the first chat-capable local
+  // family by display_order. Matches pre-chooser behavior.
+  return db.prepare(`
+    SELECT * FROM ai_model_families
+    WHERE container_id = 'local' AND cap_chat > 0
+      AND (eligible_tasks IS NULL OR eligible_tasks LIKE '%conversation%')
+    ORDER BY display_order ASC LIMIT 1
+  `).get() || null;
+}
+
 const RoutingService = {
   /**
    * Resolve the best available model family + access method for a task type.
    * @param {object} db - SQLite database
    * @param {string} taskType - 'conversation' | 'jobs' | 'planning' | 'coding'
    * @param {string|null} agentOverride - Family ID from agent config (null or 'auto' = use cascade)
+   * @param {object} [opts]
+   * @param {'utility'|'agentSpawn'} [opts.purpose='utility'] - Why the caller wants
+   *   this resolve. Default 'utility' (subconscious classifier, plan generator,
+   *   utility text calls) routes local-mode chat tasks through HTTP `local`
+   *   (cheap, single-shot). 'agentSpawn' (only message-handler's CLI-spawn site
+   *   passes this) routes local-mode chat tasks through the `opencode` CLI so
+   *   the agent can do real tool use. The split keeps cheap chitchat cheap
+   *   while making the heavy path actually capable.
    * @returns {{ familyId: string, backendId: string, modelArg: string|null, accessMethod: string, source: string, launcher_model?: string, launcher_backend?: string }}
    *   For local-container families, the result also carries `launcher_model`
    *   and `launcher_backend` from `ai_model_families` so dispatchers can
    *   call `LauncherClient.ensureModel` without a second DB lookup.
    */
-  resolve(db, taskType, agentOverride = null) {
-    // 1. Agent override — try login first, then API. Honored for every task
+  resolve(db, taskType, agentOverride = null, opts = {}) {
+    const { purpose = 'utility' } = opts;
+
+    // 1. Local-mode chat short-circuit takes precedence over per-agent
+    // overrides. The launcher's chooser is the single source of truth for
+    // "which local chat model is active" — a stale agentModel pin (e.g.
+    // local-qwen3-6-35b-a3b saved before the multi-option chooser shipped)
+    // must not silently override the user's current launcher selection.
+    // Per-agent overrides still apply in proprietary mode and for non-chat
+    // tasks under local mode (e.g. image-gen, which has its own family).
+    //
+    // Backend selection inside the short-circuit:
+    //   - purpose='utility' → family.container_id (i.e. 'local', the HTTP
+    //     backend). Subconscious classifier, plan generator, utility text
+    //     calls all stay cheap and single-shot.
+    //   - purpose='agentSpawn' → 'opencode' (the CLI agent runtime). Only
+    //     message-handler's CLI-spawn sites pass this. OpenCode supplies
+    //     the tool loop that the local HTTP path doesn't have.
+    if (this.getMode(db) === 'local' && CHAT_TASKS.has(taskType)) {
+      const family = _resolveLocalChatFamily(db);
+      if (family) {
+        const isAgentSpawn = purpose === 'agentSpawn';
+        return _withLauncher(family, {
+          familyId: family.id,
+          backendId: isAgentSpawn ? 'opencode' : family.container_id,
+          modelArg: AIRegistryService.resolveModelArg(db, family.id),
+          accessMethod: 'api',
+          source: isAgentSpawn
+            ? 'local_launcher_selection_opencode'
+            : 'local_launcher_selection'
+        });
+      }
+      // No chat-capable local family at all — fall through so the hard
+      // fallback below can still produce *some* answer (under local mode,
+      // that's the local hard fallback, not a cloud family).
+    }
+
+    // 2. Agent override — try login first, then API. Honored for every task
     // type, not just conversation: if a user pins their agent to a specific
     // family (especially local), they want it for planning/summary too.
     // Families that aren't eligible for this task (per ai_model_families.eligible_tasks)
@@ -83,7 +180,7 @@ const RoutingService = {
       // Override unavailable or not eligible — fall through to cascade.
     }
 
-    // 2. Walk cascade — each entry specifies family + access_method
+    // 3. Walk cascade — each entry specifies family + access_method
     const cascade = this.getCascade(db, taskType);
     for (const entry of cascade) {
       if (!entry.enabled) continue;
@@ -215,6 +312,37 @@ const RoutingService = {
     return db.prepare(
       'SELECT * FROM routing_cascade WHERE task_type = ? AND mode = ? ORDER BY priority ASC'
     ).all(taskType, m);
+  },
+
+  /**
+   * Cascade rows the user should SEE for this task — same as what resolve()
+   * will actually dispatch to. Differs from getCascade() only when ai_mode
+   * is 'local' and the task is a chat task: there it collapses to a single
+   * row pointing at the launcher's currently-selected chat family,
+   * mirroring resolve()'s short-circuit. The resulting row carries
+   * `local_launcher_selection: true` so the cascade UI can lock its
+   * toggle/drag controls and surface a "set in launcher" caption.
+   *
+   * For image tasks and for proprietary mode this returns the full
+   * cascade unchanged.
+   */
+  getDisplayCascade(db, taskType) {
+    if (this.getMode(db) === 'local' && CHAT_TASKS.has(taskType)) {
+      const family = _resolveLocalChatFamily(db);
+      if (family) {
+        return [{
+          task_type: taskType,
+          priority: 0,
+          family_id: family.id,
+          access_method: 'api',
+          enabled: 1,
+          is_auto_generated: 1,
+          mode: 'local',
+          local_launcher_selection: true
+        }];
+      }
+    }
+    return this.getCascade(db, taskType);
   },
 
   /**

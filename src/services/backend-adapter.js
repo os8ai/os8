@@ -9,6 +9,32 @@ const fs = require('fs');
 const os = require('os');
 
 /**
+ * Shared identity preamble for non-Anthropic-trained models that need explicit
+ * identity framing to embody the assistant persona (Claude/Gemini handle this
+ * naturally from MYSELF.md alone). Both `codex` and `opencode` reference this
+ * — they share AGENTS.md, so a single source of truth prevents drift.
+ *
+ * Placeholders: {{ASSISTANT_NAME}}, {{OWNER_NAME}} replaced at generation time.
+ */
+const NON_ANTHROPIC_IDENTITY_PREAMBLE = `## Identity Contract (High Priority)
+
+- You are {{ASSISTANT_NAME}}.
+- In normal conversation, identify as {{ASSISTANT_NAME}} (e.g., "I am {{ASSISTANT_NAME}}.").
+- Do not mention the underlying model or runtime (Codex/ChatGPT/GPT/OpenCode/local model names) unless {{OWNER_NAME}} explicitly asks technical details.
+- If asked technically, reply: "I am {{ASSISTANT_NAME}}, currently running on <backend>."
+- Treat MYSELF.md and USER.md as first-person ground truth for identity, voice, values, boundaries, and relationship stance.
+- Do not frame MYSELF.md as a roleplay, mask, or character.
+- Maintain continuity across turns using memory, timeline, and current images/context.
+- Default to {{ASSISTANT_NAME}}'s tone and behavior; avoid meta "as an AI" language unless required for safety.
+- On instruction conflicts: safety/boundaries first, then this contract, then MYSELF.md/USER.md, then other style guidance.
+- When uncertain, choose the response that best preserves {{ASSISTANT_NAME}}'s identity and established boundaries.
+- Image ownership: Unless explicitly labeled otherwise, all current/timeline/panorama images are of you ({{ASSISTANT_NAME}}); only the USER-section reference image is {{OWNER_NAME}}.
+
+---
+
+`;
+
+/**
  * Shared buildImageFileArgs for backends that use --image filepath flags (Codex, Grok).
  * Write base64-encoded images to temp files and return --image args + text manifest.
  * @param {object} images - { presentMoment, panorama, owner, timeline, userAttachments }
@@ -367,29 +393,7 @@ const BACKENDS = {
     supportsMaxTurns: false,
     supportsStreamJson: true,     // --json gives JSONL
 
-    /**
-     * Identity preamble for Codex instruction files.
-     * GPT-based models need explicit identity framing to embody the assistant persona
-     * (Claude/Gemini handle this naturally from MYSELF.md alone).
-     * Placeholders: {{ASSISTANT_NAME}}, {{OWNER_NAME}} replaced at generation time.
-     */
-    identityPreamble: `## Identity Contract (High Priority)
-
-- You are {{ASSISTANT_NAME}}.
-- In normal conversation, identify as {{ASSISTANT_NAME}} (e.g., "I am {{ASSISTANT_NAME}}.").
-- Do not mention Codex/ChatGPT/GPT/model names unless {{OWNER_NAME}} explicitly asks technical details.
-- If asked technically, reply: "I am {{ASSISTANT_NAME}}, currently running on <backend>."
-- Treat MYSELF.md and USER.md as first-person ground truth for identity, voice, values, boundaries, and relationship stance.
-- Do not frame MYSELF.md as a roleplay, mask, or character.
-- Maintain continuity across turns using memory, timeline, and current images/context.
-- Default to {{ASSISTANT_NAME}}'s tone and behavior; avoid meta "as an AI" language unless required for safety.
-- On instruction conflicts: safety/boundaries first, then this contract, then MYSELF.md/USER.md, then other style guidance.
-- When uncertain, choose the response that best preserves {{ASSISTANT_NAME}}'s identity and established boundaries.
-- Image ownership: Unless explicitly labeled otherwise, all current/timeline/panorama images are of you ({{ASSISTANT_NAME}}); only the USER-section reference image is {{OWNER_NAME}}.
-
----
-
-`,
+    identityPreamble: NON_ANTHROPIC_IDENTITY_PREAMBLE,
 
     /**
      * Build CLI args for Codex CLI
@@ -788,6 +792,130 @@ const BACKENDS = {
       }
       const { getExpandedPath } = require('../utils/cli-path');
       env.PATH = getExpandedPath();
+      return env;
+    }
+  },
+
+  opencode: {
+    id: 'opencode',
+    command: 'opencode',                  // resolved via prepareEnv PATH (~/.opencode/bin)
+    instructionFile: 'AGENTS.md',         // OpenCode auto-loads AGENTS.md from cwd
+    label: 'OpenCode',
+    supportsImageInput: false,            // CLI has no --image flag; vision turns route to HTTP `local`
+    supportsImageViaFile: false,
+    supportsImageDescriptions: false,
+    supportsMaxTurns: false,              // no --max-turns equivalent; rely on model's natural stop
+    supportsStreamJson: true,             // --format json is JSONL
+    promptViaStdin: false,                // positional fits enriched messages on Linux ARG_MAX (~2 MB)
+
+    // Shared with codex — both write to AGENTS.md (display-order-last wins). The
+    // shared constant prevents drift between the two preambles.
+    identityPreamble: NON_ANTHROPIC_IDENTITY_PREAMBLE,
+
+    /**
+     * Build CLI args for OpenCode.
+     * Subcommand: `run` (one-shot headless mode that emits JSONL to stdout under --format json).
+     * --dangerously-skip-permissions: matches Codex's bypass-approvals; required for tool use without prompts.
+     * --format json: structured per-event output. Each line is a complete JSON object.
+     * --model local/<served_model_name>: matches the inline provider config in OPENCODE_CONFIG_CONTENT.
+     */
+    buildArgs(options = {}) {
+      const { skipPermissions = true, json = true, streamJson = true, model } = options;
+      const args = ['run'];
+      if (skipPermissions) args.push('--dangerously-skip-permissions');
+      if (streamJson || json) args.push('--format', 'json');
+      if (model) args.push('--model', model);
+      return args;
+    },
+
+    /**
+     * OpenCode takes the message as the [message..] positional. ARG_MAX on Linux
+     * is ~2 MB; enriched messages cap around 100 KB, so positional is safe.
+     */
+    buildPromptArgs(message) {
+      return [message];
+    },
+
+    /**
+     * Walk JSONL, return last `text` part (final assistant turn).
+     * OpenCode emits no top-level `result` event — the `text` part is authoritative.
+     */
+    parseResponse(output) {
+      const lines = output.split('\n').filter(l => l.trim());
+      let text = '';
+      for (const line of lines) {
+        try {
+          const j = JSON.parse(line);
+          if (j.type === 'text' && j.part?.text) text = j.part.text;
+        } catch (e) {
+          console.warn(`[backend-adapter] OpenCode batch parse skip: ${e.message} — ${line.substring(0, 200)}`);
+        }
+      }
+      return { text, sessionId: null, raw: null };
+    },
+
+    /**
+     * Stream-JSON shape is identical to batch — last text wins.
+     */
+    parseStreamJsonOutput(output) {
+      const parsed = this.parseResponse(output);
+      return { result: parsed.text, sessionId: null, raw: parsed.raw };
+    },
+
+    /**
+     * Text-only utility paths use the local HTTP backend's sendTextPromptHttp,
+     * never opencode. Returning [] defensively in case anything resolves a
+     * utility call to opencode by mistake.
+     */
+    buildTextOnlyArgs(_options = {}) {
+      return [];
+    },
+
+    /**
+     * Prepare env for OpenCode CLI.
+     *  - PATH includes ~/.opencode/bin (the installer's hardcoded location).
+     *  - OPENCODE_CONFIG_CONTENT is built inline from OS8_OPENCODE_BASE_URL +
+     *    OS8_OPENCODE_MODEL_ID (+ OS8_OPENCODE_CONTEXT_LIMIT/OUTPUT_RESERVE
+     *    when known), which the dispatcher (createOpenCodeProcess in
+     *    cli-runner.js) populates after LauncherClient.ensureModel resolves
+     *    the base URL/model/window. Same shape as
+     *    os8-launcher/clients/opencode/manifest.yaml:18.
+     *
+     *  Including `limit: { context, output }` on the model entry stops
+     *  opencode from falling back to its built-in ~32K default and
+     *  auto-compacting well below the model's true ceiling. Omitted
+     *  when the dispatcher couldn't determine the window — opencode
+     *  then uses its own default.
+     */
+    prepareEnv(baseEnv = process.env) {
+      const env = { ...baseEnv };
+      delete env.CLAUDECODE;
+      const { getExpandedPath } = require('../utils/cli-path');
+      const home = process.env.HOME || env.HOME || '';
+      const ocBin = home ? `${home}/.opencode/bin` : '';
+      env.PATH = ocBin ? `${ocBin}:${getExpandedPath()}` : getExpandedPath();
+
+      if (env.OS8_OPENCODE_BASE_URL && env.OS8_OPENCODE_MODEL_ID) {
+        const modelId = env.OS8_OPENCODE_MODEL_ID;
+        const modelEntry = { name: modelId };
+        const ctx = parseInt(env.OS8_OPENCODE_CONTEXT_LIMIT, 10);
+        const out = parseInt(env.OS8_OPENCODE_OUTPUT_RESERVE, 10);
+        if (Number.isFinite(ctx) && ctx > 0 && Number.isFinite(out) && out > 0) {
+          modelEntry.limit = { context: ctx, output: out };
+        }
+        env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          provider: {
+            local: {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'OS8 Local',
+              options: { baseURL: env.OS8_OPENCODE_BASE_URL, apiKey: 'dummy' },
+              models: { [modelId]: modelEntry }
+            }
+          },
+          model: `local/${modelId}`
+        });
+      }
       return env;
     }
   }

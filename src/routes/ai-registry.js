@@ -264,7 +264,11 @@ function createAIRegistryRouter(db) {
       if (!RoutingService.TASK_TYPES.includes(taskType)) {
         return res.status(400).json({ error: `Invalid task type: ${taskType}` });
       }
-      const cascade = RoutingService.getCascade(db, taskType);
+      // getDisplayCascade matches what resolve() actually dispatches to:
+      // in local mode it collapses chat tasks to the single launcher-
+      // selected family. The Model Priority UI renders rows from this
+      // endpoint, so the table stays honest about which family is active.
+      const cascade = RoutingService.getDisplayCascade(db, taskType);
       // Enrich with family + container + account status info
       const families = AIRegistryService.getFamilies(db);
       const familyMap = {};
@@ -358,11 +362,15 @@ function createAIRegistryRouter(db) {
 
   router.post('/local-mode/start', async (req, res) => {
     try {
-      const { LOCAL_TRIPLET, SLOT_ORDER } = require('../services/local-triplet');
+      const { resolveTriplet, SLOT_ORDER } = require('../services/local-triplet');
       const LauncherClient = require('../services/launcher-client');
 
+      // Snapshot the launcher's currently-active option per slot up-front so
+      // every ensureModel hits a consistent target (the chooser could change
+      // between calls otherwise).
+      const triplet = await resolveTriplet();
       const results = await Promise.all(SLOT_ORDER.map(async (slot) => {
-        const { model, backend } = LOCAL_TRIPLET[slot];
+        const { model, backend } = triplet[slot];
         try {
           const out = await LauncherClient.ensureModel({ model, backend, wait: false });
           return { slot, model, status: out?.status || 'unknown' };
@@ -466,15 +474,26 @@ function createAIRegistryRouter(db) {
 
       // Phase B — triplet slot view. Cleaner shape for the Settings UI; the
       // `families` field above stays for consumers that want every local
-      // family (onboarding preflight, debug views).
-      const { LOCAL_TRIPLET, SLOT_ORDER } = require('../services/local-triplet');
+      // family (onboarding preflight, debug views). Reads the launcher's
+      // currently-selected option per slot so OS8 mirrors the chooser
+      // without duplicating the source of truth.
+      const { resolveTriplet, SLOT_ORDER } = require('../services/local-triplet');
+      const triplet = await resolveTriplet();
       const slots = SLOT_ORDER.map(slot => {
-        const { model, label } = LOCAL_TRIPLET[slot];
+        const entry = triplet[slot];
+        const { model, label } = entry;
         const serving = servingByModel.has(model);
         return {
           slot,
           label,
           model,
+          // Surface chooser metadata so the OS8 settings UI can render a
+          // read-only "active model" line and (eventually) point users at
+          // the launcher when there's a pending Stop & Apply waiting.
+          options: entry.options || null,
+          selected: entry.selected || null,
+          needs_apply: !!entry.needs_apply,
+          running_model: entry.running_model || null,
           serving,
           // `loading` is a best-effort inference: launcher is up, model isn't
           // serving yet. Could be mid-warm-up, could be "never started".

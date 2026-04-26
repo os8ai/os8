@@ -343,16 +343,36 @@ function handleSend(deps) {
       subconsciousOutput.requiresToolUse = false;
     }
 
-    // --- Step 4: Re-resolve model for CLI spawn ---
-    // TOOL_USE → planning cascade; CONVERSATIONAL → stays on conversation cascade
+    // --- Step 4: Compute useDirectResponse + re-resolve for CLI spawn ---
+    // useDirectResponse must be known BEFORE re-resolve so we can skip the
+    // CLI-spawn re-resolve on the direct-response path.
+    const useDirectResponse = useSubconscious
+      && subconsciousOutput?.recommendedResponse
+      && !classifiedAsToolUse
+      && !subconsciousOutput.recommendedResponse.trimStart().startsWith('{');
+
+    // TOOL_USE → planning cascade; CONVERSATIONAL → conversation cascade.
+    // The cascade choice matters for proprietary mode (different cascades per
+    // task type). For local mode, both task types short-circuit through the
+    // launcher chat-role chooser — what changes the backend is the `purpose`
+    // flag (agentSpawn → opencode CLI; utility → local HTTP).
     const cliTaskType = classifiedAsToolUse ? 'planning' : 'conversation';
-    if (cliTaskType !== 'conversation' && db) {
+
+    // Re-resolve when we're going to spawn a CLI. Fires for:
+    //   - TOOL_USE (classifiedAsToolUse=true → cliTaskType='planning')
+    //   - CONVERSATIONAL fallthrough (classified CONVERSATIONAL but subconscious
+    //     produced no recommendedResponse → useDirectResponse=false)
+    // Skipped when vision-swap fired (resolved.source === 'vision_override' means
+    // an image is attached and we want to keep the multimodal HTTP path; opencode
+    // CLI has no --image flag so we'd lose the image).
+    const isVisionSwap = resolved.source === 'vision_override';
+    if (!useDirectResponse && db && !isVisionSwap) {
       const prevFamily = resolved.familyId;
-      resolved = RoutingService.resolve(db, cliTaskType, agentOverride);
+      resolved = RoutingService.resolve(db, cliTaskType, agentOverride, { purpose: 'agentSpawn' });
       backendId = resolved.backendId;
       agentModel = resolved.modelArg;
       backend = getBackend(backendId);
-      const reason = hasActivePlan ? 'active plan' : classificationResult?.requiresToolUse ? 'TOOL_USE' : 'no classifier';
+      const reason = hasActivePlan ? 'active plan' : classificationResult?.requiresToolUse ? 'TOOL_USE' : (classificationResult ? 'CONVERSATIONAL fallthrough' : 'no classifier');
       console.log(`[Routing] ${cliTaskType}/send: ${resolved.familyId} via ${resolved.source} (reason: ${reason})`);
 
       // Notify terminal of model switch
@@ -364,13 +384,6 @@ function handleSend(deps) {
         );
       }
     }
-
-    // --- Subconscious direct response mode ---
-    // When classified CONVERSATIONAL and subconscious produced a response, use it directly (no CLI spawn)
-    const useDirectResponse = useSubconscious
-      && subconsciousOutput?.recommendedResponse
-      && !classifiedAsToolUse
-      && !subconsciousOutput.recommendedResponse.trimStart().startsWith('{');
 
     if (useDirectResponse) {
       lap('direct-response-start');
@@ -948,7 +961,8 @@ function handleSend(deps) {
           emitTranslated(json);
 
           // Extract streaming text — Claude uses stream_event, Gemini uses message+delta,
-          // Codex uses item events, Grok uses {role:"assistant",content:"..."}
+          // Codex uses item events, Grok uses {role:"assistant",content:"..."},
+          // OpenCode uses {type:"text",part:{type:"text",text:"..."}}
           let streamingText = null;
           let isGrokReplace = false;  // Grok messages replace fullResponse (complete, not delta)
           if (json.type === 'stream_event' && json.event?.type === 'content_block_delta') {
@@ -958,6 +972,12 @@ function handleSend(deps) {
           } else if (json.type === 'item.completed' && json.item?.type === 'agent_message'
                      && json.item?.text) {
             streamingText = json.item.text;
+          } else if (json.type === 'text' && json.part?.type === 'text' && typeof json.part?.text === 'string') {
+            // OpenCode: text arrives once at the final step as a complete part
+            // (not a delta). Treat like Grok-replace so the in-band stripping
+            // logic runs on the whole text in one shot.
+            streamingText = json.part.text;
+            isGrokReplace = true;
           } else if (!json.type && json.role === 'assistant' && json.content
                      && !json.tool_calls?.length) {
             // Grok: {"role":"assistant","content":"..."} — each line is a COMPLETE message
@@ -1118,6 +1138,9 @@ function handleSend(deps) {
           } else if (json.type === 'item.completed' && json.item?.type === 'agent_message'
                      && json.item?.text) {
             fullResponse = json.item.text;
+          } else if (json.type === 'text' && json.part?.type === 'text' && typeof json.part?.text === 'string') {
+            // OpenCode: text part arrives once at the final step (replace, not delta).
+            fullResponse = json.part.text;
           } else if (!json.type && json.role === 'assistant' && json.content
                      && !json.tool_calls?.length
                      && !/^Using tools/i.test(json.content.trim())) {
@@ -1173,6 +1196,17 @@ function handleSend(deps) {
             RoutingService.markExhausted(db, container.provider_id, 'login');
             console.log(`[Routing] Marked ${container.provider_id} as exhausted due to billing error`);
           }
+        }
+      }
+      // Silent-failure detector: backend exited 0 but produced no usable
+      // response. Surface stderr (if any) so we can see what went wrong —
+      // some CLIs (notably opencode) emit errors to stderr but still exit 0.
+      if (exitCode === 0 && !fullResponse) {
+        console.error(`[${backend.label}] silent failure: exit=0, no fullResponse, payload=${debugPayloadSize} KB`);
+        if (stderr) {
+          console.error(`[${backend.label}] stderr (first 1000 chars): ${stderr.slice(0, 1000)}`);
+        } else {
+          console.error(`[${backend.label}] stderr is empty too`);
         }
       }
       // Treat as success if we have a response (exit 0, or non-zero with collected streaming content)
@@ -1485,14 +1519,21 @@ function handleChat(deps) {
       }
 
       // --- Step 4: Re-resolve model for CLI spawn ---
+      // /chat always spawns a CLI (no direct-response branch like /send), so we
+      // re-resolve unconditionally — both for TOOL_USE (planning cascade) and
+      // CONVERSATIONAL (conversation cascade). The agentSpawn purpose flips
+      // local-mode chat tasks from HTTP `local` to the `opencode` CLI so the
+      // agent gets real tool use. Skip when vision-swap fired (image attached →
+      // keep multimodal HTTP path; opencode CLI has no --image flag).
       const chatCliTaskType = chatClassifiedAsToolUse ? 'planning' : 'conversation';
-      if (chatCliTaskType !== 'conversation' && db) {
+      const chatIsVisionSwap = chatResolved.source === 'vision_override';
+      if (db && !chatIsVisionSwap) {
         const chatPrevFamily = chatResolved.familyId;
-        chatResolved = RoutingService.resolve(db, chatCliTaskType, chatAgentOverride);
+        chatResolved = RoutingService.resolve(db, chatCliTaskType, chatAgentOverride, { purpose: 'agentSpawn' });
         chatBackendId = chatResolved.backendId;
         chatAgentModel = chatResolved.modelArg;
         chatBackend = getBackend(chatBackendId);
-        const chatReason = chatHasActivePlan ? 'active plan' : chatClassificationResult?.requiresToolUse ? 'TOOL_USE' : 'no classifier';
+        const chatReason = chatHasActivePlan ? 'active plan' : chatClassificationResult?.requiresToolUse ? 'TOOL_USE' : (chatClassificationResult ? 'CONVERSATIONAL' : 'no classifier');
         console.log(`[Routing] ${chatCliTaskType}/chat: ${chatResolved.familyId} via ${chatResolved.source} (reason: ${chatReason})`);
 
         // Notify terminal of model switch
@@ -1787,6 +1828,17 @@ function handleChat(deps) {
             });
           }
           // Otherwise fall through and try to parse whatever we got
+        }
+        // Silent-failure detector: backend exited 0 with empty stdout. Some
+        // CLIs (notably opencode) emit errors to stderr but still exit 0;
+        // surface stderr here so we can diagnose.
+        if (code === 0 && !stdout.trim()) {
+          console.error(`[${chatBackend.label}/chat] silent failure: exit=0, empty stdout`);
+          if (stderr) {
+            console.error(`[${chatBackend.label}/chat] stderr (first 1000 chars): ${stderr.slice(0, 1000)}`);
+          } else {
+            console.error(`[${chatBackend.label}/chat] stderr is empty too`);
+          }
         }
 
         try {

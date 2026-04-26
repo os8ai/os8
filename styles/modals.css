@@ -569,6 +569,25 @@
       border-color: var(--color-accent, #8b5cf6);
     }
 
+    .cli-overhead-subsection {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px dashed var(--color-border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .cli-overhead-heading {
+      font-size: var(--text-md);
+      font-weight: 600;
+      color: var(--color-text-muted, #aaa);
+    }
+
+    .cli-overhead-intro {
+      max-width: 560px;
+    }
+
     .local-slots {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -797,6 +816,26 @@
       font-size: var(--text-sm);
       color: var(--color-text-muted);
       margin-left: 4px;
+    }
+
+    /* Caption shown beneath the cascade table when the row is locked
+       to whatever os8-launcher's chooser points at (local-mode chat). */
+    .cascade-caption {
+      margin-top: 6px;
+      padding: 4px 0;
+      font-size: var(--text-sm);
+      color: var(--color-text-muted);
+    }
+    .cascade-caption a {
+      color: var(--color-link, #5e7ce2);
+      text-decoration: none;
+    }
+    .cascade-caption a:hover {
+      text-decoration: underline;
+    }
+    .cascade-row .cascade-switch input:disabled + .cascade-slider {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     .cascade-td-cap,

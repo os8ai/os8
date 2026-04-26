@@ -549,10 +549,134 @@ class CodexTranslator {
 }
 
 /**
+ * OpenCodeTranslator — stateful translator for OpenCode CLI JSONL events.
+ *
+ * OpenCode's stream shape (under `--format json`):
+ *   - Every event carries `sessionID` (ses_*) — captured as runId on first sight.
+ *   - Tool calls are atomic: a single `tool_use` event arrives with
+ *     state.status === 'completed', state.input (args), and state.output
+ *     (result) all populated. We emit START + END + RESULT in one beat,
+ *     mirroring CodexTranslator's command_execution branch.
+ *   - Text is single-shot: a `text` event carries the full message in
+ *     part.text — TEXT_MESSAGE_START/CONTENT/END collapse into one beat.
+ *   - There is NO top-level `result` event. The run terminates on the last
+ *     `step_finish` with `reason === 'stop'` — that's our cue for RUN_FINISHED.
+ *
+ * `step_start` events are bookkeeping; we ignore them.
+ */
+class OpenCodeTranslator {
+  constructor({ runId } = {}) {
+    this.runId = runId || null;
+    this._runStartedEmitted = false;
+    this._runFinishedEmitted = false;
+  }
+
+  translate(event) {
+    if (!event || typeof event !== 'object') return [];
+
+    // Capture sessionID as runId on first sight (every event carries it).
+    if (event.sessionID && !this.runId) {
+      this.runId = event.sessionID;
+    }
+
+    const out = [];
+    if (!this._runStartedEmitted && this.runId) {
+      out.push({ type: RUN_STARTED, runId: this.runId });
+      this._runStartedEmitted = true;
+    }
+
+    const part = event.part;
+    if (!part) return out;
+
+    switch (event.type) {
+      case 'step_start':
+        return out;
+
+      case 'step_finish': {
+        // Terminal step (reason='stop') is our RUN_FINISHED trigger — opencode
+        // emits no top-level result event.
+        if (part.reason === 'stop' && !this._runFinishedEmitted) {
+          out.push({
+            type: RUN_FINISHED,
+            runId: this.runId,
+            status: 'completed'
+          });
+          this._runFinishedEmitted = true;
+        }
+        return out;
+      }
+
+      case 'tool_use': {
+        // Atomic tool — emit START + END + RESULT in one beat (mirrors Codex).
+        const toolCallId = part.callID;
+        const toolCallName = part.tool;
+        const args = part.state?.input;
+        const output = part.state?.output;
+        const status = part.state?.status;
+        const isError = !!status && status !== 'completed';
+        out.push({
+          type: TOOL_CALL_START,
+          runId: this.runId,
+          parentMessageId: part.messageID,
+          toolCallId,
+          toolCallName,
+          args
+        });
+        out.push({
+          type: TOOL_CALL_END,
+          runId: this.runId,
+          toolCallId
+        });
+        out.push({
+          type: TOOL_CALL_RESULT,
+          runId: this.runId,
+          toolCallId,
+          content: output,
+          isError
+        });
+        return out;
+      }
+
+      case 'text': {
+        // Single-shot text — collapse START/CONTENT/END.
+        const messageId = part.messageID || part.id;
+        const text = part.text || '';
+        out.push({
+          type: TEXT_MESSAGE_START,
+          runId: this.runId,
+          messageId,
+          role: 'assistant'
+        });
+        out.push({
+          type: TEXT_MESSAGE_CONTENT,
+          runId: this.runId,
+          messageId,
+          delta: text
+        });
+        out.push({
+          type: TEXT_MESSAGE_END,
+          runId: this.runId,
+          messageId
+        });
+        return out;
+      }
+
+      default:
+        return out;
+    }
+  }
+
+  reset() {
+    this._runStartedEmitted = false;
+    this._runFinishedEmitted = false;
+  }
+}
+
+/**
  * Factory — picks the right translator for a backend ID.
- * @param {string} backendId - 'claude' | 'gemini' | 'codex'
+ * @param {string} backendId - 'claude' | 'gemini' | 'codex' | 'opencode' | 'local'
  * @param {object} opts - Passed to the translator constructor
- * @returns {ClaudeTranslator | GeminiTranslator | CodexTranslator | null}
+ * @returns {ClaudeTranslator | GeminiTranslator | CodexTranslator | OpenCodeTranslator | null}
  */
 function createTranslator(backendId, opts = {}) {
   switch (backendId) {
@@ -563,9 +687,10 @@ function createTranslator(backendId, opts = {}) {
     // src/services/http-stream-synth.js. ClaudeTranslator handles it
     // unchanged — TOOL_CALL_START/ARGS/END/RESULT ag-ui events fire
     // for qwen3-coder tool calls just as they would for Claude Code's.
-    case 'local':  return new ClaudeTranslator(opts);
-    case 'gemini': return new GeminiTranslator(opts);
-    case 'codex':  return new CodexTranslator(opts);
+    case 'local':    return new ClaudeTranslator(opts);
+    case 'gemini':   return new GeminiTranslator(opts);
+    case 'codex':    return new CodexTranslator(opts);
+    case 'opencode': return new OpenCodeTranslator(opts);
     default: return null;
   }
 }
@@ -574,5 +699,6 @@ module.exports = {
   ClaudeTranslator,
   GeminiTranslator,
   CodexTranslator,
+  OpenCodeTranslator,
   createTranslator
 };

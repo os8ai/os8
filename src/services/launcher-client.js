@@ -63,6 +63,24 @@ const LauncherClient = {
   },
 
   /**
+   * Fetch the per-role triplet chooser state from the launcher.
+   * Shape (one entry per role declared in the launcher's config.yaml):
+   *   { <role>: {
+   *       options: [{model, backend, label}, ...],
+   *       default: <model>,             // config.yaml default
+   *       selected: <model>,            // user-persisted selection or default
+   *       running_model: <model>|null,  // whichever option is currently up
+   *       needs_apply: boolean
+   *   } }
+   * Throws when the launcher is unreachable or running an older version
+   * without /api/triplet/roles — callers should fall back to a static
+   * triplet definition.
+   */
+  async getRoles(baseUrl = DEFAULT_BASE) {
+    return _fetchJson(`${baseUrl}/api/triplet/roles`);
+  },
+
+  /**
    * Quick liveness check — does the launcher respond on :9000?
    * Used by the feature-flag gate and future preflight UI.
    */

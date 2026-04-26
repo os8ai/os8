@@ -78,13 +78,16 @@ describe('GET /api/settings/context-limits', () => {
   beforeEach(() => { db = makeDb(); });
   afterEach(() => { db.close(); });
 
-  it('returns both stored values', async () => {
+  it('returns both stored values plus the cliOverhead map', async () => {
     db.prepare(`INSERT INTO settings (key, value) VALUES ('context_limit_local_tokens', '50000')`).run();
     db.prepare(`INSERT INTO settings (key, value) VALUES ('context_limit_proprietary_tokens', '175000')`).run();
     const app = makeApp(db);
     const { status, body } = await request(app, 'GET', '/api/settings/context-limits');
     expect(status).toBe(200);
-    expect(body).toEqual({ localTokens: 50000, proprietaryTokens: 175000 });
+    expect(body.localTokens).toBe(50000);
+    expect(body.proprietaryTokens).toBe(175000);
+    expect(body.cliOverhead).toBeDefined();
+    expect(body.cliOverhead.opencode).toBeGreaterThan(0);
   });
 
   it('returns fallback values when settings are missing', async () => {
@@ -93,6 +96,20 @@ describe('GET /api/settings/context-limits', () => {
     expect(status).toBe(200);
     expect(body.localTokens).toBe(60000);
     expect(body.proprietaryTokens).toBe(200000);
+    expect(body.cliOverhead).toEqual(expect.objectContaining({
+      opencode: expect.any(Number),
+      claude: expect.any(Number),
+      gemini: expect.any(Number),
+      codex: expect.any(Number),
+      grok: expect.any(Number)
+    }));
+  });
+
+  it('reflects user-customized cliOverhead values', async () => {
+    db.prepare(`INSERT INTO settings (key, value) VALUES ('cli_overhead_opencode_tokens', '12000')`).run();
+    const app = makeApp(db);
+    const { body } = await request(app, 'GET', '/api/settings/context-limits');
+    expect(body.cliOverhead.opencode).toBe(12000);
   });
 });
 
@@ -125,7 +142,40 @@ describe('PATCH /api/settings/context-limits', () => {
       proprietaryTokens: 150000
     });
     expect(status).toBe(200);
-    expect(body).toEqual({ localTokens: 50000, proprietaryTokens: 150000 });
+    expect(body.localTokens).toBe(50000);
+    expect(body.proprietaryTokens).toBe(150000);
+    expect(body.cliOverhead).toBeDefined();
+  });
+
+  it('accepts cliOverhead updates', async () => {
+    const app = makeApp(db);
+    const { status, body } = await request(app, 'PATCH', '/api/settings/context-limits', {
+      cliOverhead: { opencode: 12000, claude: 18000 }
+    });
+    expect(status).toBe(200);
+    expect(body.cliOverhead.opencode).toBe(12000);
+    expect(body.cliOverhead.claude).toBe(18000);
+    // Persisted under the canonical key shape.
+    const stored = db.prepare(`SELECT value FROM settings WHERE key = 'cli_overhead_opencode_tokens'`).get();
+    expect(stored.value).toBe('12000');
+  });
+
+  it('returns 400 for negative cliOverhead values', async () => {
+    const app = makeApp(db);
+    const { status, body } = await request(app, 'PATCH', '/api/settings/context-limits', {
+      cliOverhead: { opencode: -100 }
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/between 0 and/);
+  });
+
+  it('returns 400 for unknown backendId in cliOverhead', async () => {
+    const app = makeApp(db);
+    const { status, body } = await request(app, 'PATCH', '/api/settings/context-limits', {
+      cliOverhead: { mystery: 5000 }
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/Unknown backend/);
   });
 
   it('returns 400 with a descriptive message for below-minimum values', async () => {
@@ -153,7 +203,9 @@ describe('PATCH /api/settings/context-limits', () => {
     await request(app, 'PATCH', '/api/settings/context-limits', { localTokens: 50000, proprietaryTokens: 150000 });
     const { status, body } = await request(app, 'GET', '/api/settings/context-limits');
     expect(status).toBe(200);
-    expect(body).toEqual({ localTokens: 50000, proprietaryTokens: 150000 });
+    expect(body.localTokens).toBe(50000);
+    expect(body.proprietaryTokens).toBe(150000);
+    expect(body.cliOverhead).toBeDefined();
   });
 
   it('one invalid field rejects the whole call (no partial write)', async () => {

@@ -76,6 +76,10 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
   const [ttsStatus, setTtsStatus] = useState(null)
   const [providerOptions, setProviderOptions] = useState([])
   const [aiMode, setAiMode] = useState(null)
+  // Active local chat slot from /api/ai/local-status. Used to render a
+  // read-only "set in launcher" display in local mode (no per-agent
+  // dropdown — OS8 is a taker; the chooser lives in os8-launcher).
+  const [localChatSlot, setLocalChatSlot] = useState(null)
   const [providerSource, setProviderSource] = useState(null)
   const [playingDefaultPreview, setPlayingDefaultPreview] = useState(null)
   const defaultAudioRef = useRef(null)
@@ -129,6 +133,16 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setBackendOptions(data) })
       .catch(err => console.error('Failed to load model options:', err))
+    // Active local chat slot — drives the read-only Chat Model display
+    // in local mode. Mirrors os8-launcher's triplet chooser; the user
+    // changes the selection in the launcher, not here.
+    fetch(`${baseApiUrl}/api/ai/local-status`)
+      .then(r => r.json())
+      .then(data => {
+        const chat = Array.isArray(data?.slots) ? data.slots.find(s => s.slot === 'chat') : null
+        setLocalChatSlot(chat || null)
+      })
+      .catch(() => {})
     // Load voices for voice section
     setLoadingVoices(true)
     fetch(`${baseApiUrl}/api/agents/voices`)
@@ -403,38 +417,75 @@ function SettingsPanel({ isOpen, onClose, agentId, baseApiUrl, config, onConfigC
 
               {/* Chat Model */}
               <Section title="Chat Model">
-                <Field label="Use Default">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] text-gray-500">Use AI Chat Model cascade from OS8 Settings</span>
-                    <Toggle
-                      checked={backendValue === 'auto'}
-                      onChange={(v) => {
-                        if (v) {
-                          saveAgentField({ backend: 'claude', model: 'auto' })
-                        } else {
-                          const first = backendOptions[0]
-                          saveAgentField({ backend: first?.backend || 'claude', model: first?.value || 'claude-sonnet' })
-                        }
-                      }}
-                    />
-                  </div>
-                </Field>
-                {backendValue !== 'auto' && (
-                  <Field label="Model">
-                    <select
-                      value={backendValue}
-                      onChange={(e) => {
-                        const familyId = e.target.value
-                        const family = backendOptions.find(o => o.value === familyId)
-                        saveAgentField({ backend: family?.backend || 'claude', model: familyId })
-                      }}
-                      className="settings-select"
-                    >
-                      {backendOptions.map(o => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
+                {aiMode === 'local' ? (
+                  // Read-only in local mode — the launcher's triplet chooser
+                  // is the single source of truth. Per-agent pinning would
+                  // silently override the user's launcher selection (and
+                  // RoutingService.resolve already ignores it for chat
+                  // tasks under local mode), so we hide it entirely.
+                  <Field label="Active model">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[12px] text-gray-700">
+                        {(() => {
+                          const opt = localChatSlot?.options?.find(o => o.model === localChatSlot?.selected)
+                          return opt?.label || localChatSlot?.model || 'No local chat model active'
+                        })()}
+                      </span>
+                      <a
+                        href="#"
+                        className="text-[11px] text-blue-600 hover:underline whitespace-nowrap"
+                        onClick={async (e) => {
+                          e.preventDefault()
+                          try {
+                            await fetch(`${baseApiUrl}/api/open-external`, {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ url: 'http://localhost:9000/triplet.html' })
+                            })
+                          } catch (err) {
+                            console.warn('Failed to open launcher chooser:', err.message)
+                          }
+                        }}
+                      >Change in launcher ↗</a>
+                    </div>
+                    <p className="text-[10px] text-gray-500 mt-1">Set in os8-launcher's triplet chooser.</p>
                   </Field>
+                ) : (
+                  <>
+                    <Field label="Use Default">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] text-gray-500">Use AI Chat Model cascade from OS8 Settings</span>
+                        <Toggle
+                          checked={backendValue === 'auto'}
+                          onChange={(v) => {
+                            if (v) {
+                              saveAgentField({ backend: 'claude', model: 'auto' })
+                            } else {
+                              const first = backendOptions[0]
+                              saveAgentField({ backend: first?.backend || 'claude', model: first?.value || 'claude-sonnet' })
+                            }
+                          }}
+                        />
+                      </div>
+                    </Field>
+                    {backendValue !== 'auto' && (
+                      <Field label="Model">
+                        <select
+                          value={backendValue}
+                          onChange={(e) => {
+                            const familyId = e.target.value
+                            const family = backendOptions.find(o => o.value === familyId)
+                            saveAgentField({ backend: family?.backend || 'claude', model: familyId })
+                          }}
+                          className="settings-select"
+                        >
+                          {backendOptions.map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    )}
+                  </>
                 )}
               </Section>
 

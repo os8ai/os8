@@ -352,15 +352,58 @@ function renderSlots(slots) {
     const row = container.querySelector(`.local-slot[data-slot="${entry.slot}"]`);
     if (!row) continue;
     const statusEl = row.querySelector('.slot-status');
-    if (!statusEl) continue;
+    const modelEl = row.querySelector('.slot-model');
 
-    let label, state;
-    if (entry.serving) { label = 'Serving'; state = 'serving'; }
-    else if (entry.loading) { label = 'Loading…'; state = 'loading'; }
-    else { label = 'Offline'; state = 'offline'; }
+    if (statusEl) {
+      let label, state;
+      if (entry.serving) { label = 'Serving'; state = 'serving'; }
+      else if (entry.loading) { label = 'Loading…'; state = 'loading'; }
+      else { label = 'Offline'; state = 'offline'; }
+      statusEl.textContent = label;
+      statusEl.dataset.status = state;
+    }
 
-    statusEl.textContent = label;
-    statusEl.dataset.status = state;
+    // Surface the launcher's currently-active option so the user can confirm
+    // which model their local-mode dispatch will hit. The model is chosen in
+    // os8-launcher (read-only here per design); for multi-option roles we
+    // also flag a pending Stop & Apply waiting in the launcher.
+    if (modelEl) {
+      const opt = Array.isArray(entry.options)
+        ? entry.options.find(o => o.model === entry.selected)
+        : null;
+      const displayLabel = opt?.label || entry.model || '';
+      let suffix = '';
+      if (entry.needs_apply && entry.running_model && entry.running_model !== entry.selected) {
+        suffix = '  · pending in launcher';
+      }
+      modelEl.textContent = displayLabel + suffix;
+      const hasChoice = Array.isArray(entry.options) && entry.options.length > 1;
+      modelEl.title = hasChoice
+        ? 'Selected in os8-launcher → click to open the chooser'
+        : 'Set by os8-launcher';
+      if (hasChoice) {
+        modelEl.style.cursor = 'pointer';
+        modelEl.style.textDecoration = 'underline dotted';
+        modelEl.onclick = async () => {
+          // Open the launcher's triplet chooser in the user's default browser
+          // via the existing OS8 server endpoint (same pattern as onboarding.js).
+          try {
+            const port = await window.os8.server.getPort();
+            await fetch(`http://localhost:${port}/api/open-external`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: 'http://localhost:9000/triplet.html' })
+            });
+          } catch (e) {
+            console.warn('Failed to open launcher chooser:', e.message);
+          }
+        };
+      } else {
+        modelEl.style.cursor = '';
+        modelEl.style.textDecoration = '';
+        modelEl.onclick = null;
+      }
+    }
   }
 }
 
@@ -434,6 +477,15 @@ function applyModeVisibility(mode) {
   const propRow = document.getElementById('contextLimitProprietaryRow');
   if (localRow) localRow.hidden = !isLocal;
   if (propRow) propRow.hidden = isLocal;
+  // CLI overhead rows mirror the same split — opencode is the local CLI,
+  // the rest are proprietary.
+  const overheadOpencodeRow = document.getElementById('cliOverheadOpencodeRow');
+  if (overheadOpencodeRow) overheadOpencodeRow.hidden = !isLocal;
+  const proprietaryOverheadRows = ['Claude', 'Gemini', 'Codex', 'Grok'];
+  for (const cli of proprietaryOverheadRows) {
+    const row = document.getElementById(`cliOverhead${cli}Row`);
+    if (row) row.hidden = isLocal;
+  }
 }
 
 /**
@@ -521,14 +573,27 @@ async function loadContextLimitsPanel(serverPort) {
   const errEl = document.getElementById('contextLimitError');
   if (!localInput || !propInput) return;
 
-  // Visibility is owned by applyModeVisibility(); load both values regardless
+  // Per-CLI overhead inputs. Keyed by backendId so the bind function can map
+  // input → settings key without a separate lookup.
+  const overheadInputs = {
+    opencode: document.getElementById('cliOverheadOpencodeInput'),
+    claude:   document.getElementById('cliOverheadClaudeInput'),
+    gemini:   document.getElementById('cliOverheadGeminiInput'),
+    codex:    document.getElementById('cliOverheadCodexInput'),
+    grok:     document.getElementById('cliOverheadGrokInput')
+  };
+
+  // Visibility is owned by applyModeVisibility(); load all values regardless
   // of current mode so flipping the toggle doesn't blank an input.
   try {
     const res = await fetch(`http://localhost:${serverPort}/api/settings/context-limits`);
     if (!res.ok) throw new Error(`context-limits ${res.status}`);
-    const { localTokens, proprietaryTokens } = await res.json();
+    const { localTokens, proprietaryTokens, cliOverhead = {} } = await res.json();
     localInput.value = localTokens;
     propInput.value = proprietaryTokens;
+    for (const [backendId, input] of Object.entries(overheadInputs)) {
+      if (input && cliOverhead[backendId] != null) input.value = cliOverhead[backendId];
+    }
   } catch (err) {
     console.warn('Failed to load context limits:', err.message);
     return;
@@ -545,9 +610,9 @@ async function loadContextLimitsPanel(serverPort) {
     errEl.textContent = '';
   };
 
-  // Save-on-blur. Each input PATCHes only its own field. The server validates
-  // the range; on rejection we restore the previous value.
-  const bindInput = (input, fieldName) => {
+  // Save-on-blur for budget inputs. Each input PATCHes only its own field.
+  // The server validates the range; on rejection we restore the previous value.
+  const bindBudgetInput = (input, fieldName) => {
     let prev = input.value;
     input.addEventListener('focus', () => { prev = input.value; clearError(); });
     input.addEventListener('blur', async () => {
@@ -580,8 +645,45 @@ async function loadContextLimitsPanel(serverPort) {
     });
   };
 
-  bindInput(localInput, 'localTokens');
-  bindInput(propInput, 'proprietaryTokens');
+  // Save-on-blur for CLI overhead inputs. Same shape, different PATCH body.
+  const bindOverheadInput = (input, backendId) => {
+    let prev = input.value;
+    input.addEventListener('focus', () => { prev = input.value; clearError(); });
+    input.addEventListener('blur', async () => {
+      const next = input.value.trim();
+      if (next === prev) return;
+      const n = parseInt(next, 10);
+      if (!Number.isFinite(n)) {
+        input.value = prev;
+        showError('Enter a whole number.');
+        return;
+      }
+      try {
+        const res = await fetch(`http://localhost:${serverPort}/api/settings/context-limits`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ cliOverhead: { [backendId]: n } })
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+        const updated = await res.json();
+        input.value = updated.cliOverhead?.[backendId] ?? n;
+        prev = input.value;
+        clearError();
+      } catch (err) {
+        input.value = prev;
+        showError(err.message);
+      }
+    });
+  };
+
+  bindBudgetInput(localInput, 'localTokens');
+  bindBudgetInput(propInput, 'proprietaryTokens');
+  for (const [backendId, input] of Object.entries(overheadInputs)) {
+    if (input) bindOverheadInput(input, backendId);
+  }
 }
 
 // Current cascade task type for tab state
@@ -858,19 +960,58 @@ async function loadCascade(serverPort, taskType) {
       const methodLabel = entry.access_method === 'login' ? 'Login' : 'API';
       const disabledClass = entry.enabled ? '' : ' cascade-row-disabled';
       const toggleChecked = entry.enabled ? 'checked' : '';
+      // Local-mode chat tasks collapse to a single row that mirrors the
+      // launcher's chooser. Lock it: dragging would do nothing with one
+      // row, and disabling the toggle would leave dispatch with no target.
+      const isLauncherRow = !!entry.local_launcher_selection;
+      const draggableAttr = isLauncherRow ? 'false' : 'true';
+      const toggleDisabledAttr = isLauncherRow ? 'disabled' : '';
+      const toggleTitle = isLauncherRow
+        ? ' title="Set in os8-launcher\'s triplet chooser"'
+        : '';
 
-      return `<tr class="cascade-row${disabledClass}" data-idx="${idx}" data-family="${entry.family_id}" data-method="${entry.access_method}" draggable="true">
+      return `<tr class="cascade-row${disabledClass}" data-idx="${idx}" data-family="${entry.family_id}" data-method="${entry.access_method}" draggable="${draggableAttr}">
         <td class="cascade-td-rank">${idx + 1}</td>
         <td class="cascade-td-status">${statusIcon}</td>
         <td class="cascade-td-name">${name} <span class="cascade-method-label">${methodLabel}</span></td>
         <td class="cascade-td-cap">${capDots}</td>
         <td class="cascade-td-cost">${costDots}</td>
-        <td class="cascade-td-toggle"><label class="cascade-switch"><input type="checkbox" ${toggleChecked}><span class="cascade-slider"></span></label></td>
+        <td class="cascade-td-toggle"${toggleTitle}><label class="cascade-switch"><input type="checkbox" ${toggleChecked} ${toggleDisabledAttr}><span class="cascade-slider"></span></label></td>
       </tr>`;
     }).join('');
 
-    // Toggle handlers
-    bodyEl.querySelectorAll('.cascade-switch input').forEach(input => {
+    // Caption under the table when this is a launcher-driven row — gives
+    // the user a path back to where the selection actually lives.
+    const hasLauncherRow = cascade.some(c => c.local_launcher_selection);
+    const captionEl = document.getElementById('cascadeCaption');
+    if (captionEl) {
+      if (hasLauncherRow) {
+        captionEl.hidden = false;
+        captionEl.innerHTML = 'Set in os8-launcher\'s triplet chooser. <a href="#" id="cascadeOpenChooser">Open chooser ↗</a>';
+        const link = captionEl.querySelector('#cascadeOpenChooser');
+        if (link) {
+          link.onclick = async (e) => {
+            e.preventDefault();
+            try {
+              const port = await window.os8.server.getPort();
+              await fetch(`http://localhost:${port}/api/open-external`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: 'http://localhost:9000/triplet.html' })
+              });
+            } catch (err) {
+              console.warn('Failed to open launcher chooser:', err.message);
+            }
+          };
+        }
+      } else {
+        captionEl.hidden = true;
+        captionEl.innerHTML = '';
+      }
+    }
+
+    // Toggle handlers (skip launcher-locked rows — input is disabled anyway).
+    bodyEl.querySelectorAll('.cascade-switch input:not([disabled])').forEach(input => {
       input.onchange = async () => {
         const row = input.closest('.cascade-row');
         row.classList.toggle('cascade-row-disabled', !input.checked);
@@ -878,9 +1019,9 @@ async function loadCascade(serverPort, taskType) {
       };
     });
 
-    // Drag-and-drop reordering
+    // Drag-and-drop reordering (skip launcher-locked rows — draggable=false on those).
     let dragIdx = null;
-    bodyEl.querySelectorAll('.cascade-row').forEach(row => {
+    bodyEl.querySelectorAll('.cascade-row[draggable="true"]').forEach(row => {
       row.addEventListener('dragstart', (e) => {
         dragIdx = parseInt(row.dataset.idx);
         e.dataTransfer.effectAllowed = 'move';

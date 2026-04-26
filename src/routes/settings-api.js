@@ -181,7 +181,8 @@ function createSettingsApiRouter(db, deps) {
     try {
       const updated = ContextLimits.setLimits(db, {
         localTokens: req.body.localTokens,
-        proprietaryTokens: req.body.proprietaryTokens
+        proprietaryTokens: req.body.proprietaryTokens,
+        cliOverhead: req.body.cliOverhead
       });
       res.json(updated);
     } catch (err) {

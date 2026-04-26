@@ -41,11 +41,12 @@ function prepareSpawnEnv(db, backendId, accessMethod) {
 
 /**
  * Parse a single JSON line from CLI output and return a structured result.
- * Handles all 4 backend formats:
+ * Handles all 5 backend formats:
  *   - Claude: stream_event (content_block_delta) + result
  *   - Gemini: message with delta=true
  *   - Codex: item.completed with agent_message
  *   - Grok: {role:"assistant", content:"..."} (JSONL, replace not append)
+ *   - OpenCode: {type:"text", part:{type:"text", text:"..."}} (single-shot, replace)
  *
  * @param {string} line - A single line of output
  * @returns {{ type: 'delta'|'replace'|'result'|'other', text: string|null, raw: object }|null}
@@ -70,6 +71,11 @@ function parseResponseLine(line) {
     // Codex: completed agent message
     if (json.type === 'item.completed' && json.item?.type === 'agent_message' && json.item?.text) {
       return { type: 'delta', text: json.item.text, raw: json };
+    }
+    // OpenCode: text part — single-shot final assistant text. Treat like a
+    // replace (each emission is the full message, not a delta).
+    if (json.type === 'text' && json.part?.type === 'text' && typeof json.part?.text === 'string') {
+      return { type: 'replace', text: json.part.text, raw: json };
     }
     // Grok: role-based JSONL — replaces fullResponse (each message is complete)
     if (!json.type && json.role === 'assistant' && json.content
@@ -159,6 +165,16 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
       attachments,
       launcherModel,
       launcherBackend
+    });
+  }
+
+  // OpenCode: local-mode CLI agent runtime. Like the HTTP path, it needs to
+  // call LauncherClient.ensureModel before the actual spawn so the inline
+  // OPENCODE_CONFIG_CONTENT env var can point at the right base URL + model
+  // name. The wrapper preserves the { onData, onExit, kill } shape.
+  if (backend.id === 'opencode' && launcherModel) {
+    return createOpenCodeProcess(backend, args, {
+      cwd, env, launcherModel, launcherBackend, model, stdinData, promptViaStdin
     });
   }
 
@@ -500,6 +516,268 @@ function createHttpProcess(backend, { prompt, model, taskType = 'conversation', 
       finish({ exitCode: 130, stderr: 'killed' });
     },
     pid: null
+  };
+}
+
+/**
+ * Spawn the OpenCode CLI as the local-mode agent runtime.
+ *
+ * Mirrors the ensure-then-spawn flow of `createHttpProcess`: first asks the
+ * launcher to load the requested local model on demand (via /api/serve/ensure),
+ * then exports OS8_OPENCODE_BASE_URL + OS8_OPENCODE_MODEL_ID into the child's
+ * env so BACKENDS.opencode.prepareEnv can build OPENCODE_CONFIG_CONTENT inline
+ * (matches the env shape in os8-launcher/clients/opencode/manifest.yaml:18).
+ *
+ * Returns the same { onData, onExit, kill, pid, stdin } shape as createProcess's
+ * spawn branch, so message-handler.js's stream loop reads it identically.
+ *
+ * @param {object} backend - BACKENDS.opencode
+ * @param {string[]} args - From backend.buildArgs(). Caller must NOT pre-set
+ *   --model — we override it here with `local/<modelId>` after ensureModel
+ *   resolves, since modelId may be normalized differently than the family's
+ *   raw cli_model_arg.
+ * @param {object} opts
+ * @param {string} opts.cwd - Working directory (the agent dir, where AGENTS.md lives)
+ * @param {object} opts.env - Base environment (already prepared by message-handler)
+ * @param {string} opts.launcherModel - Launcher's `models:` key (e.g. 'aeon-7-gemma-4-26b')
+ * @param {string} [opts.launcherBackend] - Launcher's `backends:` key (e.g. 'vllm')
+ * @param {string} [opts.model] - Override model arg (rarely needed)
+ * @param {string} [opts.stdinData] - Data to write before closing stdin
+ * @param {string|null} [opts.promptViaStdin] - Prompt to write to stdin (currently unused — opencode takes positional)
+ * @returns {{ onData: Function, onExit: Function, kill: Function, pid: number|null, stdin: any }}
+ */
+function createOpenCodeProcess(backend, args, { cwd, env, launcherModel, launcherBackend, model, stdinData, promptViaStdin } = {}) {
+  const dataCallbacks = [];
+  const exitCallbacks = [];
+  let aborted = false;
+  let child = null;
+
+  const finish = ({ exitCode = 0, stderr = '' } = {}) => {
+    for (const cb of exitCallbacks) {
+      try { cb({ exitCode, stderr }); } catch (err) { console.warn('[opencode] onExit callback threw:', err.message); }
+    }
+  };
+
+  // Async ensure-then-spawn. Yield a tick so callers can attach handlers first.
+  setImmediate(() => { _runOpenCode().catch((err) => {
+    if (aborted) return;
+    console.error('[opencode] spawn failed:', err.message);
+    finish({ exitCode: 1, stderr: err.message });
+  }); });
+
+  async function _runOpenCode() {
+    console.log(`[opencode] dispatcher entered launcherModel=${launcherModel} launcherBackend=${launcherBackend}`);
+    // 1. Ensure the launcher model is loaded on demand. Mirrors
+    //    createHttpProcess's flow (lines 312-353): poll up to 60s on `loading`,
+    //    surface launcher errors with the same `launcher_error:<CODE>:` prefix
+    //    so message-handler's existing toast-mapping picks them up.
+    let ensured;
+    try {
+      ensured = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+      console.log(`[opencode] ensureModel returned status=${ensured.status} model=${ensured.model} base_url=${ensured.base_url} instance_id=${ensured.instance_id}`);
+    } catch (err) {
+      const code = err.code || 'LAUNCHER_UNREACHABLE';
+      console.error(`[opencode] ensureModel threw code=${code} message=${err.message}`);
+      finish({ exitCode: 1, stderr: `launcher_error:${code}: ${err.message}` });
+      return;
+    }
+
+    if (ensured.status === 'loading') {
+      const start = Date.now();
+      const ceiling = 60_000;
+      while (Date.now() - start < ceiling) {
+        if (aborted) return;
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const poll = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+          if (poll.status === 'ready') { ensured = poll; break; }
+        } catch (_e) {
+          // Transient — keep polling. Persistent failures will hit the timeout.
+        }
+      }
+      if (ensured.status !== 'ready') {
+        finish({ exitCode: 1, stderr: `launcher_error:MODEL_LOAD_TIMEOUT: ${launcherModel} did not become ready within ${ceiling/1000}s` });
+        return;
+      }
+    }
+
+    if (aborted) return;
+
+    const baseUrl = ensured.base_url;
+    const modelId = ensured.model;        // launcher's served model name
+    const instanceId = ensured.instance_id;
+
+    // Pull the model's input window from the launcher when available.
+    // Older launchers (<= 0.1.0) don't return these fields — fall back to a
+    // conservative window so opencode at least has a non-default value to
+    // work with. Without `limit.context` opencode falls back to its built-in
+    // default (~32K) and auto-compacts well below the model's true ceiling.
+    let contextLimit = ensured.max_model_len;
+    let outputReserve = ensured.output_reserve;
+    if (typeof contextLimit !== 'number' || contextLimit <= 0) {
+      console.warn(`[opencode] launcher did not return max_model_len for ${launcherModel}; falling back to 32768. Update os8-launcher to expose this field.`);
+      contextLimit = 32768;
+    }
+    if (typeof outputReserve !== 'number' || outputReserve <= 0) {
+      outputReserve = 4096;
+    }
+
+    // 2. Inject the base URL + model ID + context window so
+    //    BACKENDS.opencode.prepareEnv can build OPENCODE_CONFIG_CONTENT
+    //    with `limit: { context, output }` on the model entry. We rebuild
+    //    env here (rather than relying on the caller having set these)
+    //    because launcher base_url and max_model_len aren't known until
+    //    ensureModel resolves.
+    const childEnv = {
+      ...env,
+      OS8_OPENCODE_BASE_URL: `${baseUrl}/v1`,
+      OS8_OPENCODE_MODEL_ID: modelId,
+      OS8_OPENCODE_CONTEXT_LIMIT: String(contextLimit),
+      OS8_OPENCODE_OUTPUT_RESERVE: String(outputReserve)
+    };
+    // Re-apply prepareEnv so OPENCODE_CONFIG_CONTENT gets populated from the
+    // freshly-set OS8_OPENCODE_* vars. prepareEnv is idempotent and stripping
+    // CLAUDECODE again is harmless.
+    const finalEnv = backend.prepareEnv(childEnv);
+
+    // 3. Override --model in args with the canonical `local/<modelId>` form
+    //    so it matches the inline provider-config block.
+    const finalArgs = [...args];
+    const modelIdx = finalArgs.indexOf('--model');
+    const desiredModelArg = `local/${modelId}`;
+    if (modelIdx >= 0 && modelIdx + 1 < finalArgs.length) {
+      finalArgs[modelIdx + 1] = desiredModelArg;
+    } else {
+      finalArgs.push('--model', desiredModelArg);
+    }
+
+    // 4. Spawn. No PTY: --format json produces clean JSONL on a piped stdout;
+    //    a PTY would inject ANSI escapes from opencode's TUI default.
+    let stderrBuf = '';
+    let stdoutBytes = 0;
+
+    // --- Diagnostic logging block (Part 1 of opencode-failure investigation) ---
+    // These logs print regardless of exit code so we can see what's actually
+    // happening in the OS8/Electron environment vs standalone Node.
+    try {
+      const promptArg = finalArgs[finalArgs.length - 1] || '';
+      const flagArgs = finalArgs.slice(0, -1).join(' ');
+      console.log(`[opencode] spawn cmd=${backend.command} flags=${flagArgs} prompt=${promptArg.length} chars`);
+      console.log(`[opencode]   cwd=${cwd}`);
+      console.log(`[opencode]   PATH head=${(finalEnv.PATH || '').split(':').slice(0, 4).join(':')}`);
+      let cfgModel = '(MISSING)';
+      try {
+        cfgModel = JSON.parse(finalEnv.OPENCODE_CONFIG_CONTENT || '{}').model || '(no model in config)';
+      } catch (_e) {
+        cfgModel = '(unparseable)';
+      }
+      console.log(`[opencode]   OPENCODE_CONFIG_CONTENT.model=${cfgModel}`);
+      try {
+        const cfg = JSON.parse(finalEnv.OPENCODE_CONFIG_CONTENT || '{}');
+        const limit = cfg?.provider?.local?.models?.[modelId]?.limit;
+        if (limit) {
+          console.log(`[opencode]   OPENCODE_CONFIG_CONTENT.limit=context:${limit.context} output:${limit.output}`);
+        } else {
+          console.log(`[opencode]   OPENCODE_CONFIG_CONTENT.limit=(absent — opencode will use its default ~32K)`);
+        }
+      } catch (_e) { /* already logged unparseable above */ }
+      // AGENTS.md is auto-loaded by opencode from cwd into the request envelope.
+      // Logging its size lets us derive opencode's true static overhead from
+      // the next live run: real_overhead ≈ tokens.input − (prompt_chars + AGENTS.md_bytes) / 4
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const agentsStat = fs.statSync(path.join(cwd, 'AGENTS.md'));
+        console.log(`[opencode]   AGENTS.md=${agentsStat.size} bytes (~${Math.ceil(agentsStat.size / 4)} tokens)`);
+      } catch (_e) {
+        console.log(`[opencode]   AGENTS.md=(missing or unreadable)`);
+      }
+      const electronVars = ['ELECTRON_RUN_AS_NODE', 'ELECTRON_NO_ATTACH_CONSOLE', 'NODE_OPTIONS', 'ATOM_SHELL_INTERNAL_RUN_AS_NODE'];
+      const presentElectronVars = electronVars.filter(k => finalEnv[k] !== undefined);
+      if (presentElectronVars.length > 0) {
+        console.log(`[opencode]   electron-env-vars-present: ${presentElectronVars.join(', ')}`);
+      }
+    } catch (e) {
+      console.warn(`[opencode] diagnostic-log block threw: ${e.message}`);
+    }
+
+    try {
+      child = spawn(backend.command, finalArgs, {
+        cwd, env: finalEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe']
+      });
+      console.log(`[opencode] spawned pid=${child.pid}`);
+    } catch (err) {
+      console.error(`[opencode] spawn() threw: ${err.message}`);
+      finish({ exitCode: 1, stderr: `opencode spawn failed: ${err.message}` });
+      return;
+    }
+
+    child.stderr.on('data', d => { stderrBuf += d.toString(); });
+    let tokenLineBuffer = '';
+    child.stdout.on('data', d => {
+      const text = d.toString();
+      stdoutBytes += text.length;
+      for (const cb of dataCallbacks) {
+        try { cb(text); } catch (e) { console.warn('[opencode] onData callback threw:', e.message); }
+      }
+      // Telemetry: parse step_finish events for tokens.input. Phase 2 will
+      // consume the rolling average to auto-tune CLI_OVERHEAD.opencode;
+      // Phase 1 just logs so we can validate the 25K guess on the first
+      // live run after this change.
+      tokenLineBuffer += text;
+      const lines = tokenLineBuffer.split('\n');
+      tokenLineBuffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.includes('"step_finish"') || !line.includes('"tokens"')) continue;
+        try {
+          const evt = JSON.parse(line);
+          const t = evt?.part?.tokens;
+          if (evt.type === 'step_finish' && t) {
+            console.log(`[opencode] step tokens: input=${t.input ?? '?'} output=${t.output ?? '?'} reasoning=${t.reasoning ?? 0} reason=${evt.part.reason}`);
+          }
+        } catch (_e) { /* malformed line — ignore */ }
+      }
+    });
+
+    if (stdinData) {
+      try { child.stdin.write(stdinData); } catch (_e) {}
+      try { child.stdin.end(); } catch (_e) {}
+    } else if (!promptViaStdin) {
+      try { child.stdin.end(); } catch (_e) {}
+    }
+
+    child.on('close', (exitCode) => {
+      // Fire-and-forget LRU touch so the launcher's eviction picks the right
+      // victims. Matches createHttpProcess's behavior.
+      if (instanceId) LauncherClient.touch(instanceId);
+      console.log(`[opencode] exit code=${exitCode} stdoutBytes=${stdoutBytes} stderrBytes=${stderrBuf.length}`);
+      if (stderrBuf) {
+        console.log(`[opencode] stderr (first 1000 chars): ${stderrBuf.slice(0, 1000)}`);
+      }
+      finish({ exitCode, stderr: stderrBuf });
+    });
+
+    child.on('error', (err) => {
+      console.error(`[opencode] child error event: ${err.message}`);
+      finish({ exitCode: 1, stderr: `opencode child error: ${err.message}` });
+    });
+  }
+
+  return {
+    onData: (cb) => { dataCallbacks.push(cb); },
+    onExit: (cb) => { exitCallbacks.push(cb); },
+    kill: () => {
+      aborted = true;
+      if (child) {
+        try { child.kill(); } catch (_e) {}
+      } else {
+        // Killed before spawn completed — synthesize a 130 exit so the caller
+        // sees the same shape as createHttpProcess.
+        finish({ exitCode: 130, stderr: 'killed' });
+      }
+    },
+    get pid() { return child ? child.pid : null; },
+    get stdin() { return child ? child.stdin : null; }
   };
 }
 

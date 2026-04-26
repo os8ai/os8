@@ -31,9 +31,12 @@ function seedData(db) {
     // reuses CLAUDE.md so agent dirs don't need a new file generator for Phase 1.
     // Container id matches the BACKENDS key in backend-adapter.js ('local').
     insertContainer.run('local', 'local', 'http', 'Local (os8-launcher)', 'local', 'CLAUDE.md', 0, null, '[]', null, null, null, 4);
-    // OpenCode — local-mode CLI. User configures its providers to point at the
-    // os8-launcher (http://localhost:9000) via `opencode providers`.
-    insertContainer.run('opencode', 'local', 'cli', 'OpenCode', 'opencode', 'CLAUDE.md', 0, null, '[]', null, null, null, 5);
+    // OpenCode — local-mode CLI agent runtime. Spawned by message-handler when
+    // routing.resolve(..., {purpose:'agentSpawn'}) returns backendId='opencode'
+    // under ai_mode='local'. Config is injected at spawn time via OPENCODE_CONFIG_CONTENT
+    // env (see BACKENDS.opencode.prepareEnv); the agent dir's AGENTS.md is auto-loaded
+    // as the system prompt.
+    insertContainer.run('opencode', 'local', 'cli', 'OpenCode', 'opencode', 'AGENTS.md', 0, null, '[]', null, null, null, 5);
 
     // Seed model families (the thing users pick in the dropdown)
     const insertFamily = db.prepare(
@@ -60,15 +63,18 @@ function seedData(db) {
     insertFamily.run('local-qwen3-coder-30b',     'local', 'Qwen3-Coder-30B',  'Qwen3 Coder 30B (local)',                      'qwen3-coder-30b',      0, 4);
     insertFamily.run('local-qwen3-coder-next',    'local', 'Qwen3-Coder-Next', 'Qwen3 Coder Next (local)',                     'qwen3-coder-next',     0, 5);
     insertFamily.run('local-qwen3-6-35b-a3b',     'local', 'Qwen3.6-35B',      'Qwen3.6 35B (local)',                          'qwen3-6-35b-a3b',      0, 6);
-    insertFamily.run('local-kokoro-v1',           'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',                        'kokoro-v1',            0, 7);
-    insertFamily.run('local-flux1-schnell',       'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',                       'flux1-schnell',        0, 8);
+    // Second chat option served by os8-launcher (multi-option `chat:` role).
+    // Uncensored NVFP4 Gemma 4 MoE; text-only (no vision).
+    insertFamily.run('local-aeon-7-gemma-4-26b',  'local', 'AEON-7 Gemma-4-26B','AEON-7 Gemma 4 26B (local, uncensored)',       'aeon-7-gemma-4-26b',   0, 7);
+    insertFamily.run('local-kokoro-v1',           'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',                        'kokoro-v1',            0, 8);
+    insertFamily.run('local-flux1-schnell',       'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',                       'flux1-schnell',        0, 9);
     // v2 plan (LOCAL_MODELS_PLAN.md): flux1-kontext-dev is the image slot —
     // reference-image conditioned generation/editing.
-    insertFamily.run('local-flux1-kontext-dev',   'local', 'Flux.1-Kontext',   'Flux.1 Kontext (local, reference-conditioned)', 'flux1-kontext-dev',   0, 9);
+    insertFamily.run('local-flux1-kontext-dev',   'local', 'Flux.1-Kontext',   'Flux.1 Kontext (local, reference-conditioned)', 'flux1-kontext-dev',  0, 10);
     // Image generation families (use existing containers for login auth inheritance)
-    insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 10);
-    insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 11);
-    insertFamily.run('grok-imagine', 'grok', 'Imagine', 'Grok Imagine', null, 0, 12);
+    insertFamily.run('gemini-imagen', 'gemini', 'Imagen', 'Gemini Imagen', null, 0, 11);
+    insertFamily.run('openai-dalle', 'codex', 'DALL-E', 'OpenAI DALL-E', null, 0, 12);
+    insertFamily.run('grok-imagine', 'grok', 'Imagine', 'Grok Imagine', null, 0, 13);
 
     // Seed versioned models (linked to families)
     const insertModel = db.prepare(
@@ -146,6 +152,14 @@ function seedData(db) {
     // HTTP container with no PTY command — selecting it only ever opened a
     // bare shell. Can't DELETE it: ai_model_families.container_id has FK refs.
     db.prepare(`UPDATE ai_containers SET show_in_terminal = 0 WHERE id = 'local'`).run();
+    // Hide the 'opencode' row too — the launcher dashboard is the canonical
+    // interactive entry point. OpenCode is invoked as the local-mode agent
+    // runtime under ai_mode='local' via routing.resolve(..., {purpose:'agentSpawn'}).
+    db.prepare(`UPDATE ai_containers SET show_in_terminal = 0 WHERE id = 'opencode'`).run();
+    // Backfill instruction_file for the opencode container in databases that
+    // were seeded before 0.4.9 (when opencode was created with 'CLAUDE.md').
+    // Mirrors the migration in src/migrations/0.4.9-opencode-agents-md.js.
+    db.prepare(`UPDATE ai_containers SET instruction_file = 'AGENTS.md' WHERE id = 'opencode'`).run();
 
     // Models: api_model_id
     db.prepare(`UPDATE ai_models SET api_model_id = ? WHERE id = ? AND api_model_id IS NULL`).run('claude-opus-4-6', 'claude-opus');
@@ -304,6 +318,8 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-coder-next':     { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0 },
       // qwen3-6-35b-a3b — v2 chat slot, covers all text tasks + vision.
       'local-qwen3-6-35b-a3b':      { cost_tier: 1, cap_chat: 4, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
+      // aeon-7-gemma-4-26b — alternate chat slot. Text-only, faster, uncensored.
+      'local-aeon-7-gemma-4-26b':   { cost_tier: 1, cap_chat: 4, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
       // Kokoro is out of the LLM cascade — TTS goes through tts.js facade.
       'local-kokoro-v1':            { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
       // flux1-schnell retired in v2; kontext-dev is the image slot.
@@ -338,6 +354,7 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-coder-30b':       '',
       'local-qwen3-coder-next':      '',
       'local-qwen3-6-35b-a3b':       'conversation,summary,planning,coding,jobs',
+      'local-aeon-7-gemma-4-26b':    'conversation,summary,planning,coding,jobs',
       'local-flux1-schnell':         '',
       'local-flux1-kontext-dev':     'image',
     };
@@ -359,6 +376,7 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-coder-30b':      { launcher_model: 'qwen3-coder-30b',      launcher_backend: 'ollama',  supports_vision: 0 },
       'local-qwen3-coder-next':     { launcher_model: 'qwen3-coder-next',     launcher_backend: 'vllm',    supports_vision: 0 },
       'local-qwen3-6-35b-a3b':      { launcher_model: 'qwen3-6-35b-a3b',      launcher_backend: 'vllm',    supports_vision: 1 },
+      'local-aeon-7-gemma-4-26b':   { launcher_model: 'aeon-7-gemma-4-26b',   launcher_backend: 'vllm',    supports_vision: 0 },
       'local-kokoro-v1':            { launcher_model: 'kokoro-v1',            launcher_backend: 'kokoro',  supports_vision: 0 },
       'local-flux1-schnell':        { launcher_model: 'flux1-schnell',        launcher_backend: 'comfyui', supports_vision: 0 },
       'local-flux1-kontext-dev':    { launcher_model: 'flux1-kontext-dev',    launcher_backend: 'comfyui', supports_vision: 0 },
