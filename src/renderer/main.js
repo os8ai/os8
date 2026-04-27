@@ -1076,7 +1076,9 @@ async function init() {
   const newTerminalBtn = document.getElementById('newTerminalBtn');
 
   newTerminalBtn.addEventListener('click', () => {
-    createTerminalInstance('claude');
+    // No type arg → createTerminalInstance picks based on current ai_mode +
+    // default agent's local_cli pin (proprietary→claude, local→opencode/openhands).
+    createTerminalInstance();
   });
 
   // ===== Panel Resizing =====

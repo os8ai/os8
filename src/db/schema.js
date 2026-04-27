@@ -253,6 +253,7 @@ function createSchema(db) {
       slug TEXT UNIQUE NOT NULL,
       color TEXT DEFAULT '#8b5cf6',
       backend TEXT DEFAULT 'claude',
+      local_cli TEXT DEFAULT 'opencode',
       model TEXT,
       owner_name TEXT DEFAULT '',
       pronouns TEXT DEFAULT 'they',

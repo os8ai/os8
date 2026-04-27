@@ -81,6 +81,26 @@ const LauncherClient = {
   },
 
   /**
+   * Convenience: pull the launcher's recommended client for the chat slot.
+   * Used by RoutingService + the terminal-tab/build-proposal UI to hard-pin
+   * which CLI runtime OS8 spawns under ai_mode='local'. Returns null when
+   * the launcher is unreachable or doesn't expose the field — callers
+   * should fall back to their own default ('opencode' is the historical pick).
+   *
+   * Cached results piggyback on getRoles() — no additional caching layer here;
+   * RoutingService maintains its own 30s cache for the resolved family.
+   */
+  async getRecommendedChatClient(baseUrl = DEFAULT_BASE) {
+    try {
+      const roles = await this.getRoles(baseUrl);
+      const cli = roles?.chat?.recommended_client;
+      return (cli === 'opencode' || cli === 'openhands') ? cli : null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
    * Quick liveness check — does the launcher respond on :9000?
    * Used by the feature-flag gate and future preflight UI.
    */

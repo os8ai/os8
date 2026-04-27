@@ -918,6 +918,139 @@ const BACKENDS = {
       }
       return env;
     }
+  },
+
+  openhands: {
+    id: 'openhands',
+    command: 'openhands',                 // resolved via prepareEnv PATH (~/.openhands/bin)
+    instructionFile: 'AGENTS.md',         // OpenHands also auto-loads AGENTS.md from cwd
+    label: 'OpenHands',
+    supportsImageInput: false,            // CLI has no --image flag; vision turns route to HTTP `local`
+    supportsImageViaFile: false,
+    supportsImageDescriptions: false,
+    supportsMaxTurns: false,              // no --max-turns equivalent
+    supportsStreamJson: true,             // --json is JSONL
+    promptViaStdin: false,                // OpenHands takes prompt via -t flag, not stdin
+
+    // Shared with opencode/codex — all three write to AGENTS.md.
+    identityPreamble: NON_ANTHROPIC_IDENTITY_PREAMBLE,
+
+    /**
+     * Build CLI args for OpenHands.
+     * --headless: non-interactive single-shot (no TUI).
+     * --json: JSONL output, one event per line.
+     * --override-with-envs: tell OpenHands to apply LLM_* env vars (without
+     *   this flag they're ignored in favor of ~/.openhands/agent_settings.json).
+     * --always-approve: bypass tool-use approval prompts (matches opencode's
+     *   --dangerously-skip-permissions and codex's bypass-approvals).
+     * Model selection happens through env (LLM_MODEL=openai/<id>) — OpenHands
+     * has no --model flag in headless mode.
+     *
+     * Returns args WITHOUT the prompt; buildPromptArgs adds `-t <message>`.
+     */
+    buildArgs(options = {}) {
+      const { skipPermissions = true, json = true } = options;
+      const args = ['--headless', '--override-with-envs'];
+      if (json) args.push('--json');
+      if (skipPermissions) args.push('--always-approve');
+      return args;
+    },
+
+    /**
+     * OpenHands takes the message via -t. ARG_MAX on Linux is ~2 MB; enriched
+     * messages cap around 100 KB so positional is safe.
+     */
+    buildPromptArgs(message) {
+      return ['-t', message];
+    },
+
+    /**
+     * Walk JSONL, return last text-bearing event.
+     *
+     * OpenHands's documented event types in --json mode are `action` and
+     * `observation`; the final assistant response surfaces as a `message`
+     * event in newer builds. We harvest text from any of those — last wins,
+     * which matches opencode's "last text part is authoritative" rule.
+     *
+     * Field names checked (in priority order): `content`, `text`, `message`.
+     * This is empirical-leaning and may need tightening once we have a real
+     * captured transcript — see TODO in createOpenHandsProcess.
+     */
+    parseResponse(output) {
+      const lines = output.split('\n').filter(l => l.trim());
+      let text = '';
+      for (const line of lines) {
+        try {
+          const j = JSON.parse(line);
+          const t = j.type;
+          if (t === 'message' || t === 'observation' || t === 'action') {
+            const candidate = j.content ?? j.text ?? j.message ?? j.part?.text ?? null;
+            if (typeof candidate === 'string' && candidate.trim()) {
+              text = candidate;
+            }
+          }
+        } catch (e) {
+          console.warn(`[backend-adapter] OpenHands batch parse skip: ${e.message} — ${line.substring(0, 200)}`);
+        }
+      }
+      return { text, sessionId: null, raw: null };
+    },
+
+    /**
+     * Stream-JSON shape is identical to batch — last text wins.
+     */
+    parseStreamJsonOutput(output) {
+      const parsed = this.parseResponse(output);
+      return { result: parsed.text, sessionId: null, raw: parsed.raw };
+    },
+
+    /**
+     * Text-only utility paths use the local HTTP backend's sendTextPromptHttp,
+     * never openhands.
+     */
+    buildTextOnlyArgs(_options = {}) {
+      return [];
+    },
+
+    /**
+     * Prepare env for OpenHands CLI.
+     *  - PATH includes ~/.openhands/bin (the installer's hardcoded location).
+     *  - LLM_BASE_URL / LLM_MODEL / LLM_API_KEY are populated from
+     *    OS8_OPENHANDS_BASE_URL + OS8_OPENHANDS_MODEL_ID, which the dispatcher
+     *    (createOpenHandsProcess in cli-runner.js) sets after
+     *    LauncherClient.ensureModel resolves the data-plane URL/model.
+     *
+     *  Note: OpenHands routes the model through LiteLLM, which requires the
+     *  `openai/` prefix to dispatch through its OpenAI-compatible client.
+     *  The launcher manifest at clients/openhands/manifest.yaml mirrors
+     *  this convention.
+     *
+     *  Unlike opencode, there is no inline JSON config — OpenHands reads its
+     *  config from ~/.openhands/agent_settings.json by default, which is why
+     *  --override-with-envs is required to apply our LLM_* values.
+     */
+    prepareEnv(baseEnv = process.env) {
+      const env = { ...baseEnv };
+      delete env.CLAUDECODE;
+      const { getExpandedPath } = require('../utils/cli-path');
+      // OpenHands installer puts the binary at ~/.local/bin/openhands (verified
+      // against install.openhands.dev/install.sh v1.14.0). The launcher's
+      // client manifest also symlinks `clients/openhands/bin/openhands` to the
+      // same target. Prepending ~/.local/bin is technically redundant since
+      // SEARCH_PATH already includes it, but the explicit prepend mirrors the
+      // opencode pattern (~/.opencode/bin) and keeps the resolution path
+      // obvious from the env config alone.
+      const home = process.env.HOME || env.HOME || '';
+      const ohBin = home ? `${home}/.local/bin` : '';
+      env.PATH = ohBin ? `${ohBin}:${getExpandedPath()}` : getExpandedPath();
+
+      if (env.OS8_OPENHANDS_BASE_URL && env.OS8_OPENHANDS_MODEL_ID) {
+        env.LLM_BASE_URL = env.OS8_OPENHANDS_BASE_URL;
+        env.LLM_MODEL = `openai/${env.OS8_OPENHANDS_MODEL_ID}`;
+        env.LLM_API_KEY = env.LLM_API_KEY || 'dummy';
+      }
+      return env;
+    }
   }
 };
 

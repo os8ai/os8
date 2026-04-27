@@ -178,6 +178,15 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     });
   }
 
+  // OpenHands: local-mode alternative to OpenCode, paired with Nemotron-Cascade-2.
+  // Same ensure-then-spawn flow; differs only in env-var names and the lack of
+  // an inline-config blob (OpenHands reads LLM_* env vars under --override-with-envs).
+  if (backend.id === 'openhands' && launcherModel) {
+    return createOpenHandsProcess(backend, args, {
+      cwd, env, launcherModel, launcherBackend, model, stdinData, promptViaStdin
+    });
+  }
+
   const usePty = backend.id === 'claude' && !useImages && !forcePipe;
 
   if (usePty) {
@@ -773,6 +782,177 @@ function createOpenCodeProcess(backend, args, { cwd, env, launcherModel, launche
       } else {
         // Killed before spawn completed — synthesize a 130 exit so the caller
         // sees the same shape as createHttpProcess.
+        finish({ exitCode: 130, stderr: 'killed' });
+      }
+    },
+    get pid() { return child ? child.pid : null; },
+    get stdin() { return child ? child.stdin : null; }
+  };
+}
+
+/**
+ * Spawn the OpenHands CLI against an os8-launcher-served local model.
+ *
+ * Mirrors `createOpenCodeProcess` (above): ensure-then-spawn with poll-on-loading,
+ * launcher_error:<CODE>: stderr prefix on failure, fire-and-forget LRU touch on
+ * exit. The differences are:
+ *   1. No inline config blob — OpenHands reads `LLM_*` env vars under the
+ *      `--override-with-envs` flag (see BACKENDS.openhands.buildArgs in
+ *      backend-adapter.js). prepareEnv populates them from OS8_OPENHANDS_*.
+ *   2. Model name needs the `openai/` prefix (LiteLLM convention) — that's
+ *      applied inside prepareEnv, not by mutating args.
+ *   3. No --model flag in args — OpenHands picks the model from LLM_MODEL env.
+ *
+ * TODO(empirical): the parseResponse path in BACKENDS.openhands is best-effort
+ * based on the documented event-type names (action / observation / message).
+ * Capture a real --json transcript with `openhands --headless --json -t "hi"`
+ * and tighten the field-name list if "last text wins" doesn't reliably
+ * extract the final assistant message.
+ *
+ * Returns the same { onData, onExit, kill, pid, stdin } shape as createProcess's
+ * other paths, so the message-handler stream loop is uniform.
+ */
+function createOpenHandsProcess(backend, args, { cwd, env, launcherModel, launcherBackend, model, stdinData, promptViaStdin } = {}) {
+  const dataCallbacks = [];
+  const exitCallbacks = [];
+  let aborted = false;
+  let child = null;
+
+  const finish = ({ exitCode = 0, stderr = '' } = {}) => {
+    for (const cb of exitCallbacks) {
+      try { cb({ exitCode, stderr }); } catch (err) { console.warn('[openhands] onExit callback threw:', err.message); }
+    }
+  };
+
+  setImmediate(() => { _runOpenHands().catch((err) => {
+    if (aborted) return;
+    console.error('[openhands] spawn failed:', err.message);
+    finish({ exitCode: 1, stderr: err.message });
+  }); });
+
+  async function _runOpenHands() {
+    console.log(`[openhands] dispatcher entered launcherModel=${launcherModel} launcherBackend=${launcherBackend}`);
+    let ensured;
+    try {
+      ensured = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+      console.log(`[openhands] ensureModel returned status=${ensured.status} model=${ensured.model} base_url=${ensured.base_url} instance_id=${ensured.instance_id}`);
+    } catch (err) {
+      const code = err.code || 'LAUNCHER_UNREACHABLE';
+      console.error(`[openhands] ensureModel threw code=${code} message=${err.message}`);
+      finish({ exitCode: 1, stderr: `launcher_error:${code}: ${err.message}` });
+      return;
+    }
+
+    if (ensured.status === 'loading') {
+      const start = Date.now();
+      const ceiling = 60_000;
+      while (Date.now() - start < ceiling) {
+        if (aborted) return;
+        await new Promise(r => setTimeout(r, 1000));
+        try {
+          const poll = await LauncherClient.ensureModel({ model: launcherModel, backend: launcherBackend });
+          if (poll.status === 'ready') { ensured = poll; break; }
+        } catch (_e) {
+          // Transient — keep polling.
+        }
+      }
+      if (ensured.status !== 'ready') {
+        finish({ exitCode: 1, stderr: `launcher_error:MODEL_LOAD_TIMEOUT: ${launcherModel} did not become ready within ${ceiling/1000}s` });
+        return;
+      }
+    }
+
+    if (aborted) return;
+
+    const baseUrl = ensured.base_url;
+    const modelId = ensured.model;
+    const instanceId = ensured.instance_id;
+
+    // Inject OS8_OPENHANDS_* so prepareEnv can populate LLM_BASE_URL / LLM_MODEL.
+    // We rebuild env here (rather than relying on the caller having set these)
+    // because launcher base_url isn't known until ensureModel resolves.
+    const childEnv = {
+      ...env,
+      OS8_OPENHANDS_BASE_URL: `${baseUrl}/v1`,
+      OS8_OPENHANDS_MODEL_ID: modelId
+    };
+    const finalEnv = backend.prepareEnv(childEnv);
+
+    const finalArgs = [...args];
+    let stderrBuf = '';
+    let stdoutBytes = 0;
+
+    // --- Diagnostic logging (matches the opencode pattern for parity) ---
+    try {
+      const promptArg = finalArgs[finalArgs.length - 1] || '';
+      const flagArgs = finalArgs.slice(0, -1).join(' ');
+      console.log(`[openhands] spawn cmd=${backend.command} flags=${flagArgs} prompt=${promptArg.length} chars`);
+      console.log(`[openhands]   cwd=${cwd}`);
+      console.log(`[openhands]   PATH head=${(finalEnv.PATH || '').split(':').slice(0, 4).join(':')}`);
+      console.log(`[openhands]   LLM_BASE_URL=${finalEnv.LLM_BASE_URL || '(missing)'}`);
+      console.log(`[openhands]   LLM_MODEL=${finalEnv.LLM_MODEL || '(missing)'}`);
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        const agentsStat = fs.statSync(path.join(cwd, 'AGENTS.md'));
+        console.log(`[openhands]   AGENTS.md=${agentsStat.size} bytes (~${Math.ceil(agentsStat.size / 4)} tokens)`);
+      } catch (_e) {
+        console.log(`[openhands]   AGENTS.md=(missing or unreadable)`);
+      }
+    } catch (e) {
+      console.warn(`[openhands] diagnostic-log block threw: ${e.message}`);
+    }
+
+    try {
+      child = spawn(backend.command, finalArgs, {
+        cwd, env: finalEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe']
+      });
+      console.log(`[openhands] spawned pid=${child.pid}`);
+    } catch (err) {
+      console.error(`[openhands] spawn() threw: ${err.message}`);
+      finish({ exitCode: 1, stderr: `openhands spawn failed: ${err.message}` });
+      return;
+    }
+
+    child.stderr.on('data', d => { stderrBuf += d.toString(); });
+    child.stdout.on('data', d => {
+      const text = d.toString();
+      stdoutBytes += text.length;
+      for (const cb of dataCallbacks) {
+        try { cb(text); } catch (e) { console.warn('[openhands] onData callback threw:', e.message); }
+      }
+    });
+
+    if (stdinData) {
+      try { child.stdin.write(stdinData); } catch (_e) {}
+      try { child.stdin.end(); } catch (_e) {}
+    } else if (!promptViaStdin) {
+      try { child.stdin.end(); } catch (_e) {}
+    }
+
+    child.on('close', (exitCode) => {
+      if (instanceId) LauncherClient.touch(instanceId);
+      console.log(`[openhands] exit code=${exitCode} stdoutBytes=${stdoutBytes} stderrBytes=${stderrBuf.length}`);
+      if (stderrBuf) {
+        console.log(`[openhands] stderr (first 1000 chars): ${stderrBuf.slice(0, 1000)}`);
+      }
+      finish({ exitCode, stderr: stderrBuf });
+    });
+
+    child.on('error', (err) => {
+      console.error(`[openhands] child error event: ${err.message}`);
+      finish({ exitCode: 1, stderr: `openhands child error: ${err.message}` });
+    });
+  }
+
+  return {
+    onData: (cb) => { dataCallbacks.push(cb); },
+    onExit: (cb) => { exitCallbacks.push(cb); },
+    kill: () => {
+      aborted = true;
+      if (child) {
+        try { child.kill(); } catch (_e) {}
+      } else {
         finish({ exitCode: 130, stderr: 'killed' });
       }
     },

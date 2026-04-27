@@ -28,10 +28,20 @@ function createAIRegistryRouter(db) {
     }
   });
 
-  router.get('/containers/terminal', (req, res) => {
+  router.get('/containers/terminal', async (req, res) => {
     try {
       const mode = RoutingService.getMode(db);
-      res.json(AIRegistryService.getTerminalContainers(db, mode));
+      // Hard-coupling under local mode: ask launcher which CLI it recommends
+      // for the running chat model and narrow the dropdown to just that CLI.
+      // Falls back to both local CLIs when launcher is unreachable.
+      let recommendedClient = null;
+      if (mode === 'local') {
+        try {
+          const LauncherClient = require('../services/launcher-client');
+          recommendedClient = await LauncherClient.getRecommendedChatClient();
+        } catch (_e) { /* leave null → no narrowing */ }
+      }
+      res.json(AIRegistryService.getTerminalContainers(db, mode, { recommendedClient }));
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -499,15 +509,29 @@ function createAIRegistryRouter(db) {
           // serving yet. Could be mid-warm-up, could be "never started".
           // The start endpoint just fired ensureModel, so during the window
           // immediately after toggle-on this will correctly read as loading.
-          loading: reachable && !serving
+          loading: reachable && !serving,
+          // Port the running instance listens on (used by terminal.js to build
+          // LLM_BASE_URL / OPENCODE base URL for terminal-tab sessions).
+          running_port: entry.running_port || null,
+          // 0.4.14: launcher's recommended CLI for this slot's model. Chat
+          // slot only; null for image-gen / tts.
+          recommended_client: entry.recommended_client || null,
         };
       });
+
+      // 0.4.14: surface the launcher's recommended_client for the chat slot
+      // so the renderer can render the build-proposal "Building with: X" line
+      // and resolveDefaultTerminalType in terminal.js without a separate fetch.
+      // Read from the chat slot's already-resolved triplet entry.
+      const chatSlot = (slots || []).find(s => s.slot === 'chat');
+      const recommendedChatClient = chatSlot?.recommended_client || null;
 
       res.json({
         ai_mode: RoutingService.getMode(db),
         launcher: { reachable, base_url: baseUrl },
         slots,
-        families: enriched
+        families: enriched,
+        recommended_chat_client: recommendedChatClient
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

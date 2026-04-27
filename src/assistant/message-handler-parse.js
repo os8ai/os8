@@ -44,6 +44,7 @@ function parseStreamJsonOutput(output) {
   let geminiDeltaContent = '';  // Accumulate Gemini's delta messages
   let codexContent = '';  // Accumulate Codex agent_message text
   let opencodeContent = '';  // Last OpenCode `text` part wins (single-shot)
+  let openhandsContent = ''; // Last OpenHands text-bearing event wins
 
   for (const line of lines) {
     try {
@@ -72,6 +73,16 @@ function parseStreamJsonOutput(output) {
       if (parsed.sessionID && !sessionId) {
         sessionId = parsed.sessionID;
       }
+      // OpenHands: --json emits {type: 'action'|'observation'|'message', ...}.
+      // The final assistant turn surfaces in one of these with text-bearing
+      // content. Last text wins (mirrors the OpenCode rule). TODO(empirical):
+      // tighten the field-name list once we have a real --json transcript.
+      if (parsed.type === 'message' || parsed.type === 'observation' || parsed.type === 'action') {
+        const candidate = parsed.content ?? parsed.text ?? parsed.message ?? parsed.part?.text ?? null;
+        if (typeof candidate === 'string' && candidate.trim()) {
+          openhandsContent = candidate;
+        }
+      }
       // Grok: {"role":"assistant","content":"..."} — last assistant message wins
       // Skip tool-call progress messages ("Using tools to help you...")
       // Skip messages with tool_calls array (intermediate tool-use messages)
@@ -98,6 +109,9 @@ function parseStreamJsonOutput(output) {
   }
   if (!result && opencodeContent) {
     result = opencodeContent;
+  }
+  if (!result && openhandsContent) {
+    result = openhandsContent;
   }
 
   return { result, sessionId, raw };

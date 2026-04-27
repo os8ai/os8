@@ -12,7 +12,7 @@ const { generateId } = require('../utils');
 const { getBackend } = require('./backend-adapter');
 const RoutingService = require('./routing');
 const SettingsService = require('./settings');
-const { prepareSpawnEnv, parseBatchOutput, parseResponseLine } = require('./cli-runner');
+const { prepareSpawnEnv, parseBatchOutput, parseResponseLine, createProcess } = require('./cli-runner');
 
 const MAX_CONCURRENT_BUILDS = 3;
 const DEFAULT_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
@@ -110,8 +110,13 @@ const AppBuilderService = {
   /**
    * Approve a proposal — create the app, transfer plan to claude-user.md, delete plan file, start build.
    * Returns { buildId, appId, app, status }.
+   *
+   * 0.4.14: per-build localCli override removed. The launcher's recommended_client
+   * field on the running chat model is the authoritative source for which CLI
+   * gets spawned (Cascade-2 → OpenHands, Qwen/AEON → OpenCode). Mixing isn't
+   * supported because the tool-call protocols differ.
    */
-  approveProposal(proposalId, db, { AppService, generateClaudeMd, appCreatedCallback, getPort, getAssistantAppId, onComplete }) {
+  approveProposal(proposalId, db, { AppService, generateClaudeMd, appCreatedCallback, getPort, getAssistantAppId, onComplete } = {}) {
     const proposal = builds.get(proposalId);
     if (!proposal) throw new Error('Proposal not found');
     if (proposal.status !== 'pending_approval') throw new Error(`Proposal is ${proposal.status}, not pending_approval`);
@@ -378,14 +383,25 @@ const AppBuilderService = {
     fs.writeFileSync(specPath, spec, 'utf-8');
     console.log(`[AppBuilder] Wrote spec to ${specPath} (${spec.length} chars)`);
 
-    // 2. Get backend — use routing if no explicit model given
+    // 2. Get backend — use routing if no explicit model given.
+    // Builds need a CLI runtime (the build script can't run against an HTTP
+    // chat endpoint — there's nothing to spawn), so we pass purpose='agentSpawn'
+    // which makes the local-mode path return a CLI backendId ('opencode' /
+    // 'openhands') instead of the HTTP 'local' backend. localCli is sourced
+    // from the per-build override (the dropdown) first, then the proposal's
+    // agent's pin, then the safe default 'opencode'.
     let builderAccessMethod = 'api';
+    let resolved = null;
     if (!model && db) {
-      const resolved = RoutingService.resolve(db, 'coding');
+      // 0.4.14: per-build localCli override no longer honored — the launcher's
+      // recommended_client (config.yaml) dictates which CLI gets spawned for
+      // local-mode builds, mirroring chat turns. buildState.localCli is preserved
+      // on the proposal for back-compat / debugging but the resolver ignores it.
+      resolved = RoutingService.resolve(db, 'coding', null, { purpose: 'agentSpawn' });
       backendId = resolved.backendId;
       model = resolved.modelArg;
       builderAccessMethod = resolved.accessMethod;
-      console.log(`[Routing] coding/builder: ${resolved.familyId} via ${resolved.source} (${resolved.accessMethod})`);
+      console.log(`[Routing] coding/builder: ${resolved.familyId} via ${resolved.source} (${resolved.accessMethod}) → ${backendId}`);
     }
     const backend = getBackend(backendId);
 
@@ -412,9 +428,25 @@ const AppBuilderService = {
       args.push(...backend.buildPromptArgs(prompt));
     }
 
+    // 6. Spawn.
+    // OpenCode + OpenHands need the launcher ensure-then-spawn flow (model
+    // load + dynamic base URL + LRU touch). Route them through createProcess
+    // so the dispatcher in cli-runner.js calls
+    // createOpenCodeProcess / createOpenHandsProcess. Other backends keep the
+    // existing direct-spawn path.
+    const NEEDS_LAUNCHER = backendId === 'opencode' || backendId === 'openhands';
+    if (NEEDS_LAUNCHER) {
+      console.log(`[AppBuilder] Dispatching ${backendId} via createProcess for app ${appId}`);
+      return this._spawnBuilderViaCreateProcess(buildState, {
+        backend, args, prompt, cwd: appPath, env,
+        launcherModel: resolved?.launcher_model,
+        launcherBackend: resolved?.launcher_backend,
+        timeoutMs, onComplete
+      });
+    }
+
     console.log(`[AppBuilder] Spawning ${backend.command} for app ${appId} [backend: ${backendId}]`);
 
-    // 6. Spawn
     const child = spawn(backend.command, args, {
       cwd: appPath,
       env,
@@ -514,6 +546,93 @@ const AppBuilderService = {
         console.error(`[AppBuilder] Spawn error:`, err.message);
         buildState.status = 'failed';
         buildState.error = err.message;
+        buildState.completedAt = new Date().toISOString();
+        buildState.pid = null;
+        this._fireComplete(buildState, onComplete);
+        resolve();
+      });
+    });
+  },
+
+  /**
+   * Build dispatch via createProcess — used for backends that need the
+   * launcher ensure-then-spawn flow (opencode, openhands). createProcess
+   * returns the same { onData, onExit, kill, pid } shape as raw spawn, so
+   * the streaming/parse logic mirrors the direct-spawn path above.
+   *
+   * Note: timeoutMs is enforced by killing the proc; onExit fires naturally
+   * after kill so the same completion path runs.
+   */
+  async _spawnBuilderViaCreateProcess(buildState, { backend, args, prompt, cwd, env, launcherModel, launcherBackend, timeoutMs, onComplete }) {
+    const proc = createProcess(backend, args, {
+      cwd, env,
+      launcherModel,
+      launcherBackend,
+      stdinData: backend.promptViaStdin ? prompt : null,
+      promptViaStdin: backend.promptViaStdin
+    });
+
+    buildState.pid = proc.pid;
+
+    let stdout = '';
+    let stderr = '';
+    let stdoutBuffer = '';
+
+    const timeout = setTimeout(() => {
+      console.error(`[AppBuilder] Build ${buildState.id} timed out after ${Math.round(timeoutMs / 60000)}m`);
+      try { proc.kill(); } catch (_e) {}
+      buildState.status = 'timeout';
+      buildState.completedAt = new Date().toISOString();
+      buildState.error = `Build timed out after ${Math.round(timeoutMs / 60000)} minutes`;
+      this._fireComplete(buildState, onComplete);
+    }, timeoutMs);
+
+    proc.onData((chunk) => {
+      stdout += chunk;
+      stdoutBuffer += chunk;
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() || '';
+      for (const line of lines) {
+        const parsed = parseResponseLine(line);
+        if (parsed && parsed.text) buildState.stdoutLines.push(parsed.text);
+      }
+    });
+
+    return new Promise((resolve) => {
+      proc.onExit(({ exitCode, stderr: procStderr }) => {
+        clearTimeout(timeout);
+        stderr = procStderr || '';
+
+        // Flush remaining stdout buffer
+        if (stdoutBuffer.trim()) {
+          const parsed = parseResponseLine(stdoutBuffer);
+          if (parsed && parsed.text) buildState.stdoutLines.push(parsed.text);
+          stdoutBuffer = '';
+        }
+
+        if (stderr) {
+          const lines = stderr.split('\n').filter(l => l.trim());
+          buildState.stderrLines.push(...lines);
+        }
+
+        // Don't overwrite timeout status
+        if (buildState.status !== 'running') {
+          resolve();
+          return;
+        }
+
+        console.log(`[AppBuilder] ${backend.label} exited with code ${exitCode}, stdout: ${stdout.length} chars`);
+
+        const output = this._parseOutput(stdout);
+        buildState.output = output;
+
+        if (exitCode !== 0 && !output) {
+          buildState.status = 'failed';
+          buildState.error = `${backend.label} exited with code ${exitCode}: ${stderr.substring(0, 500)}`;
+        } else {
+          buildState.status = 'completed';
+        }
+
         buildState.completedAt = new Date().toISOString();
         buildState.pid = null;
         this._fireComplete(buildState, onComplete);

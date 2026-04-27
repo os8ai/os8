@@ -60,6 +60,13 @@ async function resolveTriplet() {
       default: role.default,
       needs_apply: !!role.needs_apply,
       running_model: role.running_model || null,
+      // Port the running instance listens on. OS8's terminal-tab path uses
+      // this to build LLM_BASE_URL for OpenHands sessions without having to
+      // cross-reference /api/status. null when nothing is running for this slot.
+      running_port: role.running_port || null,
+      // 0.4.14: pass through the launcher's per-model recommended_client
+      // (chat slot only — image-gen / tts don't have CLI clients).
+      recommended_client: role.recommended_client || null,
     };
   }
   return out;

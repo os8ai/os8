@@ -948,6 +948,16 @@ async function startServer(port = null, database = null) {
           // Schedule 3am Eastern daily cache refresh
           scheduleMemoryCacheRefresh();
 
+          // Pre-warm the routing service's launcher-chat cache so engines that
+          // tick later (DigestEngine waits 30s) don't race the async refresh
+          // and misroute their first request through the lowest-display_order
+          // fallback. Fire-and-forget — 2s prewarm timeout vs 30s DigestEngine
+          // delay leaves comfortable headroom. If the launcher is unreachable,
+          // prewarm resolves and the resolver's existing fallback path still
+          // works.
+          const RoutingService = require('./services/routing');
+          RoutingService.prewarm().catch(() => { /* best-effort */ });
+
           // Start digest engine (automatic session + daily digest generation)
           DigestEngine.start(db);
 

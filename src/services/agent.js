@@ -165,6 +165,9 @@ const AgentService = {
   update(db, id, updates) {
     // `model` is intentionally excluded — per-mode pins go through
     // saveAgentModel (agent_models table), not the legacy column.
+    // 0.4.14: 'local_cli' removed from the allowlist — column kept in schema
+    // for back-compat but no longer settable from updates. Launcher's
+    // recommended_client (config.yaml) is the authoritative source.
     const allowedFields = [
       'name', 'slug', 'color', 'backend',
       'owner_name', 'pronouns', 'voice_archetype',

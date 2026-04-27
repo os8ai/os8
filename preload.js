@@ -201,7 +201,7 @@ contextBridge.exposeInMainWorld('os8', {
 
   // Terminal (PTY)
   terminal: {
-    create: (appId, type) => ipcRenderer.invoke('terminal:create', appId, type),
+    create: (appId, type, opts) => ipcRenderer.invoke('terminal:create', appId, type, opts),
     write: (sessionId, data) => ipcRenderer.invoke('terminal:write', sessionId, data),
     resize: (sessionId, cols, rows) => ipcRenderer.invoke('terminal:resize', sessionId, cols, rows),
     kill: (sessionId) => ipcRenderer.invoke('terminal:kill', sessionId),

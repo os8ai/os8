@@ -187,11 +187,14 @@ describe('RoutingService.resolve — purpose=agentSpawn switches local backend t
   });
 
   it('returns backendId="opencode" (CLI) for purpose=agentSpawn under local mode chat tasks', async () => {
+    // Launcher fetch hangs → recommended_client falls back to 'opencode' (the safe default).
+    // Source string switched from `_selection_` to `_recommended_` in 0.4.14 to reflect
+    // that the launcher's per-model recommended_client field is now authoritative.
     global.fetch = vi.fn(() => new Promise(() => {}));
     const db = makeDb();
     const r = RoutingService.resolve(db, 'planning', null, { purpose: 'agentSpawn' });
     expect(r.backendId).toBe('opencode');
-    expect(r.source).toBe('local_launcher_selection_opencode');
+    expect(r.source).toBe('local_launcher_recommended_opencode');
   });
 
   it('preserves the family resolution when switching to opencode (same launcher_model)', async () => {

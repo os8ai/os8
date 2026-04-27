@@ -1862,6 +1862,28 @@
   gap: 8px;
 }
 
+.agent-plan-cli-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px 0;
+  font-size: var(--text-sm);
+}
+
+.agent-plan-cli-row[hidden] {
+  display: none;
+}
+
+.agent-plan-cli-label {
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.agent-plan-cli-value {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
 .agent-plan-btn {
   padding: 5px 16px;
   border-radius: var(--radius-md);

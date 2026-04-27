@@ -24,6 +24,11 @@ const BILLING_PATTERNS = {
 const TASK_TYPES = ['conversation', 'jobs', 'planning', 'coding', 'summary', 'image'];
 const PROVIDER_IDS = ['anthropic', 'google', 'openai', 'xai'];
 const VALID_MODES = ['proprietary', 'local'];
+// CLIs that pair with a launcher-served chat model under local mode. Both
+// connect to the same OpenAI-compatible endpoint but use different request
+// envelopes and tool-call protocols. Default is 'opencode'; agents/builds
+// can override via opts.localCli to RoutingService.resolve().
+const VALID_LOCAL_CLIS = new Set(['opencode', 'openhands']);
 const DEFAULT_EXHAUSTION_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
@@ -39,12 +44,12 @@ function _withLauncher(family, base) {
 
 // Local-mode chat dispatch follows the launcher's chooser. The chooser lives
 // in os8-launcher (config.yaml::roles.chat + ~/.config/os8-launcher/settings.yaml::role_selections),
-// surfaced via /api/triplet/roles. We cache the active chat model in-process
-// for 30s — short enough that a Stop & Apply in the launcher takes effect
-// quickly, long enough to keep this off the critical path.
+// surfaced via /api/triplet/roles. We cache the active chat model + the
+// recommended client (per-model field declared in launcher config.yaml) in
+// the same payload — single fetch, single TTL, single inflight flag.
 const CHAT_TASKS = new Set(['conversation', 'summary', 'planning', 'coding', 'jobs']);
 const LAUNCHER_CHAT_CACHE_TTL_MS = 30_000;
-let _launcherChatCache = { model: null, ts: 0, inflight: false };
+let _launcherChatCache = { model: null, recommendedClient: null, ts: 0, inflight: false };
 
 function _refreshLauncherChat() {
   if (_launcherChatCache.inflight) return;
@@ -53,7 +58,10 @@ function _refreshLauncherChat() {
   LauncherClient.getRoles().then(roles => {
     const chat = roles && roles.chat;
     if (chat && chat.selected) {
-      _launcherChatCache = { model: chat.selected, ts: Date.now(), inflight: false };
+      const rec = (chat.recommended_client === 'opencode' || chat.recommended_client === 'openhands')
+        ? chat.recommended_client
+        : null;
+      _launcherChatCache = { model: chat.selected, recommendedClient: rec, ts: Date.now(), inflight: false };
     } else {
       _launcherChatCache.inflight = false;
     }
@@ -62,6 +70,22 @@ function _refreshLauncherChat() {
     // the launcher comes back or a successful poll updates the cache.
     _launcherChatCache.inflight = false;
   });
+}
+
+/**
+ * Hard-coupling read: which CLI runtime should OS8 spawn for local-mode
+ * chat? Sourced from the launcher's per-model `recommended_client` field
+ * (config.yaml). Caller-side overrides are NOT honored — the launcher is
+ * authoritative because the model+CLI pairing is dictated by tool-call
+ * protocol compatibility (e.g. Cascade-2 needs OpenHands; Qwen/AEON need
+ * OpenCode). Falls back to 'opencode' when launcher is unreachable or the
+ * field isn't declared, since OpenCode is the historical default and is
+ * the most universally installable.
+ */
+function _getRecommendedLocalCli() {
+  const age = Date.now() - _launcherChatCache.ts;
+  if (age > LAUNCHER_CHAT_CACHE_TTL_MS) _refreshLauncherChat();
+  return _launcherChatCache.recommendedClient || 'opencode';
 }
 
 /**
@@ -92,6 +116,50 @@ function _resolveLocalChatFamily(db) {
 
 const RoutingService = {
   /**
+   * Pre-populate the launcher chat cache before consumers call resolve().
+   *
+   * Without this, the first call to `_resolveLocalChatFamily` after OS8 starts
+   * fires the async refresh fire-and-forget but immediately falls back to the
+   * lowest display_order chat family — which silently misroutes the request
+   * to e.g. Qwen3.6-35B even when Cascade-2 is the running chat model.
+   * That fallback then trips the launcher's BUDGET_EXCEEDED admission check
+   * because it tries to load a second 36GB model on top of the resident triplet.
+   *
+   * server.js awaits this once at startup (with the timeout) before any
+   * routing-driven engine (DigestEngine, JobScheduler, etc.) begins to tick.
+   * Idempotent: subsequent calls return immediately when the cache is warm.
+   *
+   * @param {number} [timeoutMs=2000] - Hard cap so a slow/unreachable launcher
+   *   doesn't block startup. On timeout the cache stays empty; resolve()
+   *   degrades to the existing "lowest display_order" fallback.
+   * @returns {Promise<void>}
+   */
+  prewarm(timeoutMs = 2000) {
+    return new Promise(resolve => {
+      if (_launcherChatCache.model) return resolve();   // already warm
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      const LauncherClient = require('./launcher-client');
+      LauncherClient.getRoles().then(roles => {
+        const chat = roles && roles.chat;
+        if (chat && chat.selected) {
+          const rec = (chat.recommended_client === 'opencode' || chat.recommended_client === 'openhands')
+            ? chat.recommended_client
+            : null;
+          _launcherChatCache = {
+            model: chat.selected,
+            recommendedClient: rec,
+            ts: Date.now(),
+            inflight: false,
+          };
+        }
+        finish();
+      }).catch(finish);
+      setTimeout(finish, timeoutMs);
+    });
+  },
+
+  /**
    * Resolve the best available model family + access method for a task type.
    * @param {object} db - SQLite database
    * @param {string} taskType - 'conversation' | 'jobs' | 'planning' | 'coding'
@@ -101,9 +169,16 @@ const RoutingService = {
    *   this resolve. Default 'utility' (subconscious classifier, plan generator,
    *   utility text calls) routes local-mode chat tasks through HTTP `local`
    *   (cheap, single-shot). 'agentSpawn' (only message-handler's CLI-spawn site
-   *   passes this) routes local-mode chat tasks through the `opencode` CLI so
+   *   passes this) routes local-mode chat tasks through a CLI runtime so
    *   the agent can do real tool use. The split keeps cheap chitchat cheap
    *   while making the heavy path actually capable.
+   * @param {'opencode'|'openhands'} [opts.localCli] - DEPRECATED. Pre-0.4.14
+   *   callers passed this to override the local-mode CLI runtime per agent or
+   *   per build. Ignored as of 0.4.14 — the launcher is the single source of
+   *   truth for the model↔CLI pairing (config.yaml::models[*].recommended_client,
+   *   surfaced via /api/triplet/roles). Argument retained so legacy callers
+   *   don't break, but no path reads it. Remove the parameter once all callers
+   *   are cleaned up.
    * @returns {{ familyId: string, backendId: string, modelArg: string|null, accessMethod: string, source: string, launcher_model?: string, launcher_backend?: string }}
    *   For local-container families, the result also carries `launcher_model`
    *   and `launcher_backend` from `ai_model_families` so dispatchers can
@@ -124,20 +199,25 @@ const RoutingService = {
     //   - purpose='utility' → family.container_id (i.e. 'local', the HTTP
     //     backend). Subconscious classifier, plan generator, utility text
     //     calls all stay cheap and single-shot.
-    //   - purpose='agentSpawn' → 'opencode' (the CLI agent runtime). Only
-    //     message-handler's CLI-spawn sites pass this. OpenCode supplies
-    //     the tool loop that the local HTTP path doesn't have.
+    //   - purpose='agentSpawn' → CLI runtime hard-pinned by the launcher's
+    //     `recommended_client` field on the running chat model. Cascade-2 →
+    //     'openhands'; Qwen/AEON → 'opencode'. Sourced via _getRecommendedLocalCli
+    //     (cached for 30s alongside the chat model). Falls back to 'opencode'
+    //     when launcher unreachable. Per-call overrides (opts.localCli) are
+    //     deprecated and ignored as of 0.4.14 — the launcher is authoritative
+    //     because tool-call protocol compatibility forces the pairing.
     if (this.getMode(db) === 'local' && CHAT_TASKS.has(taskType)) {
       const family = _resolveLocalChatFamily(db);
       if (family) {
         const isAgentSpawn = purpose === 'agentSpawn';
+        const localCli = isAgentSpawn ? _getRecommendedLocalCli() : null;
         return _withLauncher(family, {
           familyId: family.id,
-          backendId: isAgentSpawn ? 'opencode' : family.container_id,
+          backendId: isAgentSpawn ? localCli : family.container_id,
           modelArg: AIRegistryService.resolveModelArg(db, family.id),
           accessMethod: 'api',
           source: isAgentSpawn
-            ? 'local_launcher_selection_opencode'
+            ? `local_launcher_recommended_${localCli}`
             : 'local_launcher_selection'
         });
       }

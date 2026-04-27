@@ -24,6 +24,10 @@ function registerAgentsHandlers({ db, services }) {
         backend: agent.backend || config.agentBackend || 'claude',
         // Per-mode model pin — config.agentModel is the authoritative source.
         model: config.agentModel || agent.model || null,
+        // 0.4.14: agents.local_cli column is now inert. The launcher's
+        // recommended_client (config.yaml) dictates the local-mode CLI;
+        // per-agent override removed. Column kept to avoid a destructive
+        // migration; not surfaced or read.
         color: agent.color,
         visibility: agent.visibility || 'visible',
         isDefault: agent.id === defaultId
@@ -43,6 +47,7 @@ function registerAgentsHandlers({ db, services }) {
       slug: agent.slug,
       backend: agent.backend || config.agentBackend || 'claude',
       model: config.agentModel || agent.model || null,
+      // 0.4.14: localCli no longer surfaced — launcher dictates.
       color: agent.color,
       isDefault: agent.id === defaultAgent?.id,
       config
@@ -88,13 +93,18 @@ function registerAgentsHandlers({ db, services }) {
 
     // Pass through other config keys
     for (const [key, value] of Object.entries(updates)) {
-      if (!['name', 'backend', 'model', 'color'].includes(key) && value !== undefined) {
+      // 0.4.14: localCli writes silently dropped — see ipc list/get for context.
+      if (!['name', 'backend', 'model', 'color', 'localCli'].includes(key) && value !== undefined) {
         configUpdates[key] = value;
       }
     }
 
     if (updates.color !== undefined) {
       AgentService.update(db, id, { color: updates.color });
+    }
+
+    if (updates.localCli !== undefined) {
+      console.log(`[agents:update] ignoring deprecated localCli=${updates.localCli} (0.4.14 hard-couples CLI to launcher's recommended_client)`);
     }
 
     if (Object.keys(configUpdates).length > 0) {

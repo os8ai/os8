@@ -18,8 +18,8 @@ function registerTerminalHandlers({ mainWindow, db, services, state }) {
     services: { AppService, EnvService, APPS_DIR }
   });
 
-  ipcMain.handle('terminal:create', (event, appId, type) => {
-    return ptyService.create(appId, type || 'terminal');
+  ipcMain.handle('terminal:create', (event, appId, type, opts) => {
+    return ptyService.create(appId, type || 'terminal', opts || {});
   });
 
   ipcMain.handle('terminal:write', (event, sessionId, data) => {

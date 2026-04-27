@@ -477,10 +477,13 @@ function applyModeVisibility(mode) {
   const propRow = document.getElementById('contextLimitProprietaryRow');
   if (localRow) localRow.hidden = !isLocal;
   if (propRow) propRow.hidden = isLocal;
-  // CLI overhead rows mirror the same split — opencode is the local CLI,
-  // the rest are proprietary.
-  const overheadOpencodeRow = document.getElementById('cliOverheadOpencodeRow');
-  if (overheadOpencodeRow) overheadOpencodeRow.hidden = !isLocal;
+  // CLI overhead rows mirror the same split — opencode and openhands are
+  // local CLIs (visible in local mode), the rest are proprietary.
+  const localOverheadRows = ['Opencode', 'Openhands'];
+  for (const cli of localOverheadRows) {
+    const row = document.getElementById(`cliOverhead${cli}Row`);
+    if (row) row.hidden = !isLocal;
+  }
   const proprietaryOverheadRows = ['Claude', 'Gemini', 'Codex', 'Grok'];
   for (const cli of proprietaryOverheadRows) {
     const row = document.getElementById(`cliOverhead${cli}Row`);
@@ -576,11 +579,12 @@ async function loadContextLimitsPanel(serverPort) {
   // Per-CLI overhead inputs. Keyed by backendId so the bind function can map
   // input → settings key without a separate lookup.
   const overheadInputs = {
-    opencode: document.getElementById('cliOverheadOpencodeInput'),
-    claude:   document.getElementById('cliOverheadClaudeInput'),
-    gemini:   document.getElementById('cliOverheadGeminiInput'),
-    codex:    document.getElementById('cliOverheadCodexInput'),
-    grok:     document.getElementById('cliOverheadGrokInput')
+    opencode:  document.getElementById('cliOverheadOpencodeInput'),
+    openhands: document.getElementById('cliOverheadOpenhandsInput'),
+    claude:    document.getElementById('cliOverheadClaudeInput'),
+    gemini:    document.getElementById('cliOverheadGeminiInput'),
+    codex:     document.getElementById('cliOverheadCodexInput'),
+    grok:      document.getElementById('cliOverheadGrokInput')
   };
 
   // Visibility is owned by applyModeVisibility(); load all values regardless

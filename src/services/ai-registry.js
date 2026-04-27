@@ -30,7 +30,7 @@ const AIRegistryService = {
     `).get(id);
   },
 
-  getTerminalContainers(db, mode) {
+  getTerminalContainers(db, mode, opts = {}) {
     const rows = db.prepare(`
       SELECT c.*, p.name AS provider_name
       FROM ai_containers c
@@ -41,9 +41,23 @@ const AIRegistryService = {
     if (!mode) return rows;
     // Mirrors /api/ai/models/options: 'local' mode shows provider_id='local'
     // only; 'proprietary' mode shows everything else.
-    return rows.filter(c => mode === 'local'
+    const filtered = rows.filter(c => mode === 'local'
       ? c.provider_id === 'local'
       : c.provider_id !== 'local');
+
+    // 0.4.14 hard coupling: under local mode, the launcher's recommended_client
+    // is the ONLY CLI shown in the dropdown (the model dictates the CLI; mixing
+    // produces broken tool calls). Caller passes the recommended client via
+    // opts.recommendedClient — when set, narrow further; otherwise return both
+    // local CLIs (degraded fallback when launcher is unreachable).
+    if (mode === 'local' && opts.recommendedClient) {
+      const rec = opts.recommendedClient;
+      const onlyRec = filtered.filter(c => c.id === rec);
+      // If the recommended CLI is not in the table (shouldn't happen, but
+      // defensive), fall back to all local CLIs rather than returning empty.
+      return onlyRec.length > 0 ? onlyRec : filtered;
+    }
+    return filtered;
   },
 
   getModels(db) {

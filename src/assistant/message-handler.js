@@ -368,6 +368,8 @@ function handleSend(deps) {
     const isVisionSwap = resolved.source === 'vision_override';
     if (!useDirectResponse && db && !isVisionSwap) {
       const prevFamily = resolved.familyId;
+      // 0.4.14: opts.localCli no longer honored — launcher's recommended_client
+      // dictates the CLI. We just request agentSpawn and the resolver picks.
       resolved = RoutingService.resolve(db, cliTaskType, agentOverride, { purpose: 'agentSpawn' });
       backendId = resolved.backendId;
       agentModel = resolved.modelArg;
@@ -1529,6 +1531,8 @@ function handleChat(deps) {
       const chatIsVisionSwap = chatResolved.source === 'vision_override';
       if (db && !chatIsVisionSwap) {
         const chatPrevFamily = chatResolved.familyId;
+        // 0.4.14: opts.localCli no longer honored — launcher's recommended_client
+        // dictates the CLI. See routing.js::_getRecommendedLocalCli.
         chatResolved = RoutingService.resolve(db, chatCliTaskType, chatAgentOverride, { purpose: 'agentSpawn' });
         chatBackendId = chatResolved.backendId;
         chatAgentModel = chatResolved.modelArg;

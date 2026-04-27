@@ -37,6 +37,10 @@ function seedData(db) {
     // env (see BACKENDS.opencode.prepareEnv); the agent dir's AGENTS.md is auto-loaded
     // as the system prompt.
     insertContainer.run('opencode', 'local', 'cli', 'OpenCode', 'opencode', 'AGENTS.md', 0, null, '[]', null, null, null, 5);
+    // OpenHands — sibling local-mode CLI to OpenCode. Pairs with Nemotron-Cascade 2
+    // (qwen3_coder tool-call protocol via LiteLLM's openai/ provider). Spawn
+    // contract is identical to opencode (env-var-based config; AGENTS.md auto-loaded).
+    insertContainer.run('openhands', 'local', 'cli', 'OpenHands', 'openhands', 'AGENTS.md', 0, null, '[]', null, null, null, 6);
 
     // Seed model families (the thing users pick in the dropdown)
     const insertFamily = db.prepare(
@@ -66,6 +70,10 @@ function seedData(db) {
     // Second chat option served by os8-launcher (multi-option `chat:` role).
     // Uncensored NVFP4 Gemma 4 MoE; text-only (no vision).
     insertFamily.run('local-aeon-7-gemma-4-26b',  'local', 'AEON-7 Gemma-4-26B','AEON-7 Gemma 4 26B (local, uncensored)',       'aeon-7-gemma-4-26b',   0, 7);
+    // Third chat option: NVIDIA Nemotron-Cascade 2 30B-A3B. Math/coding/agentic
+    // specialist; pairs with OpenHands as the local CLI runtime (vs. OpenCode
+    // for the other two). Text-only (no vision). NVFP4 community quant.
+    insertFamily.run('local-nemotron-cascade-2',  'local', 'Nemotron-Cascade 2','NVIDIA Nemotron-Cascade 2 30B-A3B (local, math/coding)', 'nemotron-cascade-2', 0, 7);
     insertFamily.run('local-kokoro-v1',           'local', 'Kokoro-v1',        'Kokoro v1 (local TTS)',                        'kokoro-v1',            0, 8);
     insertFamily.run('local-flux1-schnell',       'local', 'Flux.1-Schnell',   'Flux.1 Schnell (local)',                       'flux1-schnell',        0, 9);
     // v2 plan (LOCAL_MODELS_PLAN.md): flux1-kontext-dev is the image slot —
@@ -152,10 +160,12 @@ function seedData(db) {
     // HTTP container with no PTY command — selecting it only ever opened a
     // bare shell. Can't DELETE it: ai_model_families.container_id has FK refs.
     db.prepare(`UPDATE ai_containers SET show_in_terminal = 0 WHERE id = 'local'`).run();
-    // Hide the 'opencode' row too — the launcher dashboard is the canonical
-    // interactive entry point. OpenCode is invoked as the local-mode agent
-    // runtime under ai_mode='local' via routing.resolve(..., {purpose:'agentSpawn'}).
-    db.prepare(`UPDATE ai_containers SET show_in_terminal = 0 WHERE id = 'opencode'`).run();
+    // Surface OpenCode + OpenHands in the terminal dropdown — under local mode
+    // these are the only valid CLI runtimes for ad-hoc tool use, and the user
+    // expects to pick between them in the same place they'd pick Claude Code
+    // under proprietary mode. Also surface Grok CLI in proprietary mode (was
+    // previously hidden by oversight; the binary has been installable since 0.3.x).
+    db.prepare(`UPDATE ai_containers SET show_in_terminal = 1 WHERE id IN ('opencode', 'openhands', 'grok')`).run();
     // Backfill instruction_file for the opencode container in databases that
     // were seeded before 0.4.9 (when opencode was created with 'CLAUDE.md').
     // Mirrors the migration in src/migrations/0.4.9-opencode-agents-md.js.
@@ -224,6 +234,11 @@ const cbLimitSetting = db.prepare('SELECT * FROM settings WHERE key = ?').get('a
 
   // Add Telegram owner user ID for group message sender verification
   try { db.exec('ALTER TABLE agents ADD COLUMN telegram_owner_user_id TEXT'); } catch(e) {}
+
+  // Add per-agent local-mode CLI pin. 'opencode' (default) or 'openhands'.
+  // Only consulted under ai_mode='local' for agentSpawn purposes — otherwise
+  // ignored. See RoutingService.resolve() opts.localCli.
+  try { db.exec("ALTER TABLE agents ADD COLUMN local_cli TEXT DEFAULT 'opencode'"); } catch(e) {}
 
   // Rename soul columns to myself (SOUL.md → MYSELF.md rename)
   try { db.exec('ALTER TABLE agents RENAME COLUMN soul_content TO myself_content'); } catch(e) {}
@@ -320,6 +335,9 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-6-35b-a3b':      { cost_tier: 1, cap_chat: 4, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
       // aeon-7-gemma-4-26b — alternate chat slot. Text-only, faster, uncensored.
       'local-aeon-7-gemma-4-26b':   { cost_tier: 1, cap_chat: 4, cap_jobs: 3, cap_planning: 3, cap_coding: 3, cap_summary: 3 },
+      // nemotron-cascade-2 — third chat slot. Strong math/coding/agentic.
+      // Higher coding score than the other two given the IMO/IOI/ICPC results.
+      'local-nemotron-cascade-2':   { cost_tier: 1, cap_chat: 4, cap_jobs: 4, cap_planning: 4, cap_coding: 5, cap_summary: 3 },
       // Kokoro is out of the LLM cascade — TTS goes through tts.js facade.
       'local-kokoro-v1':            { cost_tier: 1, cap_chat: 0, cap_jobs: 0, cap_planning: 0, cap_coding: 0, cap_summary: 0, cap_image: 0 },
       // flux1-schnell retired in v2; kontext-dev is the image slot.
@@ -355,6 +373,7 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-coder-next':      '',
       'local-qwen3-6-35b-a3b':       'conversation,summary,planning,coding,jobs',
       'local-aeon-7-gemma-4-26b':    'conversation,summary,planning,coding,jobs',
+      'local-nemotron-cascade-2':    'conversation,summary,planning,coding,jobs',
       'local-flux1-schnell':         '',
       'local-flux1-kontext-dev':     'image',
     };
@@ -377,6 +396,7 @@ You are working in an OS8-managed project. OS8 is a local app development enviro
       'local-qwen3-coder-next':     { launcher_model: 'qwen3-coder-next',     launcher_backend: 'vllm',    supports_vision: 0 },
       'local-qwen3-6-35b-a3b':      { launcher_model: 'qwen3-6-35b-a3b',      launcher_backend: 'vllm',    supports_vision: 1 },
       'local-aeon-7-gemma-4-26b':   { launcher_model: 'aeon-7-gemma-4-26b',   launcher_backend: 'vllm',    supports_vision: 0 },
+      'local-nemotron-cascade-2':   { launcher_model: 'nemotron-cascade-2',   launcher_backend: 'vllm',    supports_vision: 0 },
       'local-kokoro-v1':            { launcher_model: 'kokoro-v1',            launcher_backend: 'kokoro',  supports_vision: 0 },
       'local-flux1-schnell':        { launcher_model: 'flux1-schnell',        launcher_backend: 'comfyui', supports_vision: 0 },
       'local-flux1-kontext-dev':    { launcher_model: 'flux1-kontext-dev',    launcher_backend: 'comfyui', supports_vision: 0 },

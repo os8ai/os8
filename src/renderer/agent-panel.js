@@ -611,6 +611,10 @@ export async function createAgentInstance(appId, options = {}) {
       <div class="agent-plan-header">Build Plan</div>
       <div class="agent-plan-summary">${iconPreview}<strong>${escapeHtmlStr(appName)}</strong></div>
       <div class="agent-plan-spec">${escapeHtmlStr(spec || '')}</div>
+      <div class="agent-plan-cli-row" hidden>
+        <span class="agent-plan-cli-label">Building with:</span>
+        <span class="agent-plan-cli-value" id="agent-plan-cli-${proposalId}">…</span>
+      </div>
       <div class="agent-plan-actions">
         <button class="agent-plan-btn agent-plan-approve">Approve</button>
         <button class="agent-plan-btn agent-plan-changes">Propose Changes</button>
@@ -625,11 +629,38 @@ export async function createAgentInstance(appId, options = {}) {
     const changesBtn = cardEl.querySelector('.agent-plan-changes');
     const rejectBtn = cardEl.querySelector('.agent-plan-reject');
     const actionsEl = cardEl.querySelector('.agent-plan-actions');
+    const cliRowEl = cardEl.querySelector('.agent-plan-cli-row');
+    const cliValueEl = cardEl.querySelector('.agent-plan-cli-value');
+
+    // 0.4.14 hard coupling: in local mode, show "Building with: X" as
+    // read-only text where X is the launcher's recommended client for the
+    // running chat model (Cascade-2 → OpenHands; Qwen/AEON → OpenCode).
+    // Hidden in proprietary mode. No user override — the model dictates.
+    (async () => {
+      try {
+        const res = await fetch(`http://localhost:${port}/api/ai/local-status`);
+        if (!res.ok) return;
+        const status = await res.json();
+        if (status?.ai_mode === 'local' && cliRowEl) {
+          const cli = status.recommended_chat_client || 'opencode';
+          const display = cli === 'openhands' ? 'OpenHands' : 'OpenCode';
+          if (cliValueEl) cliValueEl.textContent = display;
+          cliRowEl.hidden = false;
+        }
+      } catch (_e) {
+        // Status unavailable — leave row hidden.
+      }
+    })();
 
     approveBtn.addEventListener('click', async () => {
       actionsEl.innerHTML = '<span class="agent-plan-status approved">Approved — building...</span>';
       try {
-        await fetch(`http://localhost:${port}/api/apps/propose/${proposalId}/approve`, { method: 'POST' });
+        // 0.4.14: no per-build localCli — launcher's recommended_client wins.
+        await fetch(`http://localhost:${port}/api/apps/propose/${proposalId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
       } catch (err) {
         actionsEl.innerHTML = `<span class="agent-plan-status rejected">Error: ${escapeHtmlStr(err.message)}</span>`;
       }
@@ -687,17 +718,17 @@ export async function createAgentInstance(appId, options = {}) {
     const changesBtn = cardEl.querySelector('.agent-plan-changes');
     const rejectBtn = cardEl.querySelector('.agent-plan-reject');
     if (!approveBtn) return;
-    // Trigger a fresh renderBuildProposal-style wiring by simulating the same click handlers
-    // Easiest: just re-render the card content via the parent render function
-    // But since we only need the button wiring, extract and bind:
     const actionsEl = cardEl.querySelector('.agent-plan-actions');
-    const appName = cardEl.querySelector('.agent-plan-summary strong')?.textContent || '';
-    const spec = cardEl.querySelector('.agent-plan-spec')?.textContent || '';
 
     approveBtn.addEventListener('click', async () => {
       actionsEl.innerHTML = '<span class="agent-plan-status approved">Approved — building...</span>';
       try {
-        await fetch(`http://localhost:${port}/api/apps/propose/${proposalId}/approve`, { method: 'POST' });
+        // 0.4.14: no per-build localCli — launcher dictates the CLI.
+        await fetch(`http://localhost:${port}/api/apps/propose/${proposalId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
       } catch (err) {
         actionsEl.innerHTML = `<span class="agent-plan-status rejected">Error: ${escapeHtmlStr(err.message)}</span>`;
       }

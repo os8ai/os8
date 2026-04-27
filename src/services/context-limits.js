@@ -40,12 +40,17 @@ const MAX_TOKENS = 1000000;
 // diagnostic logging in `src/services/cli-runner.js` (look for
 // `[opencode] step tokens: input=...`) is what we used to set opencode=15000;
 // real overhead on AEON-7 + Gemma was ~12K once `limit.context` was wired in.
+//
+// openhands defaults to 18000 (slightly higher than opencode) because it
+// includes a security-analyzer system prompt by default and its tool schemas
+// are larger. Tune down if telemetry shows you can spare more for memory.
 const CLI_OVERHEAD = {
-  opencode: 15000,
-  claude:   20000,
-  gemini:   15000,
-  codex:    20000,
-  grok:     15000
+  opencode:  15000,
+  openhands: 18000,
+  claude:    20000,
+  gemini:    15000,
+  codex:     20000,
+  grok:      15000
 };
 
 const CLI_OVERHEAD_KEY_PREFIX = 'cli_overhead_';

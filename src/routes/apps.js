@@ -164,8 +164,15 @@ function createAppsRouter(db, deps) {
   });
 
   // POST /api/apps/propose/:id/approve — Approve a proposal
+  // The body's `localCli` field is ACCEPTED for back-compat (older renderers
+  // may still send it) but IGNORED as of 0.4.14 — the launcher's recommended_client
+  // dictates the build CLI for hard-coupling. We log a deprecation note when
+  // a value is sent so we can spot stragglers in the wild.
   router.post('/propose/:id/approve', (req, res) => {
     try {
+      if (req.body?.localCli) {
+        console.log(`[Apps API] propose/approve: ignoring deprecated localCli='${req.body.localCli}' (0.4.14 hard-couples CLI to the launcher's recommended_client)`);
+      }
       const result = AppBuilderService.approveProposal(req.params.id, db, {
         AppService, generateClaudeMd, appCreatedCallback, getPort, getAssistantAppId
       });

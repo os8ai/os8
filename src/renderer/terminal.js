@@ -61,6 +61,31 @@ export async function getTerminalSelectOptions() {
   ).join('') + '<option value="terminal">Command Line</option><option value="agent">Agent</option>';
 }
 
+/**
+ * Pick a sensible default terminal type for a fresh panel.
+ *
+ * 0.4.14 hard coupling: the launcher's recommended_client for the running
+ * chat model dictates the local-mode CLI. No per-agent override.
+ *
+ * Resolution:
+ *   1. Proprietary mode → 'claude' (historical default)
+ *   2. Local mode → status.recommended_chat_client (Cascade-2 → 'openhands';
+ *      Qwen/AEON → 'opencode')
+ *   3. Local-mode fallback (status unreachable / field missing) → 'opencode'
+ */
+export async function resolveDefaultTerminalType() {
+  try {
+    const port = await window.os8.server.getPort();
+    const status = await fetch(`http://localhost:${port}/api/ai/local-status`).then(r => r.ok ? r.json() : null);
+    const isLocal = status?.ai_mode === 'local';
+    if (!isLocal) return 'claude';
+    const cli = status.recommended_chat_client;
+    return (cli === 'opencode' || cli === 'openhands') ? cli : 'opencode';
+  } catch (_e) {
+    return 'opencode';
+  }
+}
+
 export function fitTerminalInstance(instance) {
   if (instance.isBuildStatus || instance.isAgentPanel) return; // Non-xterm panels
   if (instance.fitAddon && instance.terminal) {
@@ -157,13 +182,34 @@ export function updateCloseButtonVisibility() {
 async function createSessionForInstance(instance, type) {
   if (!getCurrentApp()) return;
 
-  // Kill existing session
+  // Kill existing session AND fully reset xterm.js display state.
+  // terminal.reset() switches back from alternate screen, clears scrollback,
+  // resets SGR attributes, and resets the parser state. Without this, a TUI
+  // app killed mid-session (OpenCode, vim, less) leaves xterm stuck on its
+  // alternate screen with corrupted parser state — subsequent ANSI bytes
+  // render as literal text and the previous frame bleeds through.
   if (instance.sessionId) {
     await window.os8.terminal.kill(instance.sessionId);
     instance.sessionId = null;
   }
+  if (instance.terminal) {
+    instance.terminal.reset();
+  }
 
-  const result = await window.os8.terminal.create(getCurrentApp().id, type);
+  // For local CLIs, pre-fetch the launcher's running chat-slot endpoint so
+  // pty.js can wire OPENCODE_CONFIG_CONTENT (opencode) or LLM_BASE_URL+MODEL
+  // (openhands) before the PTY spawns. Without this the TUI launches with no
+  // model configured and fails / drops into a setup wizard.
+  let envOverrides = null;
+  if (type === 'opencode' || type === 'openhands') {
+    envOverrides = await resolveLauncherEnvForLocalCli(type);
+  }
+
+  const result = await window.os8.terminal.create(
+    getCurrentApp().id,
+    type,
+    envOverrides ? { envOverrides } : undefined,
+  );
   if (result.error) {
     console.error('Failed to create terminal session:', result.error);
     instance.terminal.writeln(`\x1b[31mError: ${result.error}\x1b[0m`);
@@ -178,6 +224,48 @@ async function createSessionForInstance(instance, type) {
     fitTerminalInstance(instance);
     instance.terminal.focus();
   }, 100);
+}
+
+/**
+ * Pre-fetch the launcher's running chat slot so pty.js can build the right
+ * env vars for an opencode/openhands terminal session. Returns the OS8_*_*
+ * env hints the BACKENDS.<type>.prepareEnv path expects, or null when the
+ * launcher is unreachable / nothing is running (in which case pty.js falls
+ * through and the TUI launches without a model — visible failure beats
+ * silent default).
+ */
+async function resolveLauncherEnvForLocalCli(type) {
+  try {
+    const port = await window.os8.server.getPort();
+    const res = await fetch(`http://localhost:${port}/api/ai/local-status`);
+    if (!res.ok) return null;
+    const status = await res.json();
+    if (status?.ai_mode !== 'local') return null;
+
+    // The chat slot's running model + port live in the slots array.
+    const chatSlot = (status.slots || []).find(s => s.slot === 'chat');
+    if (!chatSlot) return null;
+    const runningModel = chatSlot.running_model;
+    const runningPort = chatSlot.running_port;
+    if (!runningModel || !runningPort) return null;
+
+    const baseUrl = `http://localhost:${runningPort}/v1`;
+    if (type === 'openhands') {
+      return {
+        OS8_OPENHANDS_BASE_URL: baseUrl,
+        OS8_OPENHANDS_MODEL_ID: runningModel,
+      };
+    }
+    if (type === 'opencode') {
+      return {
+        OS8_OPENCODE_BASE_URL: baseUrl,
+        OS8_OPENCODE_MODEL_ID: runningModel,
+      };
+    }
+    return null;
+  } catch (_e) {
+    return null;
+  }
 }
 
 /**
@@ -307,10 +395,17 @@ async function setupVoiceButton(voiceBtn, instance) {
   voiceBtn.addEventListener('click', handleClick)
 }
 
-export async function createTerminalInstance(type = 'claude') {
+export async function createTerminalInstance(type = null) {
   if (!getCurrentApp()) return;
 
   initPtyHandlers();
+
+  // Caller may pass a specific type (e.g. when reopening a parked instance);
+  // when null, resolve from current ai_mode + default agent's local_cli pin
+  // so the freshly-created panel matches the dropdown options.
+  if (type == null) {
+    type = await resolveDefaultTerminalType();
+  }
 
   const instanceId = incrementTerminalIdCounter();
   const terminalOptions = await getTerminalSelectOptions();
