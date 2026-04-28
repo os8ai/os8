@@ -9,7 +9,10 @@
  */
 
 const { spawn } = require('child_process');
+const fs = require('fs');
 const os = require('os');
+const path = require('path');
+const which = require('which');
 const pty = require('node-pty');
 const { getBackend, stripDisabledApiKeys } = require('./backend-adapter');
 const AIRegistryService = require('./ai-registry');
@@ -17,6 +20,12 @@ const EnvService = require('./env');
 const AnthropicSDK = require('./anthropic-sdk');
 const LauncherClient = require('./launcher-client');
 const HttpStreamSynth = require('./http-stream-synth');
+
+// In packaged builds, app code lives in app.asar but the shim is unpacked
+// (see "asarUnpack" in package.json). Child processes can't read from asar
+// archives, so we have to point spawn at the unpacked sibling path.
+const GROK_SHIM_PATH = path.join(__dirname, '..', 'scripts', 'grok-shim.mjs')
+  .replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
 
 /**
  * Prepare the shell environment for a CLI backend.
@@ -196,6 +205,17 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     return proc; // PTY already has onData/onExit/kill interface
   }
 
+  // Grok CLI accepts the prompt only via `-p <prompt>`. On Linux a single
+  // argv string can't exceed MAX_ARG_STRLEN (PAGE_SIZE * 32 = 128 KB), so an
+  // OS8 enriched prompt (identity + memory + skills) reliably trips
+  // spawn() with E2BIG once raw conversation memory grows. Route through a
+  // small Node shim that reads the prompt from a temp file in-process and
+  // splices it into argv before importing grok-cli — the kernel only sees
+  // the small shim invocation.
+  if (backend.id === 'grok') {
+    return createGrokProcess(backend, args, { cwd, env });
+  }
+
   // spawn path
   const child = spawn(backend.command, args, {
     cwd, env, shell: false, stdio: ['pipe', 'pipe', 'pipe']
@@ -227,6 +247,100 @@ function createProcess(backend, args, { cwd, env, useImages, forcePipe, stdinDat
     pid: child.pid,
     // Expose stdin for callers that need to write prompt separately (Codex)
     stdin: child.stdin
+  };
+}
+
+/**
+ * Spawn the Grok CLI via a small Node shim that bypasses Linux's per-argv
+ * MAX_ARG_STRLEN (128 KB) limit. We extract `-p <prompt>` from args, write
+ * the prompt to a temp file, and spawn `node grok-shim.mjs <other args>`
+ * with the file path + resolved grok-cli entrypoint passed via env. The
+ * shim splices the prompt back into argv in-process and dynamic-imports
+ * the grok-cli module, so grok itself runs unchanged.
+ */
+function createGrokProcess(backend, args, { cwd, env }) {
+  // Resolve the real grok-cli entrypoint. `which` follows PATH; realpath
+  // follows the bin/grok symlink to the actual dist/index.js so the shim
+  // can `import()` it directly.
+  let grokEntrypoint;
+  try {
+    const grokBin = which.sync(backend.command, { path: env.PATH || process.env.PATH });
+    grokEntrypoint = fs.realpathSync(grokBin);
+  } catch (e) {
+    const msg = `Failed to resolve '${backend.command}' on PATH: ${e.message}`;
+    console.error(`[grok-shim] ${msg}`);
+    return failedProcess(msg);
+  }
+
+  // Extract `-p <prompt>` from args. buildPromptArgs is the only producer.
+  const promptIdx = args.indexOf('-p');
+  let prompt = '';
+  let passthroughArgs = args;
+  if (promptIdx >= 0 && promptIdx + 1 < args.length) {
+    prompt = args[promptIdx + 1];
+    passthroughArgs = args.slice(0, promptIdx).concat(args.slice(promptIdx + 2));
+  }
+
+  // Stash the prompt in a unique temp file. Cleanup happens inside the shim
+  // (process.on('exit')) and again here on close as belt-and-suspenders.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'os8-grok-'));
+  const promptFile = path.join(tmpDir, 'prompt.txt');
+  fs.writeFileSync(promptFile, prompt, 'utf8');
+
+  // process.execPath is Electron itself when OS8 runs as an app. Setting
+  // ELECTRON_RUN_AS_NODE=1 makes that binary behave as a plain Node — same
+  // Node version that's already running OS8 (so top-level-await + .mjs Just
+  // Work), without needing a system Node install in packaged environments.
+  const shimEnv = {
+    ...env,
+    ELECTRON_RUN_AS_NODE: '1',
+    OS8_GROK_PROMPT_FILE: promptFile,
+    OS8_GROK_ENTRYPOINT: grokEntrypoint,
+  };
+
+  const child = spawn(process.execPath, [GROK_SHIM_PATH, ...passthroughArgs], {
+    cwd, env: shimEnv, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let stderrBuf = '';
+  child.stderr.on('data', d => { stderrBuf += d.toString(); });
+  child.stdin.end();
+
+  const cleanup = () => {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  };
+
+  return {
+    onData: (cb) => {
+      child.stdout.on('data', d => cb(d.toString()));
+    },
+    onExit: (cb) => {
+      child.on('close', exitCode => {
+        cleanup();
+        cb({ exitCode, stderr: stderrBuf });
+      });
+    },
+    kill: () => { try { child.kill(); } finally { cleanup(); } },
+    pid: child.pid,
+    stdin: child.stdin,
+  };
+}
+
+/** Synthetic process that immediately fails — used when we can't even spawn. */
+function failedProcess(message) {
+  const dataCallbacks = [];
+  const exitCallbacks = [];
+  setImmediate(() => {
+    for (const cb of exitCallbacks) {
+      try { cb({ exitCode: 1, stderr: message }); } catch {}
+    }
+  });
+  return {
+    onData: (cb) => { dataCallbacks.push(cb); },
+    onExit: (cb) => { exitCallbacks.push(cb); },
+    kill: () => {},
+    pid: null,
+    stdin: null,
   };
 }
 

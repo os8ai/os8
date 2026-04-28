@@ -31,5 +31,5 @@ token.json
 # Audit reports
 gitleaks-report.json
 
-# Personal migration scripts
-scripts/
+# Personal migration scripts (root-level only — src/scripts/ is shipped code)
+/scripts/

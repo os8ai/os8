@@ -117,7 +117,8 @@
       "node_modules/better-sqlite3/**",
       "node_modules/node-pty/**",
       "node_modules/sharp/**",
-      "node_modules/@img/**"
+      "node_modules/@img/**",
+      "src/scripts/grok-shim.mjs"
     ],
     "extraMetadata": {
       "main": "main.js"
