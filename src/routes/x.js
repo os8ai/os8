@@ -5,6 +5,7 @@
 
 const express = require('express');
 const XService = require('../services/x');
+const requireAppContext = require('../middleware/require-app-context');
 const {
   XAIKeyMissingError,
   MAX_LIMIT,
@@ -15,6 +16,7 @@ const {
 
 function createXRouter(db, _services = {}) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8
   const svc = new XService(db);
 
   const send = (res, err) => {

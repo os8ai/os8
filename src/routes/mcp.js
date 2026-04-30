@@ -4,9 +4,11 @@
  */
 
 const express = require('express');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createMcpRouter(db, { McpServerService, CapabilitySyncService, McpCatalogService }) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8
 
   // ──────────────────────────────────────────────
   // Server Management

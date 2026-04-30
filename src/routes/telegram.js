@@ -8,9 +8,11 @@ const path = require('path');
 const TelegramService = require('../services/telegram');
 const { MemoryService } = require('../assistant/memory');
 const { stripInternalNotes } = require('../utils/internal-notes');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createTelegramRouter(db, { AgentService, SettingsService, getTelegramWatcher }) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8
 
   // Helper: get agent's bot token and owner chat ID
   function getAgentTelegram(agentId) {
