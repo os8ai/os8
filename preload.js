@@ -365,6 +365,14 @@ contextBridge.exposeInMainWorld('os8', {
     },
   },
 
+  // App Store (PR 1.4 — shell only; PR 1.16+ adds install/approve/cancel)
+  appStore: {
+    validateManifest: (manifestYaml, opts) =>
+      ipcRenderer.invoke('app-store:validate-manifest', manifestYaml, opts),
+    renderPlan: (slug, channel) =>
+      ipcRenderer.invoke('app-store:render-plan', slug, channel),
+  },
+
   // Zoom
   zoom: {
     getFactor: () => ipcRenderer.invoke('zoom:get-factor'),

@@ -1,0 +1,219 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://os8.ai/schema/appspec-v1.json",
+  "title": "OS8 AppSpec v1",
+  "description": "Catalog manifest for an OS8 external app. Mirrors os8ai/os8-catalog/schema/appspec-v1.json. When this lands in Phase 0, copy that file in verbatim and bump the URI.",
+  "type": "object",
+  "required": ["schemaVersion", "slug", "name", "publisher", "upstream", "runtime", "start", "surface", "permissions", "legal", "review"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": 1 },
+
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{1,39}$"
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "publisher": { "type": "string", "minLength": 1 },
+    "icon": { "type": "string" },
+    "screenshots": { "type": "array", "items": { "type": "string" } },
+    "category": {
+      "type": "string",
+      "enum": ["productivity", "intelligence", "media", "dev-tools", "data", "ai-experiments", "utilities"]
+    },
+    "description": { "type": "string" },
+
+    "upstream": {
+      "type": "object",
+      "required": ["git", "ref"],
+      "additionalProperties": false,
+      "properties": {
+        "git": { "type": "string", "format": "uri" },
+        "ref": {
+          "type": "string",
+          "anyOf": [
+            { "pattern": "^[0-9a-f]{40}$" },
+            { "pattern": "^v\\d+\\.\\d+\\.\\d+(-.+)?$" }
+          ]
+        }
+      }
+    },
+
+    "framework": {
+      "type": "string",
+      "enum": ["vite", "nextjs", "sveltekit", "astro", "streamlit", "gradio", "hugo", "jekyll", "none"]
+    },
+
+    "runtime": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["node", "python", "static"] },
+        "version": { "type": "string" },
+        "arch": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["arm64", "x86_64"] }
+        },
+        "package_manager": {
+          "type": "string",
+          "enum": ["auto", "npm", "pnpm", "yarn", "bun", "pip", "uv", "poetry"]
+        },
+        "dependency_strategy": {
+          "type": "string",
+          "enum": ["frozen", "strict", "best-effort"]
+        }
+      }
+    },
+
+    "env": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "value"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "value": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      }
+    },
+
+    "install":      { "type": "array", "items": { "$ref": "#/$defs/command" } },
+    "postInstall":  { "type": "array", "items": { "$ref": "#/$defs/command" } },
+    "preStart":     { "type": "array", "items": { "$ref": "#/$defs/command" } },
+
+    "start": {
+      "type": "object",
+      "required": ["argv"],
+      "additionalProperties": false,
+      "properties": {
+        "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "shell": { "const": false },
+        "port": { "type": "string", "pattern": "^(detect|fixed:\\d+)$" },
+        "readiness": {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["http", "log-regex"] },
+            "path": { "type": "string" },
+            "regex": { "type": "string" },
+            "timeout_seconds": { "type": "number", "minimum": 1, "maximum": 600 }
+          }
+        }
+      }
+    },
+
+    "surface": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "const": "web" },
+        "preview_name": { "type": "string" }
+      }
+    },
+
+    "dev": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hmr": { "type": "string", "enum": ["vite", "next", "streamlit", "gradio", "watcher", "none"] },
+        "watch": { "type": "array", "items": { "type": "string" } },
+        "editable": { "type": "boolean" },
+        "restart_on": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "permissions": {
+      "type": "object",
+      "required": ["network", "filesystem"],
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "object",
+          "required": ["outbound", "inbound"],
+          "additionalProperties": false,
+          "properties": {
+            "outbound": { "type": "boolean" },
+            "inbound":  { "type": "boolean" }
+          }
+        },
+        "filesystem": { "const": "app-private" },
+        "os8_capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" },
+              "required": { "type": "boolean" },
+              "prompt": { "type": "string" },
+              "pattern": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "memory_limit_mb": { "type": "number", "minimum": 0 },
+        "gpu": { "type": "string", "enum": ["required", "optional", "none"] },
+        "disk_mb": { "type": "number", "minimum": 0 }
+      }
+    },
+
+    "legal": {
+      "type": "object",
+      "required": ["license", "commercial_use"],
+      "additionalProperties": false,
+      "properties": {
+        "license": { "type": "string" },
+        "commercial_use": {
+          "type": "string",
+          "enum": ["unrestricted", "restricted", "prohibited"]
+        },
+        "notes": { "type": "string" }
+      }
+    },
+
+    "review": {
+      "type": "object",
+      "required": ["channel"],
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "type": "string",
+          "enum": ["verified", "community", "developer-import"]
+        },
+        "reviewed_at": { "type": "string" },
+        "reviewer":    { "type": "string" },
+        "risk":        { "type": "string", "enum": ["low", "medium", "high"] }
+      }
+    },
+
+    "allow_package_scripts": { "type": "boolean" }
+  },
+
+  "$defs": {
+    "command": {
+      "type": "object",
+      "required": ["argv"],
+      "additionalProperties": false,
+      "properties": {
+        "argv": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "shell": { "const": false }
+      }
+    }
+  }
+}

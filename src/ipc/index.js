@@ -26,6 +26,7 @@ const registerAgentsHandlers = require('./agents');
 const registerMcpHandlers = require('./mcp');
 const registerAccountHandlers = require('./account');
 const registerOnboardingHandlers = require('./onboarding');
+const registerAppStoreHandlers = require('./app-store');
 
 // Cleanup functions returned by handlers
 let cleanupFunctions = {};
@@ -76,6 +77,7 @@ function registerAllHandlers(deps) {
 
   registerAccountHandlers(deps);
   registerOnboardingHandlers(deps);
+  registerAppStoreHandlers(deps);
 
   cleanupFunctions = {
     ...previewCleanup,
