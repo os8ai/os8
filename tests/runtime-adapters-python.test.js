@@ -1,10 +1,9 @@
 /**
  * PR 2.1 — PythonRuntimeAdapter unit tests.
  *
- * Live install/start coverage (Streamlit, Gradio, ComfyUI) is gated behind
- * `OS8_PYTHON_LIVE_TEST=1` to avoid pulling PyTorch wheels in CI; PR 2.2's
- * smoke test (`tests/e2e/streamlit-proxy-smoke.test.js`) covers the
- * end-to-end Streamlit-through-proxy path under the same gate.
+ * Live install/start coverage for Streamlit/Gradio/ComfyUI lives in
+ * PR 2.2's e2e smoke test (tests/e2e/streamlit-proxy-smoke.test.js)
+ * gated behind `OS8_STREAMLIT_SMOKE=1`.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -343,16 +342,6 @@ describe('PythonRuntimeAdapter — start/stop integration', () => {
   }, 15_000);
 });
 
-// ── Live Python tests, gated by env flag ─────────────────────────────────────
-//
-// These exercise the Streamlit + Gradio install + start path end-to-end
-// against real PyPI. Set OS8_PYTHON_LIVE_TEST=1 to opt in.
-const LIVE = process.env.OS8_PYTHON_LIVE_TEST === '1';
-
-describe.skipIf(!LIVE)('PythonRuntimeAdapter — live Streamlit install (network)', () => {
-  it('installs streamlit and serves at PORT', async () => {
-    // Implementation deferred to PR 2.2's e2e smoke test which runs the full
-    // proxy gate. Stub here keeps the task list visible.
-    expect(true).toBe(true);
-  });
-});
+// Live Streamlit install + start coverage is provided by PR 2.2's
+// e2e smoke test (tests/e2e/streamlit-proxy-smoke.test.js), which uses
+// the same uv-managed venv path the production adapter takes.
