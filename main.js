@@ -455,6 +455,15 @@ app.whenReady().then(async () => {
 
   createWindow();
 
+  // PR 1.26: cross-device install polling. Inert when not signed in or
+  // when os8.ai's pending-installs endpoint isn't reachable yet.
+  try {
+    const PendingInstallsPoller = require('./src/services/pending-installs-poller');
+    PendingInstallsPoller.start(db, mainWindow);
+  } catch (e) {
+    console.warn('[main] PendingInstallsPoller start failed:', e.message);
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -477,6 +486,11 @@ app.on('window-all-closed', async () => {
 
   // Stop the job scheduler
   JobSchedulerService.stop();
+
+  // PR 1.26: stop cross-device polling
+  try {
+    require('./src/services/pending-installs-poller').stop();
+  } catch (_) { /* never started — nothing to stop */ }
 
   // Stop external app processes before the server shuts down so any
   // in-flight requests they made don't error out mid-handshake.
