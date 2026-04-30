@@ -387,6 +387,38 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // POST /api/apps/:id/dev-mode (PR 1.22) — toggle dev mode for an external
+  // app. When ON, the next process start wires the chokidar watcher per
+  // manifest.dev.watch (PR 1.11b). The toggle persists to apps.dev_mode.
+  router.post('/:id/dev-mode', express.json(), async (req, res) => {
+    try {
+      const enabled = !!(req.body && req.body.enabled);
+      const app = AppService.setDevMode(db, req.params.id, enabled);
+
+      // If the process is currently running, restart it so the watcher is
+      // re-installed in the desired state. Cheap and obvious — beats a
+      // late-binding "rebuild watcher" path that has to handle in-flight
+      // edits during the swap.
+      const APR = require('../services/app-process-registry').get();
+      if (APR.get(app.id)) {
+        const ReverseProxyService = require('../services/reverse-proxy');
+        await APR.stop(app.id, { reason: 'dev-mode-toggle' });
+        ReverseProxyService.unregister(app.slug);
+        const entry = await APR.start(app.id, { devMode: enabled });
+        ReverseProxyService.register(app.slug, app.id, entry.port);
+      }
+
+      res.json({
+        id: app.id,
+        slug: app.slug,
+        devMode: !!app.dev_mode,
+      });
+    } catch (err) {
+      console.error('[Apps API] dev-mode error:', err.message);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // POST /api/apps/:id/processes/stop — stop the dev server + unregister
   // the proxy. Used by tab-close and "Stop" in the dev mode panel (PR 1.22).
   router.post('/:id/processes/stop', async (req, res) => {

@@ -191,6 +191,20 @@ const AppService = {
     return this.getById(db, id);
   },
 
+  // PR 1.22 — toggle apps.dev_mode for an external app. The runtime watcher
+  // is wired into AppProcessRegistry by the start path; toggling at runtime
+  // restarts the process so the watcher is re-installed (cheap and obvious).
+  setDevMode(db, id, enabled) {
+    const app = this.getById(db, id);
+    if (!app) throw new Error(`app ${id} not found`);
+    if (app.app_type !== 'external') {
+      throw new Error('dev_mode is only meaningful for external apps');
+    }
+    db.prepare(`UPDATE apps SET dev_mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(enabled ? 1 : 0, id);
+    return this.getById(db, id);
+  },
+
   // Stable, content-uniqueness-aware slug generator. Returns `baseSlug` if
   // free; otherwise `baseSlug-2`, `baseSlug-3`, ... Used by createExternal so
   // multiple installs of the same app get distinct subdomains.

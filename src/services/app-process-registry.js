@@ -41,7 +41,9 @@ class AppProcessRegistry {
     this.getOS8Port = getOS8Port;
     this._processes = new Map();   // appId -> entry
     this._reaperTimer = null;
-    this.idleMs = DEFAULT_IDLE_MS;
+    // PR 1.22: idle timeout is settings-driven. Settings.get returns null
+    // when missing — fall back to the 30 min default.
+    this.idleMs = readIdleSetting(db) ?? DEFAULT_IDLE_MS;
   }
 
   setIdleTimeout(ms) {
@@ -221,6 +223,24 @@ class AppProcessRegistry {
         s.close(() => resolve(p));
       });
     });
+  }
+}
+
+// Read the idle-timeout from the settings table. `null` means "not set;
+// use the default". `0` (or negative) means "never reap" — the reaper
+// loop's keepRunning bypass logic doesn't help here because it's per-app,
+// so we shape the value as-if the user set Infinity.
+function readIdleSetting(db) {
+  try {
+    const row = db.prepare(
+      `SELECT value FROM settings WHERE key = 'external_app_idle_timeout_ms'`
+    ).get();
+    if (!row?.value) return null;
+    const n = Number(row.value);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n === 0 ? Number.MAX_SAFE_INTEGER : n;
+  } catch (_) {
+    return null;
   }
 }
 
