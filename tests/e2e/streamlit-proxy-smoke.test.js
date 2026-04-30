@@ -126,6 +126,7 @@ function spawnStreamlit(streamlitBin, port) {
     '--server.enableCORS=false',
     '--server.enableXsrfProtection=false',
     '--server.headless=true',
+    '--server.runOnSave=true',
     '--browser.gatherUsageStats=false',
   ], {
     cwd: FIXTURE_DIR,
