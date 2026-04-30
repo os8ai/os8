@@ -231,6 +231,38 @@ function scheduleCatalogSync() {
   }, msUntilSync);
 }
 
+// App Store catalog daily sync (PR 1.3). Same 4am window as the skill
+// catalog — concurrent traffic to a static-cache os8.ai endpoint is fine.
+let appCatalogSyncTimer = null;
+function scheduleAppCatalogSync() {
+  if (appCatalogSyncTimer) clearTimeout(appCatalogSyncTimer);
+
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(CATALOG_SYNC_HOUR, 0, 0, 0);
+  if (now >= target) target.setDate(target.getDate() + 1);
+  const msUntilSync = target.getTime() - now.getTime();
+
+  console.log(`[AppCatalog] Scheduled sync at ${CATALOG_SYNC_HOUR}am local time (in ${Math.round(msUntilSync / 3600000)}h)`);
+
+  appCatalogSyncTimer = setTimeout(async () => {
+    console.log(`[AppCatalog] ${CATALOG_SYNC_HOUR}am sync triggered`);
+    try {
+      const AppCatalogService = require('./services/app-catalog');
+      const r = await AppCatalogService.sync(db, { channel: 'verified' });
+      if (r.alarms?.length > 0) {
+        console.warn('[AppCatalog] Sync alarms:', r.alarms.join('; '));
+      } else {
+        console.log(`[AppCatalog] Sync: +${r.added} updated:${r.updated} -${r.removed}`);
+      }
+    } catch (e) {
+      console.warn('[AppCatalog] Scheduled sync failed:', e.message);
+    }
+    scheduleAppCatalogSync();
+  }, msUntilSync);
+  appCatalogSyncTimer.unref?.();
+}
+
 // Generate call URL (uses tunnel URL if configured, otherwise localhost)
 function getCallUrl(callId, token) {
   const tunnelUrl = db ? SettingsService.get(db, 'tunnelUrl') : null;
@@ -907,6 +939,29 @@ async function startServer(port = null, database = null) {
 
             // Schedule daily catalog sync at 4am
             scheduleCatalogSync();
+
+            // App Store catalog (PR 1.3) — runs in parallel with the skill
+            // catalog. Seed from bundled snapshot, then sync verified
+            // channel from os8.ai (best-effort; logs warnings on failure).
+            try {
+              const AppCatalogService = require('./services/app-catalog');
+              const seeded = AppCatalogService.seedFromSnapshot(db);
+              if (seeded > 0) {
+                console.log(`[AppCatalog] Seeded ${seeded} entries from snapshot`);
+              }
+              AppCatalogService.sync(db, { channel: 'verified' })
+                .then(r => {
+                  if (r.alarms && r.alarms.length > 0) {
+                    console.warn('[AppCatalog] Startup sync alarms:', r.alarms.join('; '));
+                  } else if (r.synced > 0 || r.removed > 0) {
+                    console.log(`[AppCatalog] Sync: +${r.added} updated:${r.updated} -${r.removed}`);
+                  }
+                })
+                .catch(e => console.warn('[AppCatalog] Startup sync error:', e.message));
+              scheduleAppCatalogSync();
+            } catch (e) {
+              console.warn('[AppCatalog] Init error:', e.message);
+            }
           } catch (e) {
             console.warn('[Startup] Skills sync error:', e.message);
           }
