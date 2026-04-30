@@ -387,6 +387,19 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // POST /api/apps/:id/uninstall (PR 1.24). Body: { deleteData: bool }.
+  // Default keeps blob/db/secrets so reinstall can offer "restore data."
+  router.post('/:id/uninstall', express.json(), async (req, res) => {
+    try {
+      const deleteData = !!(req.body && req.body.deleteData);
+      const result = await AppService.uninstall(db, req.params.id, { deleteData });
+      res.json(result);
+    } catch (err) {
+      console.error('[Apps API] uninstall error:', err.message);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // GET /api/apps/:id/git/check (PR 1.23) — inspect working-tree state on
   // dev-mode activation. Returns { kind: 'clean' | 'dirty', branch, status,
   // untracked }.

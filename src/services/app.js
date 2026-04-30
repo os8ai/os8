@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { APPS_DIR, BLOB_DIR, ICONS_DIR } = require('../config');
+const { APPS_DIR, BLOB_DIR, ICONS_DIR, CONFIG_DIR } = require('../config');
 const { generateId, generateSlug } = require('../utils');
 const { scaffoldFromTemplate } = require('../templates/loader');
 const {
@@ -189,6 +189,62 @@ const AppService = {
     }
 
     return this.getById(db, id);
+  },
+
+  // PR 1.24 — uninstall an external app.
+  //
+  // Tiered: by default the source tree is removed but blob storage,
+  // per-app SQLite, and per-app secrets are preserved (the user can
+  // change their mind without losing data). With { deleteData: true },
+  // everything goes — irreversible.
+  //
+  // Sets apps.status='uninstalled' rather than deleting the row so
+  // PR 1.16's reinstall path can detect the orphan and offer a
+  // "restore previous data" checkbox in the install plan modal.
+  async uninstall(db, appId, { deleteData = false } = {}) {
+    const app = this.getById(db, appId);
+    if (!app) throw new Error(`app ${appId} not found`);
+    if (app.app_type !== 'external') {
+      throw new Error('only external apps support uninstall');
+    }
+
+    // 1. Stop the dev server + unregister the proxy. Best-effort: a missing
+    //    registry entry just means the app wasn't running.
+    try {
+      const APR = require('./app-process-registry').get();
+      if (APR.get(appId)) await APR.stop(appId, { reason: 'uninstall' });
+    } catch (_) { /* registry not initialized — nothing to stop */ }
+    try {
+      require('./reverse-proxy').unregister(app.slug);
+    } catch (_) { /* proxy module not loaded — nothing to unregister */ }
+
+    // 2. Remove the source tree.
+    const appDir = path.join(APPS_DIR, appId);
+    if (fs.existsSync(appDir)) {
+      fs.rmSync(appDir, { recursive: true, force: true });
+    }
+
+    // 3. Optionally remove per-app data.
+    if (deleteData) {
+      const blobDir = path.join(BLOB_DIR, appId);
+      if (fs.existsSync(blobDir)) {
+        fs.rmSync(blobDir, { recursive: true, force: true });
+      }
+      // Per-app SQLite (created lazily by AppDbService on first execute).
+      const dbPath = path.join(CONFIG_DIR, 'app_db', `${appId}.db`);
+      if (fs.existsSync(dbPath)) {
+        try { fs.unlinkSync(dbPath); }
+        catch (e) { console.warn(`[AppService.uninstall] db unlink: ${e.message}`); }
+      }
+      db.prepare('DELETE FROM app_env_variables WHERE app_id = ?').run(appId);
+    }
+
+    // 4. Mark uninstalled (preserves the row for orphan detection).
+    db.prepare(
+      `UPDATE apps SET status = 'uninstalled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(appId);
+
+    return { ok: true, appId, dataDeleted: !!deleteData };
   },
 
   // PR 1.22 — toggle apps.dev_mode for an external app. The runtime watcher
