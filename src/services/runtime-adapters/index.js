@@ -25,5 +25,6 @@ function listKinds() {
 
 // Register the v1 adapters at module load.
 register(require('./node'));
+register(require('./python'));
 
 module.exports = { register, getAdapter, listKinds };
