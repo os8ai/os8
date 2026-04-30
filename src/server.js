@@ -713,10 +713,17 @@ async function createServer() {
     console.log('Core not ready, using static file serving');
   }
 
+  // App Store: server-side capability enforcement (PR 1.7) — must mount
+  // BEFORE the reverse proxy, so /_os8/api/* on the subdomain is rewritten
+  // to /api/apps/<id>/* and forwarded to the existing app-blob/app-db
+  // routers (which run with `req.callerAppId` set). Subdomain traffic that
+  // isn't /_os8/api/* falls through to the proxy below.
+  const { scopedApiMiddleware } = require('./services/scoped-api-surface');
+  app.use(scopedApiMiddleware(db));
+
   // App Store: subdomain reverse proxy for external apps. Dispatches on the
   // request's Host header — bare `localhost:8888` falls through unchanged so
-  // native apps and the OS8 shell are untouched. PR 1.7's scopedApiMiddleware
-  // for `<slug>.localhost:8888/_os8/api/*` mounts here too once it lands.
+  // native apps and the OS8 shell are untouched.
   const ReverseProxyService = require('./services/reverse-proxy');
   app.use(ReverseProxyService.middleware());
 
