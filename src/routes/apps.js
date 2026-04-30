@@ -357,6 +357,55 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // External-app process lifecycle (PR 1.19).
+  // POST /api/apps/:id/processes/start — start the dev server, register
+  // the proxy, return the URL the BrowserView should load.
+  router.post('/:id/processes/start', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+
+      const APR = require('../services/app-process-registry').get();
+      const ReverseProxyService = require('../services/reverse-proxy');
+
+      const entry = await APR.start(app.id);
+      ReverseProxyService.register(app.slug, app.id, entry.port);
+
+      const os8Port = require('../server').getPort();
+      res.json({
+        url: `http://${app.slug}.localhost:${os8Port}/?__os8_app_id=${encodeURIComponent(app.id)}`,
+        slug: app.slug,
+        port: os8Port,
+        upstreamPort: entry.port,
+      });
+    } catch (err) {
+      console.error('[Apps API] processes/start error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/processes/stop — stop the dev server + unregister
+  // the proxy. Used by tab-close and "Stop" in the dev mode panel (PR 1.22).
+  router.post('/:id/processes/stop', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+
+      const APR = require('../services/app-process-registry').get();
+      const ReverseProxyService = require('../services/reverse-proxy');
+
+      await APR.stop(app.id);
+      ReverseProxyService.unregister(app.slug);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[Apps API] processes/stop error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

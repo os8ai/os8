@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld('os8', {
   // Preview - Multi-view support (appId required for all operations)
   preview: {
     create: (appId) => ipcRenderer.invoke('preview:create', appId),
+    createExternal: (appId, localSlug) =>
+      ipcRenderer.invoke('preview:create-external', appId, localSlug),
     destroy: (appId) => ipcRenderer.invoke('preview:destroy', appId),
     destroyAll: () => ipcRenderer.invoke('preview:destroy-all'),
     setUrl: (appId, url) => ipcRenderer.invoke('preview:set-url', appId, url),
