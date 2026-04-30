@@ -810,8 +810,10 @@ async function startServer(port = null, database = null) {
 
         // App Store: WebSocket pass-through for external-app HMR. Dispatches
         // on Host header — bare localhost upgrades fall through to OS8's own
-        // WS handlers (voice, TTS, call) attached above.
-        ReverseProxyService.attachUpgradeHandler(server);
+        // WS handlers (voice, TTS, call) attached above. Re-require here
+        // because the const above lives in startServer's outer block, which
+        // isn't this listen-callback's scope.
+        require('./services/reverse-proxy').attachUpgradeHandler(server);
 
         // Auto-start services after a short delay
         setTimeout(() => {
