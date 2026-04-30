@@ -554,6 +554,10 @@ async function createServer() {
   const VaultGraphService = require('./services/vault-graph');
   app.use('/api/vault', createVaultRouter(db, { VaultService, VaultIndexerService, VaultGraphService }));
 
+  // App Store routes (install pipeline; PR 1.5 ships clone + state machine)
+  const createAppStoreRouter = require('./routes/app-store');
+  app.use('/api/app-store', createAppStoreRouter(db));
+
   // Call page route - renders mobile-first call UI
   app.get('/call/:callId', (req, res) => {
     const { callId } = req.params;
