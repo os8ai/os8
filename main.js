@@ -314,6 +314,15 @@ app.whenReady().then(async () => {
   // Start the Express server with auto-assigned port (pass db for slug->id lookup)
   await startServer(null, db);
 
+  // External-app process lifecycle. Initialized after the server is up so
+  // getPort() returns a real value when the registry composes OS8_API_BASE.
+  try {
+    const APR = require('./src/services/app-process-registry');
+    APR.init({ db, getOS8Port: getPort });
+  } catch (e) {
+    console.warn('[main] AppProcessRegistry init failed:', e.message);
+  }
+
   // NOTE: Incomplete agent cleanup moved to POST /api/agents handler.
   // Running it on startup would delete agents the user is actively setting up
   // if OS8 restarts mid-setup.
@@ -407,6 +416,13 @@ app.on('window-all-closed', async () => {
 
   // Stop the job scheduler
   JobSchedulerService.stop();
+
+  // Stop external app processes before the server shuts down so any
+  // in-flight requests they made don't error out mid-handshake.
+  try {
+    const APR = require('./src/services/app-process-registry');
+    await APR.get().stopAll();
+  } catch (_) { /* registry not initialized — nothing to stop */ }
 
   // Stop the server
   await stopServer();
