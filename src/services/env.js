@@ -15,7 +15,20 @@ const EnvService = {
     return db.prepare('SELECT * FROM env_variables WHERE key = ?').get(key);
   },
 
-  set(db, key, value, description = null) {
+  set(db, key, value, optsOrDescription = null) {
+    // Backwards-compat: third arg may be a string (legacy) or an opts object
+    // `{ appId, description }`. When `appId` is set, write to `app_env_variables`
+    // instead of the global `env_variables` table.
+    let description = null;
+    let appId = null;
+    if (typeof optsOrDescription === 'string') {
+      description = optsOrDescription;
+    } else if (optsOrDescription && typeof optsOrDescription === 'object') {
+      appId = optsOrDescription.appId || null;
+      description = optsOrDescription.description ?? null;
+    }
+    if (appId) return EnvService._setForApp(db, appId, key, value, description);
+
     const existing = db.prepare('SELECT id FROM env_variables WHERE key = ?').get(key);
     if (existing) {
       db.prepare('UPDATE env_variables SET value = ?, description = ? WHERE key = ?')
@@ -25,6 +38,37 @@ const EnvService = {
       db.prepare('INSERT INTO env_variables (id, key, value, encrypted, description) VALUES (?, ?, ?, 0, ?)')
         .run(id, key, value, description);
     }
+  },
+
+  _setForApp(db, appId, key, value, description) {
+    const existing = db.prepare(
+      'SELECT id FROM app_env_variables WHERE app_id = ? AND key = ?'
+    ).get(appId, key);
+    if (existing) {
+      db.prepare(
+        'UPDATE app_env_variables SET value = ?, description = ? WHERE id = ?'
+      ).run(value, description, existing.id);
+    } else {
+      const id = generateId();
+      db.prepare(
+        'INSERT INTO app_env_variables (id, app_id, key, value, description) VALUES (?, ?, ?, ?, ?)'
+      ).run(id, appId, key, value, description);
+    }
+  },
+
+  getAllForApp(db, appId) {
+    const rows = db.prepare(
+      'SELECT key, value FROM app_env_variables WHERE app_id = ?'
+    ).all(appId);
+    const obj = {};
+    rows.forEach(r => { obj[r.key] = r.value; });
+    return obj;
+  },
+
+  deleteForApp(db, appId, key) {
+    db.prepare(
+      'DELETE FROM app_env_variables WHERE app_id = ? AND key = ?'
+    ).run(appId, key);
   },
 
   delete(db, key) {
