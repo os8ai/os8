@@ -2,9 +2,9 @@
  * PR 2.5 — DockerRuntimeAdapter unit tests.
  *
  * The adapter shells out to `docker` for everything. These tests stub
- * the spawn call via the _internal.spawnPromise hook to assert argv shape
- * without requiring a Docker daemon. Live coverage is gated behind
- * OS8_DOCKER_LIVE_TEST=1 and pulls a small public image (nginx:alpine).
+ * the spawn call via the _internal._setSpawn hook to assert argv shape
+ * without requiring a Docker daemon. Live pull/run/stop coverage comes
+ * from PR 2.4's OpenWebUI manifest installing end-to-end.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -222,11 +222,8 @@ describe('DockerRuntimeAdapter — stop is a no-op for non-docker info', () => {
   });
 });
 
-// ── Live tests gated by env flag ────────────────────────────────────────────
-const LIVE = process.env.OS8_DOCKER_LIVE_TEST === '1';
-
-describe.skipIf(!LIVE)('DockerRuntimeAdapter — live nginx pull/run/stop', () => {
-  it('pulls nginx:alpine and serves a 200 at /', async () => {
-    expect(true).toBe(true);   // implementation deferred — see PR 2.4 OpenWebUI smoke
-  });
-});
+// Live coverage of pull/run/stop is exercised via PR 2.4's OpenWebUI
+// catalog manifest installing end-to-end against a real Docker daemon.
+// No standalone live test here — running `docker pull` in Vitest CI
+// would couple this suite to network + daemon availability without
+// adding signal beyond what the PR 2.4 install path already provides.
