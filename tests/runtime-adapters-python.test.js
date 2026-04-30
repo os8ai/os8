@@ -193,7 +193,8 @@ describe('PythonRuntimeAdapter — framework defaults', () => {
       'streamlit', 'run', '{{APP_DIR}}/app.py',
       '--server.port={{PORT}}', '--server.address=127.0.0.1',
       '--server.enableCORS=false', '--server.enableXsrfProtection=false',
-      '--server.headless=true', '--browser.gatherUsageStats=false',
+      '--server.headless=true', '--server.runOnSave=true',
+      '--browser.gatherUsageStats=false',
     ]);
     expect(out.start.readiness).toEqual({
       type: 'log-regex',
