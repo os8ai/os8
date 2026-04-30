@@ -18,6 +18,7 @@ const execAsync = promisify(exec);
 const AnthropicSDK = require('./anthropic-sdk');
 const AIRegistryService = require('./ai-registry');
 const RoutingService = require('./routing');
+const { Shared, LLMReviewError } = require('./security-review-shared');
 
 // File extensions included in security review (executable/instructional)
 const REVIEW_EXTENSIONS = new Set([
@@ -109,29 +110,25 @@ class SkillReviewService {
       // Get trust signals from catalog
       const trustSignals = this._getTrustSignals(db, cap);
 
-      // Build prompt and call LLM
+      // Build prompt and call LLM via the shared helper. Skill-specific
+      // field defaulting still happens in `_finalizeReport` below.
       const reviewPrompt = this._buildReviewPrompt(files, installSteps, trustSignals);
 
-      const client = AnthropicSDK.getClient(db);
-      if (!client) throw new Error('Anthropic API key not configured');
-
-      const claudeModels = AIRegistryService.getClaudeModelMap(db);
-      const resolved = RoutingService.resolve(db, 'planning');
-      const model = claudeModels[resolved.modelArg] || claudeModels['sonnet'] || 'claude-sonnet-4-5-20250929';
-
-      const response = await client.messages.create({
-        model,
-        max_tokens: 4096,
-        system: REVIEW_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: reviewPrompt }]
-      });
-
-      const text = response.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('');
-
-      const report = this._parseReviewResponse(text);
+      let parsed;
+      try {
+        parsed = await Shared.runReview(db, {
+          systemPrompt: REVIEW_SYSTEM_PROMPT,
+          userMessage: reviewPrompt,
+        });
+      } catch (e) {
+        if (e instanceof LLMReviewError) {
+          console.warn('[SkillReview] Failed to parse review response:', e.message);
+          parsed = null;
+        } else {
+          throw e;
+        }
+      }
+      const report = this._finalizeReport(parsed);
 
       // Store result
       db.prepare(`
@@ -468,39 +465,11 @@ class SkillReviewService {
   }
 
   /**
-   * Parse LLM response into structured report.
+   * Apply skill-specific field defaulting to the parsed LLM JSON.
+   * `parsed` is null when the helper rejected the model output as non-JSON.
    */
-  static _parseReviewResponse(text) {
-    try {
-      // Extract JSON from potential markdown code blocks
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) throw new Error('No JSON found in response');
-
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      // Validate and normalize
-      const validRiskLevels = ['low', 'medium', 'high'];
-      const riskLevel = validRiskLevels.includes(parsed.riskLevel) ? parsed.riskLevel : 'medium';
-
-      const findings = Array.isArray(parsed.findings)
-        ? parsed.findings.map(f => ({
-            severity: ['info', 'warning', 'critical'].includes(f.severity) ? f.severity : 'info',
-            category: f.category || 'other',
-            file: f.file || null,
-            line: f.line || null,
-            description: f.description || '',
-            snippet: f.snippet || null
-          }))
-        : [];
-
-      return {
-        riskLevel,
-        findings,
-        trustAssessment: parsed.trustAssessment || {},
-        summary: parsed.summary || 'Review completed.'
-      };
-    } catch (err) {
-      console.warn('[SkillReview] Failed to parse review response:', err.message);
+  static _finalizeReport(parsed) {
+    if (!parsed) {
       return {
         riskLevel: 'medium',
         findings: [{
@@ -515,6 +484,27 @@ class SkillReviewService {
         summary: 'Review response could not be parsed. Manual review recommended.'
       };
     }
+
+    const validRiskLevels = ['low', 'medium', 'high'];
+    const riskLevel = validRiskLevels.includes(parsed.riskLevel) ? parsed.riskLevel : 'medium';
+
+    const findings = Array.isArray(parsed.findings)
+      ? parsed.findings.map(f => ({
+          severity: ['info', 'warning', 'critical'].includes(f.severity) ? f.severity : 'info',
+          category: f.category || 'other',
+          file: f.file || null,
+          line: f.line || null,
+          description: f.description || '',
+          snippet: f.snippet || null
+        }))
+      : [];
+
+    return {
+      riskLevel,
+      findings,
+      trustAssessment: parsed.trustAssessment || {},
+      summary: parsed.summary || 'Review completed.'
+    };
   }
 }
 

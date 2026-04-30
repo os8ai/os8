@@ -99,10 +99,19 @@ async function gitHead(dir) {
 
 // --- the orchestrator --------------------------------------------------------
 
+// Lazily-required so the installer module can load without the review
+// service in place (early integration tests).
+let AppReviewService = null;
+function getAppReviewService() {
+  if (!AppReviewService) AppReviewService = require('./app-review');
+  return AppReviewService;
+}
+
 const AppInstaller = {
-  // Test/PR 1.6 hook — PR 1.6 sets this to AppReviewService.review.
-  // Must accept (db, stagingDir, manifest) → Promise<reviewReport>.
-  _review: null,
+  // PR 1.6 plug-in. Defaults to a thunk that calls AppReviewService.review;
+  // tests override by assigning `_review = null` or a mock.
+  _review: async (db, stagingDir, manifest, opts) =>
+    getAppReviewService().review(db, stagingDir, manifest, opts),
 
   // Test/PR 1.16 hook — PR 1.16 sets this to the install pipeline.
   _installPostApproval: null,
@@ -173,14 +182,17 @@ const AppInstaller = {
     });
     publish(jobId, { kind: 'status', status: 'reviewing', job });
 
-    // 4. Run security review. PR 1.6 plugs in AppReviewService; PR 1.5 ships
-    //    a stub so the state machine still advances.
+    // 4. Run security review (PR 1.6). Tests can null out `_review` to skip;
+    //    in production it dispatches to AppReviewService.review.
     const reviewReport = AppInstaller._review
-      ? await AppInstaller._review(db, stagingDir, entry.manifest)
+      ? await AppInstaller._review(db, stagingDir, entry.manifest, {
+          channel: job.channel,
+          resolvedCommit: job.upstream_resolved_commit,
+        })
       : {
           riskLevel: 'unknown',
           findings: [],
-          summary: 'review service not yet wired (PR 1.5 stub — PR 1.6 plugs in)',
+          summary: 'review service disabled by test override',
         };
 
     job = InstallJobs.transition(db, jobId, {
