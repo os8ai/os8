@@ -681,6 +681,13 @@ async function createServer() {
     console.log('Core not ready, using static file serving');
   }
 
+  // App Store: subdomain reverse proxy for external apps. Dispatches on the
+  // request's Host header — bare `localhost:8888` falls through unchanged so
+  // native apps and the OS8 shell are untouched. PR 1.7's scopedApiMiddleware
+  // for `<slug>.localhost:8888/_os8/api/*` mounts here too once it lands.
+  const ReverseProxyService = require('./services/reverse-proxy');
+  app.use(ReverseProxyService.middleware());
+
   // Serve app HTML files with Vite transformation
   // Accepts both appId and slug for backwards compatibility (will remove slug fallback later)
   app.use('/:identifier', async (req, res, next) => {
@@ -800,6 +807,11 @@ async function startServer(port = null, database = null) {
           state: assistantState
         });
         setupCallStream(server);
+
+        // App Store: WebSocket pass-through for external-app HMR. Dispatches
+        // on Host header — bare localhost upgrades fall through to OS8's own
+        // WS handlers (voice, TTS, call) attached above.
+        ReverseProxyService.attachUpgradeHandler(server);
 
         // Auto-start services after a short delay
         setTimeout(() => {

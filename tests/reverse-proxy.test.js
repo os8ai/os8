@@ -12,6 +12,10 @@ function listen(server, host = '127.0.0.1') {
 }
 
 function close(server) {
+  // Force-close any half-open sockets so server.close() returns promptly.
+  // Tests may leave the proxy with an unclaimed-upgrade socket dangling
+  // (compose-friendly behavior — see "no slug entry matches" test).
+  try { server.closeAllConnections?.(); } catch (_) { /* node <18.2 */ }
   return new Promise(resolve => server.close(() => resolve()));
 }
 
@@ -240,21 +244,30 @@ describe('ReverseProxyService — WebSocket upgrade pass-through', () => {
     expect(messages[1]).toBe('echo:ping');
   });
 
-  it('destroys the socket when no slug entry matches', async () => {
-    // No registration — handshake should fail.
-    const ws = new WebSocket(`ws://unknown.localhost:${proxyPort}/`, {
-      headers: { Host: `unknown.localhost:${proxyPort}` },
-    });
+  it('does not claim WS upgrades when no slug entry matches (compose-friendly)', async () => {
+    // The proxy must NOT destroy the socket when its slug doesn't match —
+    // other upgrade handlers (voice-stream, tts-stream, call-stream) need a
+    // chance to claim the connection. We directly invoke the upgrade event
+    // and verify the proxy doesn't forward it; testing this with a real
+    // WebSocket client would leave a half-open socket that confuses cleanup.
+    let proxyForwarded = false;
+    const origWs = ReverseProxyService._resolveByHost;
+    // Monkey-patch nothing — just run the registered listener once.
 
-    await new Promise(resolve => {
-      let resolved = false;
-      const finish = () => { if (!resolved) { resolved = true; resolve(); } };
-      ws.on('error', finish);
-      ws.on('close', finish);
-      ws.on('unexpected-response', finish);
-      setTimeout(finish, 3000);
-    });
+    const fakeReq = { headers: { host: `unknown.localhost:${proxyPort}` } };
+    const fakeSocket = {
+      destroyed: false,
+      destroy() { this.destroyed = true; },
+      write() { proxyForwarded = true; },
+      end() {},
+      pipe() { proxyForwarded = true; return this; },
+    };
 
-    expect(ws.readyState).not.toBe(WebSocket.OPEN);
+    const listeners = proxyServer.listeners('upgrade');
+    expect(listeners.length).toBeGreaterThanOrEqual(1);
+    listeners[listeners.length - 1](fakeReq, fakeSocket, Buffer.alloc(0));
+
+    expect(fakeSocket.destroyed).toBe(false);
+    expect(proxyForwarded).toBe(false);
   });
 });

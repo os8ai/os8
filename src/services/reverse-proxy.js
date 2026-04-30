@@ -89,13 +89,13 @@ const ReverseProxyService = {
 
   // Wire `server.on('upgrade', ...)` for WebSocket pass-through. Without this,
   // Vite HMR / Next HMR / any WebSocket-based feature would fail at handshake.
+  // Returns early when the Host doesn't match a registered slug so other
+  // upgrade handlers (voice-stream, tts-stream, call-stream) can claim the
+  // connection. Same convention voice-stream.js:30-35 follows.
   attachUpgradeHandler(server) {
     server.on('upgrade', (req, socket, head) => {
       const entry = ReverseProxyService._resolveByHost(req);
-      if (!entry) {
-        socket.destroy();
-        return;
-      }
+      if (!entry) return;   // not ours — let another listener handle it
       _markHttpActive(entry.appId);
       proxy.ws(req, socket, head, { target: `http://127.0.0.1:${entry.port}` });
     });
