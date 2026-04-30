@@ -1,6 +1,27 @@
 const { app, BrowserWindow, ipcMain, session, systemPreferences, powerMonitor, dialog } = require('electron');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
+
+// ─── Per-OS8_HOME single-instance lock (PR 1.2) ─────────────────────────────
+// Scope userData per OS8_HOME so two dev instances with different OS8_HOME
+// values get independent single-instance locks. Electron 40's
+// requestSingleInstanceLock() does NOT take a key argument — userData-dir
+// scoping is the correct mechanism for per-instance isolation.
+const _userDataDir = path.join(
+  process.env.OS8_HOME || path.join(os.homedir(), 'os8'),
+  '.os8-electron-userdata'
+);
+try { app.setPath('userData', _userDataDir); }
+catch (e) { console.warn('[main] setPath userData failed:', e.message); }
+
+if (!app.requestSingleInstanceLock()) {
+  // Another instance with the same OS8_HOME already owns the lock; the
+  // already-running instance's `second-instance` listener (wired below)
+  // will receive any os8:// argv we were launched with.
+  app.quit();
+  return;
+}
 const { initDatabase, AppService, AgentService, scaffoldAssistantApp, TaskService, TasksFileService, EnvService, SettingsService, ClaudeInstructionsService, CoreService, ConnectionsService, PROVIDERS, generateClaudeMd, generateAssistantClaudeMd, APPS_DIR, BLOB_DIR, CORE_DIR } = require('./src/db');
 const { WhisperService, WhisperStreamService, TTSService, TunnelService, JobsFileService, JobSchedulerService, WorkQueue, DataStorageService, McpServerService, McpCatalogService, CapabilityService } = require('./src/services');
 const { startServer, stopServer, restartServer, getAppUrl, getPort, setOAuthCompleteCallback, setAppCreatedCallback, setAppUpdatedCallback, setAgentChangedCallback, setBuildStartedCallback, setBuildCompletedCallback, DEFAULT_PORT } = require('./src/server');
@@ -28,6 +49,30 @@ process.on('unhandledRejection', (reason) => {
 
 let mainWindow;
 let db;
+
+// ─── os8:// protocol handler (PR 1.2) ───────────────────────────────────────
+// Routes os8://install?slug=…&commit=…&channel=…&source=… into the install
+// pipeline. PR 1.18 wires this through the install plan modal; PR 1.2 ships
+// the parsing + lifecycle hooks + Linux .desktop integration.
+const { handleProtocolUrl } = require('./src/services/protocol-handler');
+
+// macOS: open-url fires when the running instance is asked to handle a deeplink.
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleProtocolUrl(url, mainWindow);
+});
+
+// Windows / Linux: second-instance fires in the FIRST instance when a SECOND
+// is launched. argv contains the original launch args of the second instance,
+// including the os8:// URL.
+app.on('second-instance', (_event, argv) => {
+  const url = (argv || []).find(a => typeof a === 'string' && a.startsWith('os8://'));
+  if (url) handleProtocolUrl(url, mainWindow);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
 
 // ============ Shared State ============
 const ptySessions = new Map();
@@ -209,6 +254,12 @@ app.whenReady().then(async () => {
     const { nativeImage } = require('electron');
     app.dock.setIcon(nativeImage.createFromPath(iconPath));
   }
+
+  // Register os8:// scheme. macOS honors this once per build; Windows writes
+  // HKEY_CURRENT_USER registry keys; Linux honors via the .desktop file
+  // (.deb postinst) or the AppImage first-run prompt (PR 1.2 follow-up).
+  try { app.setAsDefaultProtocolClient('os8'); }
+  catch (e) { console.warn('[main] setAsDefaultProtocolClient failed:', e.message); }
 
   // Initialize database
   db = initDatabase();
