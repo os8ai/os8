@@ -23,16 +23,28 @@ const yaml = require('js-yaml');
 const path = require('path');
 const fs = require('fs');
 
-const SCHEMA = JSON.parse(
+const SCHEMA_V1 = JSON.parse(
   fs.readFileSync(path.join(__dirname, '..', 'data', 'appspec-v1.json'), 'utf8')
+);
+const SCHEMA_V2 = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '..', 'data', 'appspec-v2.json'), 'utf8')
 );
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
-const validateSchema = ajv.compile(SCHEMA);
+const validateSchemaV1 = ajv.compile(SCHEMA_V1);
+const validateSchemaV2 = ajv.compile(SCHEMA_V2);
+
+// Back-compat alias used by existing tests / external callers.
+const SCHEMA = SCHEMA_V1;
+const validateSchema = validateSchemaV1;
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,39}$/;
 const SHA_RE  = /^[0-9a-f]{40}$/;
+
+function pickValidator(manifest) {
+  return manifest?.schemaVersion === 2 ? validateSchemaV2 : validateSchemaV1;
+}
 
 function parseManifest(yamlText) {
   const obj = yaml.load(yamlText);
@@ -54,8 +66,9 @@ function parseManifest(yamlText) {
 function validateManifest(manifest, { upstreamResolvedCommit } = {}) {
   const errors = [];
 
-  if (!validateSchema(manifest)) {
-    for (const e of validateSchema.errors || []) {
+  const validate = pickValidator(manifest);
+  if (!validate(manifest)) {
+    for (const e of validate.errors || []) {
       errors.push({
         kind: 'schema',
         path: e.instancePath || e.schemaPath || '/',
@@ -64,10 +77,12 @@ function validateManifest(manifest, { upstreamResolvedCommit } = {}) {
     }
   }
 
-  // V1 invariants — duplicate the schema where the schema already covers,
-  // because manifests with a different schemaVersion may slip past.
-  if (manifest?.runtime?.kind === 'docker') {
-    errors.push({ kind: 'invariant', path: '/runtime/kind', message: 'docker runtime not supported in v1' });
+  // Schema-version-conditional invariants.
+  // v1 rejects docker entirely; v2 un-rejects it (PR 2.5).
+  // Catch the case where the schema picker fell through to v1 because
+  // schemaVersion was missing or invalid AND the manifest tried to use docker.
+  if (manifest?.runtime?.kind === 'docker' && manifest?.schemaVersion !== 2) {
+    errors.push({ kind: 'invariant', path: '/runtime/kind', message: 'docker runtime requires schemaVersion: 2' });
   }
   if (manifest?.surface && manifest.surface.kind !== 'web') {
     errors.push({ kind: 'invariant', path: '/surface/kind', message: 'only surface.kind=web supported in v1' });
@@ -111,8 +126,10 @@ function validateManifest(manifest, { upstreamResolvedCommit } = {}) {
   // Verified channel gates beyond what CI enforces locally — strictly speaking,
   // these are also checked by os8ai/os8-catalog's lockfile-gate.yml CI, but
   // catching them here lets the desktop refuse to install a Verified manifest
-  // that's missing the required `dependency_strategy: frozen`.
-  if (manifest?.review?.channel === 'verified') {
+  // that's missing the required `dependency_strategy: frozen`. Docker
+  // manifests bypass the dependency_strategy gate (the image digest is the
+  // equivalent supply-chain pin).
+  if (manifest?.review?.channel === 'verified' && manifest?.runtime?.kind !== 'docker') {
     if (manifest?.runtime?.dependency_strategy !== 'frozen') {
       errors.push({
         kind: 'invariant',
@@ -120,6 +137,16 @@ function validateManifest(manifest, { upstreamResolvedCommit } = {}) {
         message: 'verified channel requires dependency_strategy: frozen',
       });
     }
+  }
+  // PR 2.5: docker manifests in Verified channel must pin by digest.
+  if (manifest?.review?.channel === 'verified'
+      && manifest?.runtime?.kind === 'docker'
+      && !manifest?.runtime?.image_digest) {
+    errors.push({
+      kind: 'invariant',
+      path: '/runtime/image_digest',
+      message: 'verified channel: docker manifest must pin image by digest (image_digest field)',
+    });
   }
 
   return { ok: errors.length === 0, errors };

@@ -171,19 +171,30 @@ const AppInstaller = {
       throw new Error(`catalog row for ${job.external_slug} lacks upstream.git`);
     }
 
-    // 2. Clone into staging.
+    // 2. Clone into staging — unless the manifest declares runtime.kind: docker,
+    //    in which case the binary artifact is the image and there's no source
+    //    tree to clone. PR 2.5 leaves staging empty for docker manifests; the
+    //    atomic move at step 5 in _runApprove still runs (moves an empty dir).
     const stagingDir = path.join(APPS_STAGING_DIR, jobId);
     if (fs.existsSync(stagingDir)) {
       fs.rmSync(stagingDir, { recursive: true, force: true });
     }
     fs.mkdirSync(stagingDir, { recursive: true });
-    publish(jobId, { kind: 'log', message: `cloning ${entry.manifest.upstream.git}@${job.upstream_resolved_commit}` });
-    await gitClone(entry.manifest.upstream.git, job.upstream_resolved_commit, stagingDir);
 
-    // 3. Verify HEAD matches the declared commit (defense against ref drift).
-    const headSha = await gitHead(stagingDir);
-    if (headSha !== job.upstream_resolved_commit) {
-      throw new Error(`HEAD ${headSha} != declared ${job.upstream_resolved_commit}`);
+    const isDocker = entry.manifest?.runtime?.kind === 'docker';
+    if (isDocker) {
+      publish(jobId, { kind: 'log',
+        message: `runtime.kind=docker; skipping git clone (image: ${entry.manifest?.runtime?.image})` });
+    } else {
+      publish(jobId, { kind: 'log',
+        message: `cloning ${entry.manifest.upstream.git}@${job.upstream_resolved_commit}` });
+      await gitClone(entry.manifest.upstream.git, job.upstream_resolved_commit, stagingDir);
+
+      // 3. Verify HEAD matches the declared commit (defense against ref drift).
+      const headSha = await gitHead(stagingDir);
+      if (headSha !== job.upstream_resolved_commit) {
+        throw new Error(`HEAD ${headSha} != declared ${job.upstream_resolved_commit}`);
+      }
     }
 
     job = InstallJobs.transition(db, jobId, {
@@ -330,8 +341,11 @@ const AppInstaller = {
     publish(jobId, { kind: 'log', message: `moved to ${finalDir}` });
 
     // 6. git init for fork-on-first-edit (PR 1.23 wires the watcher; here
-    //    we just create the user/main branch + .gitignore).
-    await gitInitFork(finalDir, manifest, entry.upstreamResolvedCommit);
+    //    we just create the user/main branch + .gitignore). Docker apps
+    //    have no source tree to fork — skip.
+    if (manifest?.runtime?.kind !== 'docker') {
+      await gitInitFork(finalDir, manifest, entry.upstreamResolvedCommit);
+    }
 
     // 7. CLAUDE.md generation lives in PR 1.21; defensive try/catch so a
     //    missing module doesn't break installs.

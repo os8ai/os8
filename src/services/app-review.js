@@ -351,6 +351,37 @@ const AppReviewService = {
       });
     }
 
+    // PR 2.5: docker-specific static checks.
+    if (manifest?.runtime?.kind === 'docker') {
+      // Verified channel: image MUST be pinned by digest.
+      if (channel === 'verified' && !manifest?.runtime?.image_digest) {
+        findings.push({
+          severity: 'critical', category: 'supply_chain',
+          file: null, line: null,
+          description: 'verified channel: docker manifest must pin image by digest (image_digest field)',
+          snippet: '',
+        });
+      }
+      // Image tag :latest is discouraged even with digest pinning.
+      if (manifest?.runtime?.image && /:latest$/.test(manifest.runtime.image)) {
+        findings.push({
+          severity: 'warning', category: 'supply_chain',
+          file: null, line: null,
+          description: 'docker image tag :latest discouraged — pin to a versioned tag',
+          snippet: manifest.runtime.image,
+        });
+      }
+      // No privileged ports in containers.
+      if (manifest?.runtime?.internal_port < 1024) {
+        findings.push({
+          severity: 'critical', category: 'other',
+          file: null, line: null,
+          description: `internal_port ${manifest.runtime.internal_port} is privileged; use ≥1024`,
+          snippet: '',
+        });
+      }
+    }
+
     // Verified channel: lockfile present and matches declared package_manager.
     if (channel === 'verified' && manifest?.runtime?.kind === 'node') {
       const declared = manifest?.runtime?.package_manager;

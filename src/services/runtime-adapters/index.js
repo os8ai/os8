@@ -27,5 +27,6 @@ function listKinds() {
 register(require('./node'));
 register(require('./python'));
 register(require('./static'));
+register(require('./docker'));
 
 module.exports = { register, getAdapter, listKinds };
