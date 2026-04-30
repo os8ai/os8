@@ -372,7 +372,13 @@ function createAppsRouter(db, deps) {
       const ReverseProxyService = require('../services/reverse-proxy');
 
       const entry = await APR.start(app.id);
-      ReverseProxyService.register(app.slug, app.id, entry.port);
+      // PR 2.3: dispatch on adapter kind. Static apps register a directory
+      // (no upstream port); proxied apps register a port.
+      if (entry?._adapterInfo?._kind === 'static') {
+        ReverseProxyService.registerStatic(app.slug, app.id, entry._adapterInfo._staticDir);
+      } else {
+        ReverseProxyService.register(app.slug, app.id, entry.port);
+      }
 
       const os8Port = require('../server').getPort();
       res.json({
@@ -487,7 +493,11 @@ function createAppsRouter(db, deps) {
         await APR.stop(app.id, { reason: 'dev-mode-toggle' });
         ReverseProxyService.unregister(app.slug);
         const entry = await APR.start(app.id, { devMode: enabled });
-        ReverseProxyService.register(app.slug, app.id, entry.port);
+        if (entry?._adapterInfo?._kind === 'static') {
+          ReverseProxyService.registerStatic(app.slug, app.id, entry._adapterInfo._staticDir);
+        } else {
+          ReverseProxyService.register(app.slug, app.id, entry.port);
+        }
       }
 
       res.json({

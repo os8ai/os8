@@ -21,6 +21,7 @@
  */
 
 const httpProxy = require('http-proxy');
+const express = require('express');
 
 // changeOrigin: false preserves Host so the upstream sees `<slug>.localhost:8888`.
 // Most modern frameworks accept this without further config; the runtime adapter
@@ -42,7 +43,8 @@ proxy.on('error', (err, req, res) => {
   }
 });
 
-const _proxies = new Map();   // localSlug -> { appId, port }
+const _proxies = new Map();         // localSlug -> { appId, port }
+const _staticServers = new Map();   // localSlug -> { appId, appDir, handler }
 
 // Match `<slug>.localhost` or `<slug>.localhost:<port>`. The slug regex matches
 // the manifest's slug rule (spec §3.4) — first char a-z, then a-z0-9-, 2-40 long.
@@ -64,26 +66,63 @@ const ReverseProxyService = {
     _proxies.set(localSlug, { appId, port });
   },
 
+  // PR 2.3 — static-mode bypass. Mounts `express.static(appDir)` for the
+  // app's subdomain. The trust boundary stays the browser origin; the
+  // "bypass" is that OS8 serves the bytes itself rather than proxying to
+  // a separate dev server.
+  registerStatic(localSlug, appId, appDir) {
+    const handler = express.static(appDir, {
+      fallthrough: false,                 // 404 from THIS app, not from OS8
+      index: ['index.html', 'index.htm'],
+      dotfiles: 'deny',                   // never serve .env, .git, etc.
+      setHeaders: (res) => {
+        // Treat as own-origin; don't cache aggressively at dev time.
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      },
+    });
+    _staticServers.set(localSlug, { appId, appDir, handler });
+  },
+
   unregister(localSlug) {
     _proxies.delete(localSlug);
+    _staticServers.delete(localSlug);
+  },
+
+  unregisterStatic(localSlug) {
+    _staticServers.delete(localSlug);
   },
 
   getPort(localSlug) {
     return _proxies.get(localSlug)?.port ?? null;
   },
 
+  getStaticDir(localSlug) {
+    return _staticServers.get(localSlug)?.appDir ?? null;
+  },
+
   has(localSlug) {
-    return _proxies.has(localSlug);
+    return _proxies.has(localSlug) || _staticServers.has(localSlug);
   },
 
   // Express middleware. Dispatches on Host header — bare localhost falls through
-  // to the existing OS8 catch-all via next().
+  // to the existing OS8 catch-all via next(). Static-served apps win over
+  // proxied entries (registration races shouldn't happen in practice — the
+  // install pipeline writes one or the other — but the order is documented).
   middleware() {
     return (req, res, next) => {
-      const entry = ReverseProxyService._resolveByHost(req);
-      if (!entry) return next();
-      _markHttpActive(entry.appId);
-      proxy.web(req, res, { target: `http://127.0.0.1:${entry.port}` });
+      const slug = ReverseProxyService._slugFromHost(req);
+      if (!slug) return next();
+
+      const staticEntry = _staticServers.get(slug);
+      if (staticEntry) {
+        _markHttpActive(staticEntry.appId);
+        return staticEntry.handler(req, res, next);
+      }
+
+      const proxyEntry = _proxies.get(slug);
+      if (!proxyEntry) return next();
+      _markHttpActive(proxyEntry.appId);
+      proxy.web(req, res, { target: `http://127.0.0.1:${proxyEntry.port}` });
     };
   },
 
@@ -92,28 +131,48 @@ const ReverseProxyService = {
   // Returns early when the Host doesn't match a registered slug so other
   // upgrade handlers (voice-stream, tts-stream, call-stream) can claim the
   // connection. Same convention voice-stream.js:30-35 follows.
+  //
+  // Static-served apps don't ship WebSockets (no dev server). If a static
+  // app's page tries to open a WS, we destroy the socket cleanly — manifest
+  // LLM review (PR 2.1's extension) flags `framework_mismatch` for that case.
   attachUpgradeHandler(server) {
     server.on('upgrade', (req, socket, head) => {
-      const entry = ReverseProxyService._resolveByHost(req);
-      if (!entry) return;   // not ours — let another listener handle it
+      const slug = ReverseProxyService._slugFromHost(req);
+      if (!slug) return;       // not ours — let another listener handle it
+
+      if (_staticServers.has(slug)) {
+        try { socket.destroy(); } catch (_) { /* already closed */ }
+        return;
+      }
+
+      const entry = _proxies.get(slug);
+      if (!entry) return;
       _markHttpActive(entry.appId);
       proxy.ws(req, socket, head, { target: `http://127.0.0.1:${entry.port}` });
     });
   },
 
-  // Internal: look up a proxy entry from the request's Host header.
-  // Exported as _resolveByHost so the test suite can exercise host parsing
-  // without spinning up a real Express.
-  _resolveByHost(req) {
+  // Internal: look up a slug from the request's Host header.
+  _slugFromHost(req) {
     const host = (req.headers?.host || '').toLowerCase();
     const m = host.match(SUBDOMAIN_HOST_RE);
     if (!m) return null;
-    return _proxies.get(m[1]) || null;
+    return m[1];
+  },
+
+  // Back-compat: pre-PR-2.3 callers used _resolveByHost to fetch the proxy
+  // entry directly. Keep returning the proxy entry only (static entries
+  // expose a different shape and would break callers).
+  _resolveByHost(req) {
+    const slug = ReverseProxyService._slugFromHost(req);
+    if (!slug) return null;
+    return _proxies.get(slug) || null;
   },
 
   // Test-only: clear the registry. NOT exposed as part of the public API surface.
   _resetForTests() {
     _proxies.clear();
+    _staticServers.clear();
   },
 };
 
