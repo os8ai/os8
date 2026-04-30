@@ -73,10 +73,14 @@ function createAppStoreRouter(db) {
     }
   });
 
-  // PR 1.16 wires the post-approval install pipeline. PR 1.5 ships a 501 so
-  // the route exists at the right path without faking success.
-  router.post('/jobs/:id/approve', (_req, res) => {
-    res.status(501).json({ error: 'approve hook arrives in PR 1.16' });
+  router.post('/jobs/:id/approve', async (req, res) => {
+    try {
+      const { secrets = {} } = req.body || {};
+      const job = await AppInstaller.approve(db, req.params.id, { secrets });
+      res.status(202).json({ jobId: job.id, status: job.status });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   // SSE log stream. Subscribes to AppInstaller events for this jobId and

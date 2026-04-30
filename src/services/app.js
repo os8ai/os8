@@ -177,6 +177,11 @@ const AppService = {
       values.push(updates.iconMode);
     }
 
+    if (updates.status !== undefined) {
+      fields.push('status = ?');
+      values.push(updates.status);
+    }
+
     if (fields.length > 0) {
       fields.push('updated_at = CURRENT_TIMESTAMP');
       values.push(id);
@@ -184,6 +189,55 @@ const AppService = {
     }
 
     return this.getById(db, id);
+  },
+
+  // Stable, content-uniqueness-aware slug generator. Returns `baseSlug` if
+  // free; otherwise `baseSlug-2`, `baseSlug-3`, ... Used by createExternal so
+  // multiple installs of the same app get distinct subdomains.
+  uniqueSlug(db, baseSlug) {
+    if (!db.prepare('SELECT id FROM apps WHERE slug = ?').get(baseSlug)) return baseSlug;
+    let n = 2;
+    while (db.prepare('SELECT id FROM apps WHERE slug = ?').get(`${baseSlug}-${n}`)) n++;
+    return `${baseSlug}-${n}`;
+  },
+
+  // Insert a row for an installed external app. Mirrors the existing
+  // `create()` shape but persists all the catalog/install fields PR 1.1
+  // added. The on-disk app directory is NOT created here — the installer
+  // produces it via atomic move from apps_staging/<jobId>/.
+  createExternal(db, {
+    name, slug, externalSlug, channel, framework,
+    manifestYaml, manifestSha, catalogCommitSha,
+    upstreamDeclaredRef, upstreamResolvedCommit,
+    color = '#6366f1', icon = null, textColor = '#ffffff',
+    statusOverride = 'active',
+  }) {
+    const id = generateId();
+    const blobPath = path.join(BLOB_DIR, id);
+    fs.mkdirSync(blobPath, { recursive: true });
+
+    const maxOrder = db
+      .prepare('SELECT MAX(display_order) AS n FROM apps WHERE status = ?')
+      .get('active');
+    const order = (maxOrder?.n ?? -1) + 1;
+
+    db.prepare(`
+      INSERT INTO apps (
+        id, name, slug, status, display_order, color, icon, text_color, app_type,
+        external_slug, channel, framework, manifest_yaml, manifest_sha,
+        catalog_commit_sha, upstream_declared_ref, upstream_resolved_commit
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, name, slug, statusOverride, order, color, icon, textColor,
+      externalSlug, channel, framework || null, manifestYaml || null, manifestSha || null,
+      catalogCommitSha || null, upstreamDeclaredRef || null, upstreamResolvedCommit || null
+    );
+
+    return {
+      id, name, slug, channel, externalSlug,
+      path: path.join(APPS_DIR, id),
+      blobPath,
+    };
   },
 
   archive(db, id) {

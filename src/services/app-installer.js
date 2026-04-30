@@ -17,10 +17,14 @@
 
 const fs = require('fs');
 const path = require('path');
+const dns = require('node:dns');
+const { promisify } = require('node:util');
 const { spawn } = require('node:child_process');
-const { APPS_STAGING_DIR } = require('../config');
+const { APPS_DIR, APPS_STAGING_DIR } = require('../config');
 const InstallJobs = require('./app-install-jobs');
 const AppCatalogService = require('./app-catalog');
+
+const dnsLookup = promisify(dns.lookup);
 
 // --- pub/sub for job updates -------------------------------------------------
 
@@ -207,6 +211,171 @@ const AppInstaller = {
   },
 
   /**
+   * Approve a job in awaiting_approval. Transitions to `installing`
+   * synchronously (so the route returns a fresh status) and runs the
+   * post-approval pipeline async — clone-then-install-then-atomic-move.
+   *
+   * @param {object} db
+   * @param {string} jobId
+   * @param {{ secrets?: Object, getOS8Port?: () => number }} opts
+   *        getOS8Port lets callers (tests, the route) inject the port
+   *        used to compose OS8_API_BASE; defaults to 8888 when missing.
+   */
+  async approve(db, jobId, { secrets = {}, getOS8Port } = {}) {
+    const current = InstallJobs.get(db, jobId);
+    if (!current) throw new Error('job not found');
+    if (current.status !== 'awaiting_approval') {
+      throw new Error(`job in status ${current.status}; can only approve from awaiting_approval`);
+    }
+    const transitioned = InstallJobs.transition(db, jobId, {
+      from: 'awaiting_approval',
+      to: 'installing',
+    });
+    publish(jobId, { kind: 'status', status: 'installing', job: transitioned });
+
+    setImmediate(() => AppInstaller._runApprove(db, jobId, secrets, { getOS8Port })
+      .catch(async err => {
+        publish(jobId, { kind: 'failed', message: err.message });
+        await AppInstaller._rollbackInstall(db, jobId, err.message);
+      })
+    );
+
+    return transitioned;
+  },
+
+  /**
+   * The post-approval install pipeline. Mints the apps row, writes
+   * secrets, runs the runtime adapter's install, atomically moves
+   * staging→apps, sets up git for fork-on-first-edit, fires
+   * track-install. Failures rollback via _rollbackInstall.
+   */
+  async _runApprove(db, jobId, secrets, { getOS8Port } = {}) {
+    const job = InstallJobs.get(db, jobId);
+    if (!job?.staging_dir) throw new Error('job missing staging_dir');
+
+    const entry = await AppCatalogService.get(db, job.external_slug, { channel: job.channel });
+    if (!entry || !entry.manifest) {
+      throw new Error(`catalog row for ${job.external_slug} missing or has no manifest`);
+    }
+    const manifest = entry.manifest;
+
+    // 1. Mint the apps row UPFRONT with status='installing'. We need its UUID
+    //    to scope per-app secrets (and OS8_APP_ID in sanitized env).
+    const { AppService } = require('./app');
+    const localSlug = AppService.uniqueSlug(db, manifest.slug);
+    const app = AppService.createExternal(db, {
+      name: manifest.name,
+      slug: localSlug,
+      externalSlug: manifest.slug,
+      channel: entry.channel,
+      framework: manifest.framework || null,
+      manifestYaml: entry.manifestYaml,
+      manifestSha: entry.manifestSha,
+      catalogCommitSha: entry.catalogCommitSha,
+      upstreamDeclaredRef: entry.upstreamDeclaredRef,
+      upstreamResolvedCommit: entry.upstreamResolvedCommit,
+      statusOverride: 'installing',
+    });
+    db.prepare('UPDATE app_install_jobs SET app_id = ?, updated_at = ? WHERE id = ?')
+      .run(app.id, new Date().toISOString(), jobId);
+    publish(jobId, { kind: 'log', message: `apps row created (id=${app.id}, slug=${localSlug})` });
+
+    // 2. Save per-app secrets BEFORE running install — some scripts read .env.
+    const EnvService = require('./env');
+    for (const [k, v] of Object.entries(secrets || {})) {
+      const matchingDecl = (manifest.permissions?.secrets || [])
+        .find(s => s.name === k);
+      EnvService.set(db, k, v, {
+        appId: app.id,
+        description: matchingDecl?.prompt || `from install of ${manifest.slug}`,
+      });
+    }
+
+    // 3. Pre-flight DNS check. RFC 6761: macOS / Linux / Win11 resolve
+    //    *.localhost to 127.0.0.1 natively; legacy/AV-restricted Windows
+    //    may not. Failure surfaces a clear error rather than a confusing
+    //    mid-install crash later.
+    await ensureSubdomainResolves(localSlug);
+
+    // 4. Run the runtime adapter's install in the staging directory.
+    const { getAdapter } = require('./runtime-adapters');
+    const { buildSanitizedEnv } = require('./sanitized-env');
+    const adapter = getAdapter(manifest.runtime.kind);
+    await adapter.ensureAvailable(manifest);
+
+    const port = typeof getOS8Port === 'function' ? getOS8Port() : 8888;
+    const env = buildSanitizedEnv(db, {
+      appId: app.id,
+      allocatedPort: 0,    // unused during install — the dev server isn't running yet
+      manifestEnv: manifest.env || [],
+      localSlug,
+      OS8_PORT: port,
+    });
+    manifest._localSlug = localSlug;
+
+    publish(jobId, { kind: 'log', message: `running install in ${job.staging_dir}` });
+    await adapter.install(manifest, job.staging_dir, env, (stream, chunk) =>
+      publish(jobId, { kind: 'log', stream, message: String(chunk).slice(0, 8000) }));
+
+    // 5. Atomic move staging → apps.
+    const finalDir = path.join(APPS_DIR, app.id);
+    await atomicMove(job.staging_dir, finalDir);
+    publish(jobId, { kind: 'log', message: `moved to ${finalDir}` });
+
+    // 6. git init for fork-on-first-edit (PR 1.23 wires the watcher; here
+    //    we just create the user/main branch + .gitignore).
+    await gitInitFork(finalDir, manifest, entry.upstreamResolvedCommit);
+
+    // 7. CLAUDE.md generation lives in PR 1.21; defensive try/catch so a
+    //    missing module doesn't break installs.
+    try {
+      const ext = require('../claude-md-external');
+      ext?.generateForExternal?.(db, app);
+    } catch (_) { /* PR 1.21 fills in */ }
+
+    // 8. Activate.
+    AppService.update(db, app.id, { status: 'active' });
+
+    // 9. Final transition.
+    InstallJobs.transition(db, jobId, {
+      from: 'installing',
+      to: 'installed',
+      patches: { app_id: app.id },
+    });
+    publish(jobId, { kind: 'status', status: 'installed', appId: app.id });
+
+    // 10. Fire-and-forget track-install. Anonymous, rate-limited per IP/day
+    //     server-side. No await — the install finishes the moment the row
+    //     activates, regardless of network.
+    fetch(`https://os8.ai/api/apps/${encodeURIComponent(manifest.slug)}/track-install`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => { /* best-effort */ });
+  },
+
+  async _rollbackInstall(db, jobId, errorMessage) {
+    InstallJobs.fail(db, jobId, errorMessage);
+    const job = InstallJobs.get(db, jobId);
+    if (!job) return;
+
+    // Drop the apps row if we created it (it'll be in 'installing' status).
+    if (job.app_id) {
+      try {
+        db.prepare(`DELETE FROM apps WHERE id = ? AND status = 'installing'`).run(job.app_id);
+        // Also drop any per-app secrets we wrote — keep the credential
+        // surface narrow on rollback.
+        db.prepare(`DELETE FROM app_env_variables WHERE app_id = ?`).run(job.app_id);
+      } catch (_) { /* best-effort */ }
+    }
+
+    // Best-effort cleanup of staging dir; reapStaging (PR 1.29) is the safety net.
+    if (job.staging_dir && fs.existsSync(job.staging_dir)) {
+      try { fs.rmSync(job.staging_dir, { recursive: true, force: true }); }
+      catch (_) { /* leave for reapStaging */ }
+    }
+  },
+
+  /**
    * Cancel from awaiting_approval. Cleans the staging dir best-effort.
    */
   cancel(db, jobId) {
@@ -222,5 +391,125 @@ const AppInstaller = {
   // Test seam — exposed for unit tests that want to bypass setImmediate.
   _runNow(db, jobId, opts) { return AppInstaller._run(db, jobId, opts); },
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers (1.16b)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Atomic-ish move from `srcDir` to `dstDir`. Uses fs.renameSync (atomic on
+ * POSIX same-FS, atomic on Windows when destination doesn't exist). Falls back
+ * to copy-then-delete with a transient marker on EXDEV (cross-mount).
+ */
+async function atomicMove(srcDir, dstDir) {
+  if (fs.existsSync(dstDir)) {
+    throw new Error(`atomic move target exists: ${dstDir}`);
+  }
+  // Make sure the parent of dstDir exists. ensureDirectories() in config.js
+  // is the canonical call but tests sometimes skip it; either way this is
+  // cheap and idempotent.
+  fs.mkdirSync(path.dirname(dstDir), { recursive: true });
+  try {
+    fs.renameSync(srcDir, dstDir);
+    return;
+  } catch (e) {
+    if (e.code !== 'EXDEV') throw e;
+  }
+
+  // Cross-mount fallback. Drop a marker so reapStaging can detect mid-move.
+  const marker = path.join(path.dirname(dstDir), `.${path.basename(dstDir)}.installing`);
+  fs.writeFileSync(marker, JSON.stringify({ src: srcDir, ts: Date.now() }));
+  try {
+    fs.cpSync(srcDir, dstDir, { recursive: true });
+    fs.rmSync(srcDir, { recursive: true, force: true });
+    fs.unlinkSync(marker);
+  } catch (err) {
+    try { fs.rmSync(dstDir, { recursive: true, force: true }); } catch (_) { /* ignore */ }
+    throw err;
+  }
+}
+
+/**
+ * Set up the user/main branch + .gitignore for fork-on-first-edit (PR 1.23
+ * wires the watcher). Works against either a freshly-cloned repo (the
+ * upstream's history is present) or a non-git source tree (creates one).
+ */
+async function gitInitFork(appDir, manifest, resolvedCommit) {
+  const isRepo = fs.existsSync(path.join(appDir, '.git'));
+
+  if (!isRepo) {
+    await spawnPromise('git', ['init', '-q'], { cwd: appDir });
+    await spawnPromise('git', ['-C', appDir, 'config', 'user.email', 'os8@os8.local']);
+    await spawnPromise('git', ['-C', appDir, 'config', 'user.name', 'OS8 Installer']);
+    await spawnPromise('git', ['-C', appDir, 'add', '-A']);
+    await spawnPromise('git', ['-C', appDir, 'commit', '-q', '-m',
+      `OS8 install: ${manifest.slug} @ ${resolvedCommit || 'unknown'}`]);
+    await spawnPromise('git', ['-C', appDir, 'checkout', '-q', '-b', 'user/main']);
+  } else {
+    // Cloned via PR 1.5 — HEAD is at resolvedCommit. Create user/main and a
+    // tracking ref so PR 1.25's update flow can three-way-merge.
+    await spawnPromise('git', ['-C', appDir, 'checkout', '-q', '-b', 'user/main']);
+    if (resolvedCommit) {
+      await spawnPromise('git', ['-C', appDir, 'branch', 'upstream/manifest', resolvedCommit]);
+    }
+  }
+
+  // OS8 ignores. Append (don't overwrite) so upstream's .gitignore is preserved.
+  const gi = path.join(appDir, '.gitignore');
+  const blob = [
+    '',
+    '# OS8 auto-generated',
+    'node_modules/',
+    '.venv/',
+    '__pycache__/',
+    'dist/',
+    'build/',
+    '.next/',
+    '.cache/',
+    '.parcel-cache/',
+    '.svelte-kit/',
+    '.turbo/',
+    '*.log',
+    '',
+    '# Local config — contains secrets',
+    '.env',
+    '.env.local',
+    '.env.*.local',
+    '',
+    '# OS8 metadata',
+    '.os8/',
+    '',
+  ].join('\n');
+  fs.appendFileSync(gi, blob, 'utf8');
+}
+
+/**
+ * Pre-flight DNS check: confirm <slug>.localhost resolves to 127.0.0.1.
+ * Throws a descriptive error when it doesn't, so the install plan UI can
+ * surface a hosts-entry prompt (PR 1.16's downstream UI piece on Windows).
+ */
+async function ensureSubdomainResolves(localSlug) {
+  const host = `${localSlug}.localhost`;
+  try {
+    const { address } = await dnsLookup(host, { family: 4 });
+    if (address === '127.0.0.1') return;
+    throw new Error(
+      `${host} resolves to ${address}, expected 127.0.0.1 — ` +
+      `a hosts entry redirects *.localhost. Remove it before installing.`
+    );
+  } catch (err) {
+    if (err?.code === 'ENOTFOUND' || err?.code === 'EAI_AGAIN') {
+      throw new Error(
+        `${host} does not resolve. macOS/Linux/Win11 should resolve *.localhost ` +
+        `to 127.0.0.1 per RFC 6761. On legacy Windows, add an entry to your ` +
+        `hosts file: 127.0.0.1\t${host}`
+      );
+    }
+    throw err;
+  }
+}
+
+// Test seam — exposed so PR 1.16 tests can stub or invoke the helpers.
+AppInstaller._helpers = { atomicMove, gitInitFork, ensureSubdomainResolves };
 
 module.exports = AppInstaller;
