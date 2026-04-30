@@ -1,8 +1,9 @@
 /**
  * PR 2.3 — StaticRuntimeAdapter unit tests.
  *
- * Hugo / Jekyll dev-server tests are gated behind `OS8_STATIC_LIVE_TEST=1`
- * (host hugo / bundler not assumed in CI).
+ * The OS8-served path (`os8:static` sentinel) is exercised here directly.
+ * Live Hugo / Jekyll dev-server coverage comes via PR 2.4's hello-static
+ * catalog manifest; host hugo / bundler aren't assumed in CI.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -197,11 +198,7 @@ describe('StaticRuntimeAdapter — install', () => {
   });
 });
 
-// ── Live dev-server tests, gated by env flag ────────────────────────────────
-const LIVE = process.env.OS8_STATIC_LIVE_TEST === '1';
-
-describe.skipIf(!LIVE)('StaticRuntimeAdapter — live Hugo (network)', () => {
-  it('runs hugo serve and HTTP readiness resolves', async () => {
-    expect(true).toBe(true);   // implementation deferred
-  });
-});
+// Live Hugo / Jekyll coverage is exercised via PR 2.4's hello-static
+// catalog manifest installing end-to-end against the real proxy; no
+// stand-alone live test here. (Hugo/Jekyll dev-server smokes can be
+// added in Phase 3 if a community manifest needs them.)
