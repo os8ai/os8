@@ -231,6 +231,38 @@ function scheduleCatalogSync() {
   }, msUntilSync);
 }
 
+// App Store catalog daily sync (PR 1.3). Same 4am window as the skill
+// catalog — concurrent traffic to a static-cache os8.ai endpoint is fine.
+let appCatalogSyncTimer = null;
+function scheduleAppCatalogSync() {
+  if (appCatalogSyncTimer) clearTimeout(appCatalogSyncTimer);
+
+  const now = new Date();
+  const target = new Date(now);
+  target.setHours(CATALOG_SYNC_HOUR, 0, 0, 0);
+  if (now >= target) target.setDate(target.getDate() + 1);
+  const msUntilSync = target.getTime() - now.getTime();
+
+  console.log(`[AppCatalog] Scheduled sync at ${CATALOG_SYNC_HOUR}am local time (in ${Math.round(msUntilSync / 3600000)}h)`);
+
+  appCatalogSyncTimer = setTimeout(async () => {
+    console.log(`[AppCatalog] ${CATALOG_SYNC_HOUR}am sync triggered`);
+    try {
+      const AppCatalogService = require('./services/app-catalog');
+      const r = await AppCatalogService.sync(db, { channel: 'verified' });
+      if (r.alarms?.length > 0) {
+        console.warn('[AppCatalog] Sync alarms:', r.alarms.join('; '));
+      } else {
+        console.log(`[AppCatalog] Sync: +${r.added} updated:${r.updated} -${r.removed}`);
+      }
+    } catch (e) {
+      console.warn('[AppCatalog] Scheduled sync failed:', e.message);
+    }
+    scheduleAppCatalogSync();
+  }, msUntilSync);
+  appCatalogSyncTimer.unref?.();
+}
+
 // Generate call URL (uses tunnel URL if configured, otherwise localhost)
 function getCallUrl(callId, token) {
   const tunnelUrl = db ? SettingsService.get(db, 'tunnelUrl') : null;
@@ -554,6 +586,10 @@ async function createServer() {
   const VaultGraphService = require('./services/vault-graph');
   app.use('/api/vault', createVaultRouter(db, { VaultService, VaultIndexerService, VaultGraphService }));
 
+  // App Store routes (install pipeline; PR 1.5 ships clone + state machine)
+  const createAppStoreRouter = require('./routes/app-store');
+  app.use('/api/app-store', createAppStoreRouter(db));
+
   // Call page route - renders mobile-first call UI
   app.get('/call/:callId', (req, res) => {
     const { callId } = req.params;
@@ -677,6 +713,20 @@ async function createServer() {
     console.log('Core not ready, using static file serving');
   }
 
+  // App Store: server-side capability enforcement (PR 1.7) — must mount
+  // BEFORE the reverse proxy, so /_os8/api/* on the subdomain is rewritten
+  // to /api/apps/<id>/* and forwarded to the existing app-blob/app-db
+  // routers (which run with `req.callerAppId` set). Subdomain traffic that
+  // isn't /_os8/api/* falls through to the proxy below.
+  const { scopedApiMiddleware } = require('./services/scoped-api-surface');
+  app.use(scopedApiMiddleware(db));
+
+  // App Store: subdomain reverse proxy for external apps. Dispatches on the
+  // request's Host header — bare `localhost:8888` falls through unchanged so
+  // native apps and the OS8 shell are untouched.
+  const ReverseProxyService = require('./services/reverse-proxy');
+  app.use(ReverseProxyService.middleware());
+
   // Serve app HTML files with Vite transformation
   // Accepts both appId and slug for backwards compatibility (will remove slug fallback later)
   app.use('/:identifier', async (req, res, next) => {
@@ -797,6 +847,13 @@ async function startServer(port = null, database = null) {
         });
         setupCallStream(server);
 
+        // App Store: WebSocket pass-through for external-app HMR. Dispatches
+        // on Host header — bare localhost upgrades fall through to OS8's own
+        // WS handlers (voice, TTS, call) attached above. Re-require here
+        // because the const above lives in startServer's outer block, which
+        // isn't this listen-callback's scope.
+        require('./services/reverse-proxy').attachUpgradeHandler(server);
+
         // Auto-start services after a short delay
         setTimeout(() => {
           // Clean up incomplete agents from abandoned setup flows
@@ -889,6 +946,29 @@ async function startServer(port = null, database = null) {
 
             // Schedule daily catalog sync at 4am
             scheduleCatalogSync();
+
+            // App Store catalog (PR 1.3) — runs in parallel with the skill
+            // catalog. Seed from bundled snapshot, then sync verified
+            // channel from os8.ai (best-effort; logs warnings on failure).
+            try {
+              const AppCatalogService = require('./services/app-catalog');
+              const seeded = AppCatalogService.seedFromSnapshot(db);
+              if (seeded > 0) {
+                console.log(`[AppCatalog] Seeded ${seeded} entries from snapshot`);
+              }
+              AppCatalogService.sync(db, { channel: 'verified' })
+                .then(r => {
+                  if (r.alarms && r.alarms.length > 0) {
+                    console.warn('[AppCatalog] Startup sync alarms:', r.alarms.join('; '));
+                  } else if (r.synced > 0 || r.removed > 0) {
+                    console.log(`[AppCatalog] Sync: +${r.added} updated:${r.updated} -${r.removed}`);
+                  }
+                })
+                .catch(e => console.warn('[AppCatalog] Startup sync error:', e.message));
+              scheduleAppCatalogSync();
+            } catch (e) {
+              console.warn('[AppCatalog] Init error:', e.message);
+            }
           } catch (e) {
             console.warn('[Startup] Skills sync error:', e.message);
           }

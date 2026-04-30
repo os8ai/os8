@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=OS8
+GenericName=OS8 Workspace
+Comment=Desktop workspace for AI-assisted development
+Exec=/opt/OS8/os8 %u
+Type=Application
+Icon=os8
+Terminal=false
+Categories=Development;
+MimeType=x-scheme-handler/os8;
+StartupWMClass=OS8

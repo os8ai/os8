@@ -4,9 +4,13 @@
  */
 
 const express = require('express');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createAppDbRouter(db, { AppService, AppDbService }) {
   const router = express.Router({ mergeParams: true });
+
+  // PR 1.8: surface req.callerAppId for external-app callers.
+  router.use(requireAppContext);
 
   // Middleware: validate appId exists in the apps table
   router.use((req, res, next) => {

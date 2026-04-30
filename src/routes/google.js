@@ -1,7 +1,9 @@
 const express = require('express');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createGoogleRouter(db, { ConnectionsService, PROVIDERS }) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8
 
   // Helper to get a valid Google token
   async function getGoogleToken() {

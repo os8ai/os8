@@ -5,9 +5,11 @@
 
 const express = require('express');
 const YouTubeService = require('../services/youtube');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createYouTubeRouter(db, services) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8
 
   /**
    * GET /api/youtube/status

@@ -17,6 +17,22 @@ function registerPreviewHandlers({ mainWindow, state }) {
     return previewService.create(appId) ? true : false;
   });
 
+  // PR 1.19 — hardened external-app BrowserView. The renderer can't pass an
+  // absolute preload path, so we resolve preload-external-app.js on the main
+  // side. PR 1.9 ships that file; until it does, preload defaults to undefined.
+  ipcMain.handle('preview:create-external', (event, appId, localSlug) => {
+    const path = require('path');
+    const fs = require('fs');
+    const os8Port = require('../server').getPort();
+    const preloadPath = path.join(__dirname, '..', 'preload-external-app.js');
+    const resolvedPreload = fs.existsSync(preloadPath) ? preloadPath : undefined;
+    previewService.createExternal(appId, localSlug, {
+      os8Port,
+      preloadPath: resolvedPreload,
+    });
+    return true;
+  });
+
   ipcMain.handle('preview:destroy', (event, appId) => {
     return previewService.destroy(appId);
   });

@@ -332,6 +332,27 @@ export async function createAppTab(app, options = {}) {
     return existing;
   }
 
+  // External-app branch (PR 1.19): start the dev server FIRST, register the
+  // proxy, then build the tab so its state knows the external URL upfront.
+  // Native apps fall through to the regular path.
+  let externalUrl = null;
+  if (app.app_type === 'external') {
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(app.id)}/processes/start`,
+        { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'unknown' }));
+        alert(`Failed to start ${app.name}: ${err.error || res.statusText}`);
+        return null;
+      }
+      const body = await res.json();
+      externalUrl = body.url;
+    } catch (e) {
+      alert(`Failed to start ${app.name}: ${e.message}`);
+      return null;
+    }
+  }
+
   // Create tab object with fresh state
   const tab = {
     id: `app-${app.id}`,
@@ -343,6 +364,7 @@ export async function createAppTab(app, options = {}) {
       terminalInstances: [],
       terminalIdCounter: 0,
       previewUrl: '',
+      externalUrl,
       tasksView: 'open',
       storageView: 'system',
       showHiddenFiles: false,
@@ -673,6 +695,16 @@ export async function cleanupTabResources(tab) {
   }
 
   if (tab.type !== 'app') return;
+
+  // External-app branch (PR 1.19): stop the dev server and unregister the
+  // proxy when the user closes the tab. Native apps don't need this — they
+  // run inside OS8's server, not as a separate process.
+  if (tab.app?.id && tab.app?.app_type === 'external') {
+    try {
+      await fetch(`/api/apps/${encodeURIComponent(tab.app.id)}/processes/stop`,
+        { method: 'POST' });
+    } catch (_) { /* best-effort — APR.stopAll() will catch leaks on quit */ }
+  }
 
   // Destroy the BrowserView for this app
   if (tab.app?.id) {

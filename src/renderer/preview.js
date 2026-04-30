@@ -22,13 +22,28 @@ function scaleBoundsForZoom(rect, zoomFactor) {
 
 export async function ensurePreviewForApp(app) {
   if (!activePreviewApps.has(app.id)) {
-    await window.os8.preview.create(app.id);
+    if (app.app_type === 'external') {
+      await window.os8.preview.createExternal(app.id, app.slug);
+    } else {
+      await window.os8.preview.create(app.id);
+    }
     activePreviewApps.add(app.id);
   }
 }
 
 export async function loadPreviewForApp(app, subPath = '') {
   await ensurePreviewForApp(app);
+  if (app.app_type === 'external') {
+    // PR 1.19: external apps live at <slug>.localhost:<port>/. The URL is
+    // composed by the server when /processes/start fires; tabs.js stores it
+    // on tab.state.externalUrl and passes it via loadPreview().
+    const tab = getTabById(getActiveTabId());
+    const externalUrl = tab?.state?.externalUrl;
+    if (externalUrl) {
+      await window.os8.preview.setUrl(app.id, externalUrl);
+      return;
+    }
+  }
   const port = await window.os8.server.getPort();
   const fullUrl = `http://localhost:${port}/${app.slug}/${subPath}`;
   await window.os8.preview.setUrl(app.id, fullUrl);

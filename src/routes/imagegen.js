@@ -6,9 +6,14 @@
 const express = require('express');
 const path = require('path');
 const ImageGenService = require('../services/imagegen');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createImageGenRouter(db, services) {
   const router = express.Router();
+  // PR 1.8: surface req.callerAppId for external-app callers (set by
+  // PR 1.7's scopedApiMiddleware via X-OS8-App-Id). Native shell calls
+  // pass through without the header.
+  router.use(requireAppContext);
 
   /**
    * GET /api/imagegen/status

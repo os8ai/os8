@@ -4,9 +4,58 @@
  * Instance-based: holds views Map, console buffers, mainWindow ref.
  */
 
-const { BrowserView } = require('electron');
+const path = require('path');
+const { BrowserView, shell } = require('electron');
 
 const CONSOLE_BUFFER_MAX = 100;
+
+/**
+ * Hardened webPreferences for external apps (PR 1.19). Pure function so
+ * unit tests can compare object shape without spinning up Electron.
+ *
+ * Spec §6.6: sandbox, contextIsolation, no node integration, web security
+ * on, no insecure content. The external preload (PR 1.9) is pointed at by
+ * absolute path — file existence is checked at create-time so a missing
+ * preload doesn't break native apps.
+ */
+function externalWebPreferences(preloadPath = null) {
+  const prefs = {
+    nodeIntegration: false,
+    contextIsolation: true,
+    sandbox: true,
+    webSecurity: true,
+    allowRunningInsecureContent: false,
+    enableBlinkFeatures: '',
+    nodeIntegrationInWorker: false,
+    nodeIntegrationInSubFrames: false,
+    backgroundThrottling: false,    // parity with native preview
+  };
+  if (preloadPath) prefs.preload = preloadPath;
+  return prefs;
+}
+
+/**
+ * Decide whether a navigation attempt from inside an external-app BrowserView
+ * should be allowed (true) or redirected to the system browser (false).
+ *
+ * Subdomain mode makes this gate cleanly host-based — the app's own
+ * `<slug>.localhost(:port)` is the only legit destination. Different external
+ * apps live on different subdomains (different origins per browser SOP), and
+ * the OS8 main shell at bare localhost is also off-limits to external apps.
+ *
+ * @param {string} urlStr   the URL the navigation is targeting
+ * @param {string} expectedHost  e.g. "worldmonitor.localhost"
+ * @param {string|number} expectedPort  e.g. 8888
+ * @returns {boolean} true to allow, false to deny + open externally
+ */
+function isAllowedExternalNavigation(urlStr, expectedHost, expectedPort) {
+  let u;
+  try { u = new URL(urlStr); }
+  catch { return false; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  const portOk = !u.port || u.port === String(expectedPort);
+  return u.hostname === expectedHost && portOk;
+}
 
 class PreviewService {
   /**
@@ -109,6 +158,71 @@ class PreviewService {
         }, 100);
       }
     });
+
+    this._views.set(appId, view);
+    return view;
+  }
+
+  /**
+   * Hardened BrowserView for an external app. Different from the native
+   * `create()` — sandbox + contextIsolation + nav restriction + popup denial
+   * + permission denial.
+   *
+   * @param {string} appId
+   * @param {string} localSlug   the app's slug; used to compose the expected host
+   * @param {{ os8Port: number, preloadPath?: string }} opts
+   *   os8Port — the port OS8's HTTP server is on (used to validate Host)
+   *   preloadPath — absolute path to preload-external-app.js (PR 1.9)
+   */
+  createExternal(appId, localSlug, { os8Port, preloadPath } = {}) {
+    if (this._views.has(appId)) return this._views.get(appId);
+    if (!localSlug) throw new Error('createExternal: localSlug required');
+    if (!os8Port)   throw new Error('createExternal: os8Port required');
+
+    const fs = require('fs');
+    const resolvedPreload = preloadPath && fs.existsSync(preloadPath) ? preloadPath : null;
+
+    const view = new BrowserView({
+      webPreferences: externalWebPreferences(resolvedPreload),
+    });
+
+    this._mainWindow.addBrowserView(view);
+    view.setBounds({ x: 0, y: 0, width: 0, height: 0 });
+
+    // Sync zoom (parity with native preview).
+    const zoomFactor = this._mainWindow.webContents.getZoomFactor();
+    if (zoomFactor !== 1) view.webContents.setZoomFactor(zoomFactor);
+
+    // Console pipe — same buffer/relay as native.
+    view.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      const levelStr = ['LOG', 'WARN', 'ERROR'][level] || 'LOG';
+      console.log(`[ExternalView:${appId}] ${levelStr}: ${message}`);
+      this.pushConsoleMessage(appId, level, message, line, sourceId);
+    });
+
+    // ── Hardening ──────────────────────────────────────────────────────
+    const expectedHost = `${localSlug}.localhost`;
+
+    view.webContents.on('will-navigate', (event, urlStr) => {
+      if (!isAllowedExternalNavigation(urlStr, expectedHost, os8Port)) {
+        event.preventDefault();
+        try { shell.openExternal(urlStr); } catch (_) { /* ignore */ }
+      }
+    });
+
+    view.webContents.setWindowOpenHandler(({ url }) => {
+      try { shell.openExternal(url); } catch (_) { /* ignore */ }
+      return { action: 'deny' };
+    });
+
+    // Camera / mic / geolocation / notifications: deny by default. External
+    // apps can request runtime escalation in v2 if a flow appears for it.
+    try {
+      view.webContents.session.setPermissionRequestHandler((_wc, _permission, cb) => cb(false));
+      view.webContents.session.setPermissionCheckHandler(() => false);
+    } catch (e) {
+      console.warn('[Preview] failed to wire permission handlers:', e?.message);
+    }
 
     this._views.set(appId, view);
     return view;
@@ -284,3 +398,5 @@ class PreviewService {
 }
 
 module.exports = PreviewService;
+module.exports.externalWebPreferences = externalWebPreferences;
+module.exports.isAllowedExternalNavigation = isAllowedExternalNavigation;

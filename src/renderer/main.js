@@ -290,6 +290,24 @@ async function init() {
   // Start system clock
   startClock();
 
+  // PR 1.18: open the install plan modal when an os8:// deeplink fires.
+  // Errors (commit mismatch, unreachable os8.ai) surface as alerts so the
+  // user understands why nothing opened.
+  if (window.os8.appStore?.onProtocolEvent) {
+    const { openInstallPlanModalBySlug } = await import('./install-plan-modal.js');
+    window.os8.appStore.onProtocolEvent(async (payload) => {
+      if (payload?.kind === 'error') {
+        alert(`Install link error: ${payload.error}`);
+        return;
+      }
+      try {
+        await openInstallPlanModalBySlug(payload.slug, payload.channel || 'verified');
+      } catch (e) {
+        console.warn('[install-plan] open from deeplink failed:', e?.message);
+      }
+    });
+  }
+
   // Initialize view mode (applies saved mode and attaches listeners)
   initViewMode();
 
@@ -870,6 +888,21 @@ async function init() {
   // ===== Preview URL Changed Handler =====
   window.os8.preview.onUrlChanged(async (appId, url) => {
     if (getCurrentApp() && getCurrentApp().id === appId && url) {
+      // PR 1.20: external apps get a cosmetic os8://apps/<slug> label and
+      // the URL bar is read-only — typing arbitrary URLs into an external
+      // app's view doesn't make sense. The real URL is preserved on
+      // dataset.realUrl for the dev-mode debug overlay.
+      const cur = getCurrentApp();
+      if (cur.app_type === 'external') {
+        previewUrlInput.value = `os8://apps/${cur.slug}`;
+        previewUrlInput.dataset.realUrl = url;
+        previewUrlInput.readOnly = true;
+        return;
+      } else {
+        previewUrlInput.readOnly = false;
+        delete previewUrlInput.dataset.realUrl;
+      }
+
       // URLs use appId internally (e.g., /1769977353030-t78455kh2/photo-to-avatar)
       const appIdPath = '/' + getCurrentApp().id + '/';
       const idx = url.indexOf(appIdPath);

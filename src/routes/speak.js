@@ -5,9 +5,11 @@
 
 const express = require('express');
 const SpeakService = require('../services/speak');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createSpeakRouter(db, { AgentService } = {}) {
   const router = express.Router();
+  router.use(requireAppContext);   // PR 1.8 — set req.callerAppId for external apps
 
   /**
    * GET /api/speak/status

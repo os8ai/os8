@@ -357,6 +357,169 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // External-app process lifecycle (PR 1.19).
+  // POST /api/apps/:id/processes/start — start the dev server, register
+  // the proxy, return the URL the BrowserView should load.
+  router.post('/:id/processes/start', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+
+      const APR = require('../services/app-process-registry').get();
+      const ReverseProxyService = require('../services/reverse-proxy');
+
+      const entry = await APR.start(app.id);
+      ReverseProxyService.register(app.slug, app.id, entry.port);
+
+      const os8Port = require('../server').getPort();
+      res.json({
+        url: `http://${app.slug}.localhost:${os8Port}/?__os8_app_id=${encodeURIComponent(app.id)}`,
+        slug: app.slug,
+        port: os8Port,
+        upstreamPort: entry.port,
+      });
+    } catch (err) {
+      console.error('[Apps API] processes/start error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/update (PR 1.25). Body: { commit?: string }.
+  // Defaults to apps.update_to_commit (set by sync's detectUpdates).
+  // Returns { kind: 'updated' | 'conflict', commit, files? }.
+  router.post('/:id/update', express.json(), async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const target = (req.body && req.body.commit) || app.update_to_commit;
+      if (!target) {
+        return res.status(400).json({ error: 'no target commit (no update available)' });
+      }
+      const AppCatalogService = require('../services/app-catalog');
+      const result = await AppCatalogService.update(db, app.id, target);
+      res.json(result);
+    } catch (err) {
+      console.error('[Apps API] update error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/uninstall (PR 1.24). Body: { deleteData: bool }.
+  // Default keeps blob/db/secrets so reinstall can offer "restore data."
+  router.post('/:id/uninstall', express.json(), async (req, res) => {
+    try {
+      const deleteData = !!(req.body && req.body.deleteData);
+      const result = await AppService.uninstall(db, req.params.id, { deleteData });
+      res.json(result);
+    } catch (err) {
+      console.error('[Apps API] uninstall error:', err.message);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // GET /api/apps/:id/git/check (PR 1.23) — inspect working-tree state on
+  // dev-mode activation. Returns { kind: 'clean' | 'dirty', branch, status,
+  // untracked }.
+  router.get('/:id/git/check', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const { APPS_DIR } = require('../config');
+      const path = require('path');
+      const AppGit = require('../services/app-git');
+      const result = await AppGit.checkOnActivation(path.join(APPS_DIR, app.id));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/git/recover (PR 1.23) — apply one of the three
+  // recovery actions: continue / reset / stash.
+  router.post('/:id/git/recover', express.json(), async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const action = String(req.body?.action || '');
+      if (!['continue', 'reset', 'stash'].includes(action)) {
+        return res.status(400).json({ error: 'action must be continue|reset|stash' });
+      }
+      const { APPS_DIR } = require('../config');
+      const path = require('path');
+      const AppGit = require('../services/app-git');
+      const appDir = path.join(APPS_DIR, app.id);
+      if (action === 'continue') await AppGit.continueOnDirty(appDir);
+      else if (action === 'reset') await AppGit.resetToManifest(appDir, app.upstream_resolved_commit);
+      else if (action === 'stash') await AppGit.stashAndContinue(appDir);
+      res.json({ ok: true, action });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/dev-mode (PR 1.22) — toggle dev mode for an external
+  // app. When ON, the next process start wires the chokidar watcher per
+  // manifest.dev.watch (PR 1.11b). The toggle persists to apps.dev_mode.
+  router.post('/:id/dev-mode', express.json(), async (req, res) => {
+    try {
+      const enabled = !!(req.body && req.body.enabled);
+      const app = AppService.setDevMode(db, req.params.id, enabled);
+
+      // If the process is currently running, restart it so the watcher is
+      // re-installed in the desired state. Cheap and obvious — beats a
+      // late-binding "rebuild watcher" path that has to handle in-flight
+      // edits during the swap.
+      const APR = require('../services/app-process-registry').get();
+      if (APR.get(app.id)) {
+        const ReverseProxyService = require('../services/reverse-proxy');
+        await APR.stop(app.id, { reason: 'dev-mode-toggle' });
+        ReverseProxyService.unregister(app.slug);
+        const entry = await APR.start(app.id, { devMode: enabled });
+        ReverseProxyService.register(app.slug, app.id, entry.port);
+      }
+
+      res.json({
+        id: app.id,
+        slug: app.slug,
+        devMode: !!app.dev_mode,
+      });
+    } catch (err) {
+      console.error('[Apps API] dev-mode error:', err.message);
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/processes/stop — stop the dev server + unregister
+  // the proxy. Used by tab-close and "Stop" in the dev mode panel (PR 1.22).
+  router.post('/:id/processes/stop', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+
+      const APR = require('../services/app-process-registry').get();
+      const ReverseProxyService = require('../services/reverse-proxy');
+
+      await APR.stop(app.id);
+      ReverseProxyService.unregister(app.slug);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[Apps API] processes/stop error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

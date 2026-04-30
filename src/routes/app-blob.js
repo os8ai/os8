@@ -9,9 +9,15 @@ const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
 const { BLOB_DIR } = require('../config');
+const requireAppContext = require('../middleware/require-app-context');
 
 function createAppBlobRouter(db, { AppService }) {
   const router = express.Router({ mergeParams: true });
+
+  // PR 1.8: surface req.callerAppId for external-app callers (set by
+  // PR 1.7's scopedApiMiddleware via X-OS8-App-Id). Native shell calls
+  // pass through without the header.
+  router.use(requireAppContext);
 
   // Middleware: validate appId exists in the apps table
   router.use((req, res, next) => {
