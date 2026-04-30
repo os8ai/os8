@@ -323,6 +323,18 @@ app.whenReady().then(async () => {
     throw err;
   }
 
+  // PR 1.29: clean up orphaned staging dirs from interrupted installs.
+  // Cheap (only walks ~/os8/apps_staging/) and idempotent.
+  try {
+    const AppCatalogService = require('./src/services/app-catalog');
+    const r = AppCatalogService.reapStaging(db);
+    if (r.removed > 0 || r.markersRemoved > 0) {
+      console.log(`[reapStaging] removed ${r.removed} dir(s), ${r.markedFailed} marked failed, ${r.markersRemoved} marker(s)`);
+    }
+  } catch (e) {
+    console.warn('[main] reapStaging failed:', e.message);
+  }
+
   // Reconcile TTS provider state with the current ai_mode. An ai_mode flip
   // during a prior session (or the 0.4.2 migration splitting tts_provider
   // into per-mode slots) can leave agents.voice_id and tts.defaultVoice*

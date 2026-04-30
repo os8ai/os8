@@ -489,6 +489,99 @@ const AppCatalogService = {
 
     return { kind: 'updated', commit: targetCommit, hadUserEdits: !!app.user_branch };
   },
+
+  /**
+   * PR 1.29 — clean up orphaned staging dirs on startup.
+   *
+   * Walks ~/os8/apps_staging/ and removes any directory whose corresponding
+   * app_install_jobs row is:
+   *   - missing entirely (orphan dir)
+   *   - in a terminal status (failed | cancelled | installed)
+   *   - older than 24h in a non-terminal status (mid-flight crash)
+   *
+   * For mid-flight rows, also marks the row failed with a "reaped on startup"
+   * error_message so the install plan UI can surface the reason if it's
+   * subscribed.
+   *
+   * Also cleans up `.<id>.installing` markers in ~/os8/apps/ (left over by
+   * the cross-mount EXDEV fallback when copy-then-delete crashed midway).
+   *
+   * @returns {{ removed: number, markedFailed: number, markersRemoved: number }}
+   */
+  reapStaging(db, { now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000 } = {}) {
+    const fsLocal = require('fs');
+    const pathLocal = require('path');
+    const { APPS_STAGING_DIR, APPS_DIR } = require('../config');
+
+    const result = { removed: 0, markedFailed: 0, markersRemoved: 0 };
+
+    if (fsLocal.existsSync(APPS_STAGING_DIR)) {
+      let entries = [];
+      try { entries = fsLocal.readdirSync(APPS_STAGING_DIR); }
+      catch (_) { entries = []; }
+
+      const failStmt = db.prepare(
+        `UPDATE app_install_jobs SET status = 'failed',
+                error_message = COALESCE(error_message, 'reaped on startup'),
+                updated_at = datetime('now')
+         WHERE id = ?`
+      );
+
+      for (const dirName of entries) {
+        const job = db.prepare(
+          `SELECT id, status, created_at FROM app_install_jobs WHERE id = ?`
+        ).get(dirName);
+
+        let drop = false;
+        if (!job) drop = true;
+        else if (['failed', 'cancelled', 'installed'].includes(job.status)) drop = true;
+        else {
+          const created = job.created_at ? new Date(job.created_at).getTime() : 0;
+          if (now - created > maxAgeMs) drop = true;
+        }
+
+        if (drop) {
+          const dirPath = pathLocal.join(APPS_STAGING_DIR, dirName);
+          try {
+            fsLocal.rmSync(dirPath, { recursive: true, force: true });
+            result.removed++;
+          } catch (e) {
+            console.warn(`[reapStaging] rm ${dirName}: ${e.message}`);
+          }
+          if (job && !['installed', 'failed', 'cancelled'].includes(job.status)) {
+            failStmt.run(job.id);
+            result.markedFailed++;
+          }
+        }
+      }
+    }
+
+    // Also clean any orphan .<id>.installing markers in APPS_DIR. The
+    // corresponding partial dir would be at APPS_DIR/<id>; if the marker
+    // exists it means atomicMove crashed mid-copy, so we drop both.
+    if (fsLocal.existsSync(APPS_DIR)) {
+      let entries = [];
+      try { entries = fsLocal.readdirSync(APPS_DIR); }
+      catch (_) { entries = []; }
+
+      for (const f of entries) {
+        if (!f.startsWith('.') || !f.endsWith('.installing')) continue;
+        const markerPath = pathLocal.join(APPS_DIR, f);
+        // Marker filename is `.<appId>.installing` — the partial dir is `<appId>`.
+        const partialId = f.slice(1, -('.installing'.length));
+        const partialDir = pathLocal.join(APPS_DIR, partialId);
+
+        try { fsLocal.unlinkSync(markerPath); result.markersRemoved++; }
+        catch (_) { /* ignore */ }
+        if (partialId && fsLocal.existsSync(partialDir)) {
+          try { fsLocal.rmSync(partialDir, { recursive: true, force: true }); }
+          catch (e) { console.warn(`[reapStaging] rm partial ${partialId}: ${e.message}`); }
+        }
+      }
+    }
+
+    return result;
+  },
 };
 
 module.exports = AppCatalogService;
