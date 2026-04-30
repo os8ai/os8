@@ -9,6 +9,7 @@
  */
 
 const { ipcMain } = require('electron');
+const yaml = require('js-yaml');
 const { parseManifest, validateManifest } = require('../services/manifest-validator');
 const AppCatalogService = require('../services/app-catalog');
 const AppInstaller = require('../services/app-installer');
@@ -62,6 +63,21 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     try {
       const job = AppInstaller.cancel(db, jobId);
       return { ok: true, jobId: job.id, status: job.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // PR 1.9 — preload-external-app.js calls this on init to read the manifest's
+  // declared os8_capabilities and build the right SDK surface.
+  ipcMain.handle('app-store:get-manifest-for-preload', (_e, appId) => {
+    try {
+      const { AppService } = require('../services/app');
+      const app = AppService.getById(db, appId);
+      if (!app || app.app_type !== 'external') return { ok: false };
+      const manifest = yaml.load(app.manifest_yaml || '') || {};
+      const capabilities = manifest.permissions?.os8_capabilities || [];
+      return { ok: true, capabilities, slug: app.slug };
     } catch (err) {
       return { ok: false, error: err.message };
     }
