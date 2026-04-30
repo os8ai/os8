@@ -54,7 +54,7 @@ let db;
 // Routes os8://install?slug=…&commit=…&channel=…&source=… into the install
 // pipeline. PR 1.18 wires this through the install plan modal; PR 1.2 ships
 // the parsing + lifecycle hooks + Linux .desktop integration.
-const { handleProtocolUrl } = require('./src/services/protocol-handler');
+const { handleProtocolUrl, setProtocolDeps } = require('./src/services/protocol-handler');
 
 // macOS: open-url fires when the running instance is asked to handle a deeplink.
 app.on('open-url', (event, url) => {
@@ -264,6 +264,16 @@ app.whenReady().then(async () => {
   // Initialize database
   db = initDatabase();
   console.log('OS8 database initialized');
+
+  // PR 1.18: now that the catalog service has a db, wire the protocol-
+  // handler so os8://install deeplinks can cross-check + dispatch into
+  // the install plan modal.
+  try {
+    const AppCatalogService = require('./src/services/app-catalog');
+    setProtocolDeps({ db, AppCatalogService });
+  } catch (e) {
+    console.warn('[main] setProtocolDeps failed:', e.message);
+  }
 
   // Migrate any previously-encrypted keys back to plaintext (one-time)
   EnvService.migrateEncryptedToPlaintext(db);

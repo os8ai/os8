@@ -392,6 +392,21 @@ contextBridge.exposeInMainWorld('os8', {
     removeJobUpdateListeners: () => {
       ipcRenderer.removeAllListeners('app-store:job-update');
     },
+
+    // PR 1.18 — os8:// protocol event router. Renderer subscribes and the
+    // single callback receives:
+    //   { kind: 'open',  slug, commit, channel, source } — open install plan
+    //   { kind: 'error', slug, error }                  — surface as dialog
+    onProtocolEvent: (callback) => {
+      const open  = (_e, p) => callback({ kind: 'open',  ...p });
+      const error = (_e, p) => callback({ kind: 'error', ...p });
+      ipcRenderer.on('app-store:open-install-plan', open);
+      ipcRenderer.on('app-store:protocol-error',    error);
+      return () => {
+        ipcRenderer.removeListener('app-store:open-install-plan', open);
+        ipcRenderer.removeListener('app-store:protocol-error',    error);
+      };
+    },
   },
 
   // Zoom

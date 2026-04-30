@@ -290,6 +290,24 @@ async function init() {
   // Start system clock
   startClock();
 
+  // PR 1.18: open the install plan modal when an os8:// deeplink fires.
+  // Errors (commit mismatch, unreachable os8.ai) surface as alerts so the
+  // user understands why nothing opened.
+  if (window.os8.appStore?.onProtocolEvent) {
+    const { openInstallPlanModalBySlug } = await import('./install-plan-modal.js');
+    window.os8.appStore.onProtocolEvent(async (payload) => {
+      if (payload?.kind === 'error') {
+        alert(`Install link error: ${payload.error}`);
+        return;
+      }
+      try {
+        await openInstallPlanModalBySlug(payload.slug, payload.channel || 'verified');
+      } catch (e) {
+        console.warn('[install-plan] open from deeplink failed:', e?.message);
+      }
+    });
+  }
+
   // Initialize view mode (applies saved mode and attaches listeners)
   initViewMode();
 

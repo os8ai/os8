@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const { parseProtocolUrl } = require('../src/services/protocol-handler');
+const { parseProtocolUrl, handleProtocolUrl, setProtocolDeps } = require('../src/services/protocol-handler');
 
 const VALID_SHA = 'e51058e1765ef2f0c83ccb1d08d984bc59d23f10';
 
@@ -91,5 +91,139 @@ describe('parseProtocolUrl', () => {
 
   it('rejects malformed URLs', () => {
     expect(parseProtocolUrl('not a url').error).toBe('invalid url');
+  });
+});
+
+describe('handleProtocolUrl — dispatch (PR 1.18)', () => {
+  let send, mainWindow, db, AppCatalogService;
+
+  beforeEach(() => {
+    send = vi.fn();
+    mainWindow = {
+      isDestroyed: () => false,
+      isMinimized: () => false,
+      restore: vi.fn(),
+      focus: vi.fn(),
+      webContents: { send },
+    };
+    db = {};
+    AppCatalogService = {
+      get: vi.fn(),
+      fetchManifest: vi.fn(),
+    };
+    // Reset deps to a known state.
+    setProtocolDeps(null);
+  });
+
+  it('warns and returns on rejected URL', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setProtocolDeps({ db, AppCatalogService });
+    await handleProtocolUrl('os8://wat?bad=y', mainWindow);
+    expect(warn).toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('queues the URL when deps not set, drains on setProtocolDeps', async () => {
+    const url = `os8://install?slug=worldmonitor&commit=${VALID_SHA}&channel=verified`;
+    AppCatalogService.get.mockResolvedValue({
+      slug: 'worldmonitor',
+      upstreamResolvedCommit: VALID_SHA,
+    });
+    // No deps yet — handler queues.
+    await handleProtocolUrl(url, mainWindow);
+    expect(send).not.toHaveBeenCalled();
+
+    // Setting deps drains the queue.
+    setProtocolDeps({ db, AppCatalogService });
+    // Drain dispatch is async via Promise; wait a tick.
+    await new Promise(r => setTimeout(r, 5));
+    expect(send).toHaveBeenCalledWith('app-store:open-install-plan', expect.objectContaining({
+      slug: 'worldmonitor',
+      commit: VALID_SHA,
+      channel: 'verified',
+    }));
+  });
+
+  it('emits open-install-plan on local catalog hit', async () => {
+    setProtocolDeps({ db, AppCatalogService });
+    AppCatalogService.get.mockResolvedValue({
+      slug: 'worldmonitor',
+      upstreamResolvedCommit: VALID_SHA,
+    });
+    await handleProtocolUrl(
+      `os8://install?slug=worldmonitor&commit=${VALID_SHA}&channel=verified&source=os8.ai`,
+      mainWindow
+    );
+    expect(send).toHaveBeenCalledWith('app-store:open-install-plan', {
+      slug: 'worldmonitor',
+      commit: VALID_SHA,
+      channel: 'verified',
+      source: 'os8.ai',
+    });
+  });
+
+  it('falls back to fetchManifest when local catalog misses', async () => {
+    setProtocolDeps({ db, AppCatalogService });
+    AppCatalogService.get.mockResolvedValue(null);
+    AppCatalogService.fetchManifest.mockResolvedValue({
+      slug: 'worldmonitor',
+      upstreamResolvedCommit: VALID_SHA,
+      manifestYaml: 'slug: worldmonitor\n',
+    });
+    await handleProtocolUrl(
+      `os8://install?slug=worldmonitor&commit=${VALID_SHA}&channel=verified`,
+      mainWindow
+    );
+    expect(AppCatalogService.fetchManifest).toHaveBeenCalledWith('worldmonitor', 'verified');
+    expect(send).toHaveBeenCalledWith('app-store:open-install-plan', expect.objectContaining({
+      slug: 'worldmonitor',
+    }));
+  });
+
+  it('emits protocol-error when fetchManifest fails', async () => {
+    setProtocolDeps({ db, AppCatalogService });
+    AppCatalogService.get.mockResolvedValue(null);
+    AppCatalogService.fetchManifest.mockRejectedValue(new Error('offline'));
+    await handleProtocolUrl(
+      `os8://install?slug=missingapp&commit=${VALID_SHA}&channel=verified`,
+      mainWindow
+    );
+    expect(send).toHaveBeenCalledWith('app-store:protocol-error', expect.objectContaining({
+      slug: 'missingapp',
+    }));
+    const errPayload = send.mock.calls[0][1];
+    expect(errPayload.error).toMatch(/offline/);
+  });
+
+  it('refuses on commit mismatch', async () => {
+    setProtocolDeps({ db, AppCatalogService });
+    AppCatalogService.get.mockResolvedValue({
+      slug: 'worldmonitor',
+      upstreamResolvedCommit: 'b'.repeat(40),
+    });
+    await handleProtocolUrl(
+      `os8://install?slug=worldmonitor&commit=${VALID_SHA}&channel=verified`,
+      mainWindow
+    );
+    expect(send).toHaveBeenCalledWith('app-store:protocol-error', expect.objectContaining({
+      slug: 'worldmonitor',
+    }));
+    expect(send.mock.calls[0][1].error).toMatch(/Commit mismatch/);
+  });
+
+  it('focuses the window on dispatch', async () => {
+    setProtocolDeps({ db, AppCatalogService });
+    AppCatalogService.get.mockResolvedValue({
+      slug: 'worldmonitor',
+      upstreamResolvedCommit: VALID_SHA,
+    });
+    mainWindow.isMinimized = () => true;
+    await handleProtocolUrl(
+      `os8://install?slug=worldmonitor&commit=${VALID_SHA}&channel=verified`,
+      mainWindow
+    );
+    expect(mainWindow.restore).toHaveBeenCalled();
+    expect(mainWindow.focus).toHaveBeenCalled();
   });
 });
