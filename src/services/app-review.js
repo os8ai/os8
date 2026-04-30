@@ -99,6 +99,91 @@ const SHELL_PIPE_RES = [
   /\bwget\b[^|]*\|\s*\b(?:sh|bash|zsh)\b/i,
 ];
 
+// Known typosquat list — Phase 3 PR 3.6 will replace this with a real
+// supply-chain analyzer (safety / osv-scanner). Keep small + curated; the
+// list is not exhaustive on purpose. Keyed lowercased.
+const KNOWN_MALICIOUS_PYTHON = new Set([
+  'requestes',  'reuests',     'requessts',
+  'numpyy',     'numpyz',      'numpie',
+  'torcch',     'torcg',       'pytorrch',
+  'panas',      'pandass',
+  'beautifulsop',
+  'urllib33',
+]);
+
+// Extract dep names from common Python lockfiles. Returns lowercased names.
+function extractPythonDepNames(stagingDir) {
+  const names = new Set();
+  const reqPath = path.join(stagingDir, 'requirements.txt');
+  if (fs.existsSync(reqPath)) {
+    try {
+      const txt = fs.readFileSync(reqPath, 'utf8');
+      for (const line of txt.split(/\r?\n/)) {
+        const trimmed = line.replace(/[#;].*$/, '').trim();
+        if (!trimmed || trimmed.startsWith('-')) continue;
+        // pkg, pkg==1.0, pkg>=2, pkg[extras]
+        const m = trimmed.match(/^([A-Za-z0-9._-]+)/);
+        if (m) names.add(m[1].toLowerCase());
+      }
+    } catch (_) { /* malformed — skip */ }
+  }
+  const uvLockPath = path.join(stagingDir, 'uv.lock');
+  if (fs.existsSync(uvLockPath)) {
+    try {
+      const txt = fs.readFileSync(uvLockPath, 'utf8');
+      for (const m of txt.matchAll(/^name\s*=\s*"([^"]+)"/gm)) {
+        names.add(m[1].toLowerCase());
+      }
+    } catch (_) { /* skip */ }
+  }
+  const poetryLockPath = path.join(stagingDir, 'poetry.lock');
+  if (fs.existsSync(poetryLockPath)) {
+    try {
+      const txt = fs.readFileSync(poetryLockPath, 'utf8');
+      for (const m of txt.matchAll(/^name\s*=\s*"([^"]+)"/gm)) {
+        names.add(m[1].toLowerCase());
+      }
+    } catch (_) { /* skip */ }
+  }
+  const pyprojectPath = path.join(stagingDir, 'pyproject.toml');
+  if (fs.existsSync(pyprojectPath) && names.size === 0) {
+    try {
+      const txt = fs.readFileSync(pyprojectPath, 'utf8');
+      // Best-effort regex parse of [tool.poetry.dependencies] / [project.dependencies].
+      // pyproject is TOML; we don't pull in a TOML parser for v1 — Phase 3
+      // analyzer can do this properly.
+      for (const m of txt.matchAll(/^\s*([A-Za-z0-9._-]+)\s*=/gm)) {
+        const name = m[1].toLowerCase();
+        if (name === 'python' || name === 'name' || name === 'version') continue;
+        names.add(name);
+      }
+    } catch (_) { /* skip */ }
+  }
+  return names;
+}
+
+function scanPythonDeps(stagingDir) {
+  const findings = [];
+  const names = extractPythonDepNames(stagingDir);
+  for (const n of names) {
+    if (KNOWN_MALICIOUS_PYTHON.has(n)) {
+      findings.push({
+        severity: 'warning', category: 'supply_chain',
+        file: null, line: null,
+        description: `python dep '${n}' matches a known-typosquat entry`,
+        snippet: n,
+      });
+    }
+  }
+  findings.push({
+    severity: 'info', category: 'supply_chain',
+    file: null, line: null,
+    description: `python dep scan: ${names.size} package${names.size === 1 ? '' : 's'} (direct + transitive when lockfile present)`,
+    snippet: '',
+  });
+  return findings;
+}
+
 function archMatches(declared, host) {
   if (!Array.isArray(declared) || declared.length === 0) return true;
   const aliases = ARCH_ALIASES[host] || [host];
@@ -373,6 +458,27 @@ const AppReviewService = {
             snippet: '',
           });
         }
+      }
+    }
+
+    // PR 2.1: Python branch — typosquat scan + dep summary. We don't shell
+    // out to safety/osv-scanner in v1 (Phase 3 PR 3.6 plugs those in here);
+    // this stub flags known typosquats against a small hardcoded list.
+    const hasPyManifest =
+      fs.existsSync(path.join(stagingDir, 'pyproject.toml')) ||
+      fs.existsSync(path.join(stagingDir, 'requirements.txt')) ||
+      fs.existsSync(path.join(stagingDir, 'uv.lock')) ||
+      fs.existsSync(path.join(stagingDir, 'poetry.lock'));
+    if (hasPyManifest) {
+      try {
+        findings.push(...scanPythonDeps(stagingDir));
+      } catch (e) {
+        findings.push({
+          severity: 'info', category: 'supply_chain',
+          file: null, line: null,
+          description: `python dep scan failed: ${e.message?.slice(0, 200) || 'unknown'}`,
+          snippet: '',
+        });
       }
     }
 
