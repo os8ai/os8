@@ -888,6 +888,21 @@ async function init() {
   // ===== Preview URL Changed Handler =====
   window.os8.preview.onUrlChanged(async (appId, url) => {
     if (getCurrentApp() && getCurrentApp().id === appId && url) {
+      // PR 1.20: external apps get a cosmetic os8://apps/<slug> label and
+      // the URL bar is read-only — typing arbitrary URLs into an external
+      // app's view doesn't make sense. The real URL is preserved on
+      // dataset.realUrl for the dev-mode debug overlay.
+      const cur = getCurrentApp();
+      if (cur.app_type === 'external') {
+        previewUrlInput.value = `os8://apps/${cur.slug}`;
+        previewUrlInput.dataset.realUrl = url;
+        previewUrlInput.readOnly = true;
+        return;
+      } else {
+        previewUrlInput.readOnly = false;
+        delete previewUrlInput.dataset.realUrl;
+      }
+
       // URLs use appId internally (e.g., /1769977353030-t78455kh2/photo-to-avatar)
       const appIdPath = '/' + getCurrentApp().id + '/';
       const idx = url.indexOf(appIdPath);
