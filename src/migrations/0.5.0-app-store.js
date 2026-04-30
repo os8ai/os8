@@ -40,7 +40,8 @@ const APPS_NEW_COLUMNS = [
   'dev_mode INTEGER DEFAULT 0',
   'auto_update INTEGER DEFAULT 0',
   'update_available INTEGER DEFAULT 0',
-  'update_to_commit TEXT'
+  'update_to_commit TEXT',
+  'update_status TEXT'
 ];
 
 function tryAlter(db, sql) {

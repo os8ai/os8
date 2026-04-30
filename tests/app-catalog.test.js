@@ -106,7 +106,8 @@ function makeBaseDb() {
     CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE apps (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL,
-      status TEXT DEFAULT 'active', app_type TEXT DEFAULT 'regular'
+      status TEXT DEFAULT 'active', app_type TEXT DEFAULT 'regular',
+      updated_at TEXT
     );
     CREATE TABLE app_env_variables (
       id TEXT PRIMARY KEY, app_id TEXT REFERENCES apps(id) ON DELETE CASCADE,
@@ -128,18 +129,7 @@ describe('AppCatalogService.sync', () => {
     delete require.cache[require.resolve('../src/services/app-catalog')];
     MIGRATION = require('../src/migrations/0.5.0-app-store');
     AppCatalogService = require('../src/services/app-catalog');
-    db = new Database(':memory:');
-    db.exec(`
-      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
-      CREATE TABLE apps (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, slug TEXT UNIQUE NOT NULL,
-        status TEXT DEFAULT 'active', app_type TEXT DEFAULT 'regular'
-      );
-      CREATE TABLE app_env_variables (
-        id TEXT PRIMARY KEY, app_id TEXT REFERENCES apps(id) ON DELETE CASCADE,
-        key TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(app_id, key)
-      );
-    `);
+    db = makeBaseDb();
     await MIGRATION.up({ db, logger: silentLogger });
   });
 

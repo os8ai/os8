@@ -387,6 +387,29 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // POST /api/apps/:id/update (PR 1.25). Body: { commit?: string }.
+  // Defaults to apps.update_to_commit (set by sync's detectUpdates).
+  // Returns { kind: 'updated' | 'conflict', commit, files? }.
+  router.post('/:id/update', express.json(), async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const target = (req.body && req.body.commit) || app.update_to_commit;
+      if (!target) {
+        return res.status(400).json({ error: 'no target commit (no update available)' });
+      }
+      const AppCatalogService = require('../services/app-catalog');
+      const result = await AppCatalogService.update(db, app.id, target);
+      res.json(result);
+    } catch (err) {
+      console.error('[Apps API] update error:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/apps/:id/uninstall (PR 1.24). Body: { deleteData: bool }.
   // Default keeps blob/db/secrets so reinstall can offer "restore data."
   router.post('/:id/uninstall', express.json(), async (req, res) => {

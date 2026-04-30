@@ -261,12 +261,17 @@ const AppCatalogService = {
       }
     }
 
+    // PR 1.25 — recompute update_available flags now that the catalog has
+    // moved. Cheap (only runs against installed external apps).
+    const flagged = AppCatalogService.detectUpdates(db);
+
     return {
       synced: added + updated,
       added,
       updated,
       removed,
       unchanged,
+      flaggedForUpdate: flagged,
       alarms,
     };
   },
@@ -369,6 +374,120 @@ const AppCatalogService = {
     const body = await resp.json();
     // PR 0.10's contract: { app: { …listing fields…, manifestYaml } }
     return body?.app || body;
+  },
+
+  /**
+   * PR 1.25 — flag installed apps whose catalog row has moved to a newer
+   * commit. Returns the count of newly-flagged apps.
+   */
+  detectUpdates(db) {
+    const candidates = db.prepare(`
+      SELECT a.id, a.upstream_resolved_commit AS installed_commit,
+             c.upstream_resolved_commit AS catalog_commit
+      FROM apps a
+      JOIN app_catalog c ON c.slug = a.external_slug AND c.channel = a.channel
+      WHERE a.app_type = 'external'
+        AND a.status = 'active'
+        AND a.upstream_resolved_commit IS NOT NULL
+        AND c.upstream_resolved_commit IS NOT NULL
+        AND c.deleted_at IS NULL
+        AND a.upstream_resolved_commit != c.upstream_resolved_commit
+    `).all();
+
+    let flagged = 0;
+    const update = db.prepare(`
+      UPDATE apps SET update_available = 1, update_to_commit = ?,
+             updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND (update_available != 1 OR update_to_commit != ?)
+    `);
+    for (const c of candidates) {
+      const r = update.run(c.catalog_commit, c.id, c.catalog_commit);
+      if (r.changes > 0) flagged++;
+    }
+    return flagged;
+  },
+
+  /**
+   * PR 1.25 — apply an available update. Semantics:
+   *   - apps.user_branch is null → fast-forward user/main onto targetCommit.
+   *   - apps.user_branch set → merge targetCommit into user/main; on
+   *     conflict, set apps.update_status='conflict' and return
+   *     { kind: 'conflict', files }. The renderer drives per-file resolution.
+   *
+   * On success, clears apps.update_available + update_to_commit and bumps
+   * apps.upstream_resolved_commit. Re-running adapter install + restart is
+   * the renderer's responsibility (the install pipeline can be reused).
+   */
+  async update(db, appId, targetCommit) {
+    if (!/^[0-9a-f]{40}$/.test(targetCommit || '')) {
+      throw new Error('targetCommit must be a 40-char SHA');
+    }
+    const { AppService } = require('./app');
+    const app = AppService.getById(db, appId);
+    if (!app) throw new Error(`app ${appId} not found`);
+    if (app.app_type !== 'external') throw new Error('not an external app');
+
+    const pathmod = require('path');
+    const { APPS_DIR } = require('../config');
+    const { spawn } = require('node:child_process');
+    const appDir = pathmod.join(APPS_DIR, appId);
+
+    function run(args, opts = {}) {
+      return new Promise((resolve, reject) => {
+        const child = spawn('git', ['-C', appDir, ...args], {
+          shell: false, stdio: ['ignore', 'pipe', 'pipe'], ...opts,
+        });
+        let stdout = '', stderr = '';
+        child.stdout.on('data', d => { stdout += d.toString(); });
+        child.stderr.on('data', d => { stderr += d.toString(); });
+        child.on('error', reject);
+        child.on('exit', code => {
+          if (code === 0) resolve({ stdout, stderr });
+          else reject(new Error(`git ${args.join(' ')} exited ${code}: ${stderr.trim().slice(-300)}`));
+        });
+      });
+    }
+
+    // 1. Best-effort fetch — the user's clone may already have the SHA.
+    try { await run(['fetch', '--depth', '50', 'origin', targetCommit]); }
+    catch (_) { /* fall through; we'll catch a missing-commit error below */ }
+    try { await run(['cat-file', '-e', `${targetCommit}^{commit}`]); }
+    catch (e) {
+      throw new Error(`target commit ${targetCommit.slice(0, 8)} not in repo: ${e.message}`);
+    }
+
+    // 2. Apply.
+    if (!app.user_branch) {
+      await run(['checkout', '-q', '-B', 'user/main', targetCommit]);
+    } else {
+      await run(['checkout', '-q', 'user/main']);
+      try {
+        await run(['-c', 'user.email=os8@os8.local', '-c', 'user.name=OS8',
+                   'merge', '--no-edit', targetCommit]);
+      } catch (e) {
+        const { stdout } = await run(['status', '--porcelain']);
+        const files = stdout.split('\n')
+          .filter(line => /^(UU|AA|DD|UA|AU|DU|UD) /.test(line))
+          .map(line => line.slice(3));
+        db.prepare(
+          `UPDATE apps SET update_status = 'conflict', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        ).run(appId);
+        return { kind: 'conflict', files, error: e.message };
+      }
+    }
+
+    // 3. Bump the apps row.
+    db.prepare(`
+      UPDATE apps
+        SET upstream_resolved_commit = ?,
+            update_available = 0,
+            update_to_commit = NULL,
+            update_status = NULL,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(targetCommit, appId);
+
+    return { kind: 'updated', commit: targetCommit, hadUserEdits: !!app.user_branch };
   },
 };
 
