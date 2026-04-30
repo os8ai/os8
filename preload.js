@@ -365,12 +365,31 @@ contextBridge.exposeInMainWorld('os8', {
     },
   },
 
-  // App Store (PR 1.4 — shell only; PR 1.16+ adds install/approve/cancel)
+  // App Store (PR 1.4 + PR 1.17)
   appStore: {
     validateManifest: (manifestYaml, opts) =>
       ipcRenderer.invoke('app-store:validate-manifest', manifestYaml, opts),
     renderPlan: (slug, channel) =>
       ipcRenderer.invoke('app-store:render-plan', slug, channel),
+
+    // PR 1.17 — install pipeline driving the modal.
+    install: (slug, commit, channel, source) =>
+      ipcRenderer.invoke('app-store:install', { slug, commit, channel, source }),
+    approve: (jobId, secrets) =>
+      ipcRenderer.invoke('app-store:approve', jobId, secrets),
+    cancel: (jobId) =>
+      ipcRenderer.invoke('app-store:cancel', jobId),
+    getJob: (jobId) =>
+      ipcRenderer.invoke('app-store:get-job', jobId),
+
+    onJobUpdate: (callback) => {
+      const listener = (_e, payload) => callback(payload);
+      ipcRenderer.on('app-store:job-update', listener);
+      return () => ipcRenderer.removeListener('app-store:job-update', listener);
+    },
+    removeJobUpdateListeners: () => {
+      ipcRenderer.removeAllListeners('app-store:job-update');
+    },
   },
 
   // Zoom

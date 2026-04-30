@@ -11,8 +11,11 @@
 const { ipcMain } = require('electron');
 const { parseManifest, validateManifest } = require('../services/manifest-validator');
 const AppCatalogService = require('../services/app-catalog');
+const AppInstaller = require('../services/app-installer');
+const InstallJobs = require('../services/app-install-jobs');
+const InstallEvents = require('../services/install-events');
 
-function registerAppStoreHandlers({ db }) {
+function registerAppStoreHandlers({ db, mainWindow }) {
   ipcMain.handle('app-store:validate-manifest', (_e, yamlText, opts) => {
     try {
       const manifest = parseManifest(yamlText);
@@ -36,6 +39,75 @@ function registerAppStoreHandlers({ db }) {
       return { ok: false, error: err.message };
     }
   });
+
+  ipcMain.handle('app-store:install', async (_e, { slug, commit, channel = 'verified', source = 'manual' } = {}) => {
+    try {
+      const job = await AppInstaller.start(db, { slug, commit, channel, source });
+      return { ok: true, jobId: job.id, status: job.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('app-store:approve', async (_e, jobId, secrets = {}) => {
+    try {
+      const job = await AppInstaller.approve(db, jobId, { secrets });
+      return { ok: true, jobId: job.id, status: job.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('app-store:cancel', async (_e, jobId) => {
+    try {
+      const job = AppInstaller.cancel(db, jobId);
+      return { ok: true, jobId: job.id, status: job.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('app-store:get-job', (_e, jobId) => {
+    const job = InstallJobs.get(db, jobId);
+    if (!job) return { ok: false, error: 'job not found' };
+    let reviewReport = null;
+    if (job.review_report) {
+      try { reviewReport = JSON.parse(job.review_report); }
+      catch (_) { reviewReport = null; }
+    }
+    return {
+      ok: true,
+      job: {
+        id: job.id,
+        appId: job.app_id,
+        externalSlug: job.external_slug,
+        upstreamResolvedCommit: job.upstream_resolved_commit,
+        channel: job.channel,
+        status: job.status,
+        stagingDir: job.staging_dir,
+        reviewReport,
+        errorMessage: job.error_message,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+      },
+    };
+  });
+
+  // Forward every job update to the renderer. The renderer toggles its
+  // `appStore.onJobUpdate(callback)` subscription via preload.
+  const relay = (payload) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('app-store:job-update', payload); }
+      catch (_) { /* renderer may be in transition — ignore */ }
+    }
+  };
+  InstallEvents.on('job-update', relay);
+
+  return {
+    cleanupAppStoreEvents() {
+      InstallEvents.off('job-update', relay);
+    },
+  };
 }
 
 module.exports = registerAppStoreHandlers;

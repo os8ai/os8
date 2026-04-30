@@ -77,12 +77,13 @@ function registerAllHandlers(deps) {
 
   registerAccountHandlers(deps);
   registerOnboardingHandlers(deps);
-  registerAppStoreHandlers(deps);
+  const appStoreCleanup = registerAppStoreHandlers(deps);
 
   cleanupFunctions = {
     ...previewCleanup,
     ...terminalCleanup,
-    ...inspectCleanup
+    ...inspectCleanup,
+    ...(appStoreCleanup || {})
   };
 
   return cleanupFunctions;

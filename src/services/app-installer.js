@@ -23,6 +23,7 @@ const { spawn } = require('node:child_process');
 const { APPS_DIR, APPS_STAGING_DIR } = require('../config');
 const InstallJobs = require('./app-install-jobs');
 const AppCatalogService = require('./app-catalog');
+const InstallEvents = require('./install-events');
 
 const dnsLookup = promisify(dns.lookup);
 
@@ -42,11 +43,17 @@ function subscribe(jobId, fn) {
 }
 
 function publish(jobId, event) {
+  const payload = { jobId, ...event };
+  // Per-job subscribers (SSE log stream).
   const set = _subscribers.get(jobId);
-  if (!set) return;
-  for (const fn of set) {
-    try { fn(event); } catch (_) { /* subscriber failures shouldn't break the install */ }
+  if (set) {
+    for (const fn of set) {
+      try { fn(event); } catch (_) { /* subscriber failures shouldn't break the install */ }
+    }
   }
+  // Global emitter (IPC relays to the renderer).
+  try { InstallEvents.emit('job-update', payload); }
+  catch (_) { /* never break the install on emitter issues */ }
 }
 
 // --- spawn helpers (no shell strings) ----------------------------------------
