@@ -133,8 +133,26 @@ class AppProcessRegistry {
     }
 
     if (devMode) {
-      entry._watcherDispose = adapter.watchFiles(manifest, appDir,
-        (event) => onProgress?.({ kind: 'change', ...event }));
+      // PR 1.23: wire the debounced auto-committer alongside the file
+      // watcher. Each chokidar event feeds both `onProgress` (for the
+      // dev-mode log panel) AND the committer (for fork-on-first-edit).
+      const AppGit = require('./app-git');
+      const committer = AppGit.startDebouncedCommitter(appDir);
+      entry._committer = committer;
+
+      const dispose = adapter.watchFiles(manifest, appDir, (event) => {
+        onProgress?.({ kind: 'change', ...event });
+        if (event?.file) {
+          // Skip noise: ignored paths are filtered in the watcher already,
+          // but extra defense against committer bugs.
+          committer.onChange(event.file);
+        }
+      });
+      // Compose dispose: stop watching + flush any pending commit.
+      entry._watcherDispose = async () => {
+        try { dispose(); } catch (_) { /* ignore */ }
+        try { await committer.flush(); } catch (_) { /* ignore */ }
+      };
     }
 
     if (!this._reaperTimer) this._startReaper();
@@ -145,7 +163,7 @@ class AppProcessRegistry {
     const entry = this._processes.get(appId);
     if (!entry) return;
     entry.status = 'stopping';
-    try { entry._watcherDispose?.(); } catch (_) { /* ignore */ }
+    try { await entry._watcherDispose?.(); } catch (_) { /* ignore */ }
     try { await entry._adapter.stop(entry._adapterInfo); }
     catch (e) { console.warn(`[AppProcessRegistry] stop ${appId} (${reason}):`, e.message); }
     entry.status = 'stopped';

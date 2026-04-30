@@ -387,6 +387,52 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // GET /api/apps/:id/git/check (PR 1.23) — inspect working-tree state on
+  // dev-mode activation. Returns { kind: 'clean' | 'dirty', branch, status,
+  // untracked }.
+  router.get('/:id/git/check', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const { APPS_DIR } = require('../config');
+      const path = require('path');
+      const AppGit = require('../services/app-git');
+      const result = await AppGit.checkOnActivation(path.join(APPS_DIR, app.id));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /api/apps/:id/git/recover (PR 1.23) — apply one of the three
+  // recovery actions: continue / reset / stash.
+  router.post('/:id/git/recover', express.json(), async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+      const action = String(req.body?.action || '');
+      if (!['continue', 'reset', 'stash'].includes(action)) {
+        return res.status(400).json({ error: 'action must be continue|reset|stash' });
+      }
+      const { APPS_DIR } = require('../config');
+      const path = require('path');
+      const AppGit = require('../services/app-git');
+      const appDir = path.join(APPS_DIR, app.id);
+      if (action === 'continue') await AppGit.continueOnDirty(appDir);
+      else if (action === 'reset') await AppGit.resetToManifest(appDir, app.upstream_resolved_commit);
+      else if (action === 'stash') await AppGit.stashAndContinue(appDir);
+      res.json({ ok: true, action });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // POST /api/apps/:id/dev-mode (PR 1.22) — toggle dev mode for an external
   // app. When ON, the next process start wires the chokidar watcher per
   // manifest.dev.watch (PR 1.11b). The toggle persists to apps.dev_mode.
