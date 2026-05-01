@@ -249,11 +249,29 @@ function scheduleAppCatalogSync() {
     console.log(`[AppCatalog] ${CATALOG_SYNC_HOUR}am sync triggered`);
     try {
       const AppCatalogService = require('./services/app-catalog');
-      const r = await AppCatalogService.sync(db, { channel: 'verified' });
-      if (r.alarms?.length > 0) {
-        console.warn('[AppCatalog] Sync alarms:', r.alarms.join('; '));
+
+      // Verified always syncs unless explicitly disabled (PR 3.5).
+      const verifiedEnabled = SettingsService.get(db, 'app_store.channel.verified.enabled');
+      if (verifiedEnabled !== 'false' && verifiedEnabled !== false) {
+        const v = await AppCatalogService.sync(db, { channel: 'verified' });
+        if (v.alarms?.length > 0) {
+          console.warn('[AppCatalog/verified] Sync alarms:', v.alarms.join('; '));
+        } else {
+          console.log(`[AppCatalog/verified] +${v.added} updated:${v.updated} -${v.removed}`);
+        }
       } else {
-        console.log(`[AppCatalog] Sync: +${r.added} updated:${r.updated} -${r.removed}`);
+        console.log('[AppCatalog/verified] disabled in Settings — skipping sync');
+      }
+
+      // Community syncs only when explicitly enabled (PR 3.5).
+      const communityEnabled = SettingsService.get(db, 'app_store.channel.community.enabled');
+      if (communityEnabled === 'true' || communityEnabled === true) {
+        const c = await AppCatalogService.sync(db, { channel: 'community' });
+        if (c.alarms?.length > 0) {
+          console.warn('[AppCatalog/community] Sync alarms:', c.alarms.join('; '));
+        } else {
+          console.log(`[AppCatalog/community] +${c.added} updated:${c.updated} -${c.removed}`);
+        }
       }
     } catch (e) {
       console.warn('[AppCatalog] Scheduled sync failed:', e.message);
@@ -261,6 +279,12 @@ function scheduleAppCatalogSync() {
     scheduleAppCatalogSync();
   }, msUntilSync);
   appCatalogSyncTimer.unref?.();
+}
+
+// PR 3.5 — exposed for IPC `app-store:reschedule-syncs`. Cancels the
+// pending fire and reschedules from the current settings.
+function rescheduleAppCatalogSync() {
+  scheduleAppCatalogSync();
 }
 
 // Generate call URL (uses tunnel URL if configured, otherwise localhost)
@@ -1291,5 +1315,6 @@ module.exports = {
   setAgentChangedCallback,
   setBuildStartedCallback,
   setBuildCompletedCallback,
+  rescheduleAppCatalogSync,
   DEFAULT_PORT
 };

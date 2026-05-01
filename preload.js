@@ -392,6 +392,12 @@ contextBridge.exposeInMainWorld('os8', {
     installFromManifest: (manifest, upstreamResolvedCommit, source) =>
       ipcRenderer.invoke('app-store:install-from-manifest', { manifest, upstreamResolvedCommit, source }),
 
+    // PR 3.5 — per-channel settings management
+    rescheduleSyncs: () =>
+      ipcRenderer.invoke('app-store:reschedule-syncs'),
+    syncChannelNow: (channel) =>
+      ipcRenderer.invoke('app-store:sync-channel-now', channel),
+
     onJobUpdate: (callback) => {
       const listener = (_e, payload) => callback(payload);
       ipcRenderer.on('app-store:job-update', listener);

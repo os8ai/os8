@@ -168,6 +168,21 @@ const AppInstaller = {
       throw new Error('upstreamResolvedCommit must be a 40-char SHA');
     }
 
+    // PR 3.5 — defense-in-depth: refuse Developer Import when the user has
+    // disabled the channel in Settings → App Store. The home-screen button
+    // is also hidden in that state, but DevTools could still reach this IPC.
+    try {
+      const SettingsService = require('./settings');
+      const enabled = SettingsService.get(db, 'app_store.channel.developer-import.enabled');
+      if (enabled === 'false' || enabled === false) {
+        throw new Error('Developer Import is disabled in Settings → App Store');
+      }
+    } catch (e) {
+      // Re-throw "disabled" errors verbatim; swallow lookup errors (e.g. test
+      // fixtures without the settings table).
+      if (/disabled in Settings/.test(e.message)) throw e;
+    }
+
     const yaml = require('js-yaml');
     const crypto = require('crypto');
     const manifestYaml = yaml.dump(manifest);
@@ -228,6 +243,23 @@ const AppInstaller = {
   async _run(db, jobId, { secrets: _secrets, source: _source }) {
     let job = InstallJobs.transition(db, jobId, { from: 'pending', to: 'cloning' });
     publish(jobId, { kind: 'status', status: 'cloning', job });
+
+    // PR 3.5 — defense-in-depth: refuse community-channel installs when the
+    // channel is disabled in Settings. Lookup is best-effort (test fixtures
+    // without the settings table fall through silently). Verified is always
+    // allowed at this layer; users can disable verified discovery in Settings,
+    // but a job that's already been queued via deeplink should still install.
+    if (job.channel === 'community') {
+      try {
+        const SettingsService = require('./settings');
+        const enabled = SettingsService.get(db, 'app_store.channel.community.enabled');
+        if (enabled !== 'true' && enabled !== true) {
+          throw new Error('Community channel is disabled in Settings → App Store');
+        }
+      } catch (e) {
+        if (/disabled in Settings/.test(e.message)) throw e;
+      }
+    }
 
     // 1. Resolve manifest from local catalog.
     const entry = await AppCatalogService.get(db, job.external_slug, { channel: job.channel });

@@ -43,6 +43,8 @@ export async function switchSettingsSection(sectionId) {
     await loadCapabilities();
   } else if (sectionId === 'privacy') {
     await loadPrivacySettings();
+  } else if (sectionId === 'app-store') {
+    await loadAppStoreSettings();
   }
 }
 
@@ -310,6 +312,96 @@ async function loadPrivacySettings() {
       } else {
         el.checked = !!val;
       }
+    }
+  }
+}
+
+/**
+ * App Store channel settings (PR 3.5).
+ * Toggles control which channels the desktop syncs and whether the Developer
+ * Import button is shown. Storage keys are plain strings in `settings`.
+ */
+function readBoolSetting(value, defaultBool) {
+  if (value === undefined || value === null) return defaultBool;
+  return value === 'true' || value === true;
+}
+
+async function loadAppStoreSettings() {
+  try {
+    const verified  = await window.os8.settings.get('app_store.channel.verified.enabled');
+    const community = await window.os8.settings.get('app_store.channel.community.enabled');
+    const devImport = await window.os8.settings.get('app_store.channel.developer-import.enabled');
+    const idleMs    = await window.os8.settings.get('app_store.idle_timeout_ms');
+
+    const $verified  = document.getElementById('appStoreChannelVerified');
+    const $community = document.getElementById('appStoreChannelCommunity');
+    const $devImport = document.getElementById('appStoreChannelDevImport');
+    const $idle      = document.getElementById('appStoreIdleTimeout');
+
+    if ($verified)  $verified.checked  = readBoolSetting(verified,  true);
+    if ($community) $community.checked = readBoolSetting(community, false);
+    if ($devImport) $devImport.checked = readBoolSetting(devImport, true);
+    if ($idle && idleMs != null) $idle.value = String(idleMs);
+  } catch (err) {
+    console.error('Failed to load App Store settings:', err);
+  }
+}
+
+async function saveAppStoreSettings() {
+  try {
+    const wasCommunity = readBoolSetting(
+      await window.os8.settings.get('app_store.channel.community.enabled'),
+      false
+    );
+
+    const verified  = !!document.getElementById('appStoreChannelVerified')?.checked;
+    const community = !!document.getElementById('appStoreChannelCommunity')?.checked;
+    const devImport = !!document.getElementById('appStoreChannelDevImport')?.checked;
+    const idleMs    = document.getElementById('appStoreIdleTimeout')?.value || '1800000';
+
+    await window.os8.settings.set('app_store.channel.verified.enabled',         String(verified));
+    await window.os8.settings.set('app_store.channel.community.enabled',        String(community));
+    await window.os8.settings.set('app_store.channel.developer-import.enabled', String(devImport));
+    await window.os8.settings.set('app_store.idle_timeout_ms',                  String(idleMs));
+
+    // Re-evaluate the daily catalog scheduler.
+    if (window.os8.appStore?.rescheduleSyncs) {
+      try { await window.os8.appStore.rescheduleSyncs(); }
+      catch (e) { console.warn('rescheduleSyncs failed:', e); }
+    }
+
+    // First-time enable: kick an immediate community sync so the user sees
+    // listings without waiting for the daily timer.
+    let inlineMsg = 'Saved.';
+    if (!wasCommunity && community && window.os8.appStore?.syncChannelNow) {
+      try {
+        const r = await window.os8.appStore.syncChannelNow('community');
+        if (r?.ok) {
+          const added = r.added ?? 0;
+          inlineMsg = `Saved. Synced community channel (+${added} new).`;
+        } else {
+          inlineMsg = `Saved. Community sync warning: ${r?.error || 'unknown'}`;
+        }
+      } catch (e) {
+        inlineMsg = `Saved. Community sync error: ${e.message}`;
+      }
+    }
+
+    // Re-render the home action bar so the Import button hides/shows.
+    document.dispatchEvent(new CustomEvent('app-store:settings-changed'));
+
+    const status = document.getElementById('appStoreSaveStatus');
+    if (status) {
+      status.textContent = inlineMsg;
+      status.hidden = false;
+      setTimeout(() => { status.hidden = true; }, 4000);
+    }
+  } catch (err) {
+    console.error('Failed to save App Store settings:', err);
+    const status = document.getElementById('appStoreSaveStatus');
+    if (status) {
+      status.textContent = `Error: ${err.message}`;
+      status.hidden = false;
     }
   }
 }
@@ -1124,6 +1216,12 @@ export function initSettingsListeners() {
 
   if (oauthPortSave) {
     oauthPortSave.addEventListener('click', saveOAuthPort);
+  }
+
+  // PR 3.5 — App Store save button
+  const appStoreSaveBtn = document.getElementById('appStoreSaveBtn');
+  if (appStoreSaveBtn) {
+    appStoreSaveBtn.addEventListener('click', saveAppStoreSettings);
   }
 
   // Tunnel URL handler

@@ -644,6 +644,13 @@
             </svg>
             API Keys
           </button>
+          <button class="settings-nav-item" data-section="app-store">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+            </svg>
+            App Store
+          </button>
           <button class="settings-nav-item" data-section="privacy">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -1084,6 +1091,84 @@
                 </svg>
                 Add Custom Variable
               </button>
+            </div>
+          </div>
+          <!-- App Store Section (PR 3.5) -->
+          <div class="settings-section" id="section-app-store">
+            <p class="setting-description" style="margin-bottom: 16px;">
+              Choose which app channels OS8 syncs and which install paths are available.
+              Apps already installed are unaffected; this controls discovery and new
+              installs.
+            </p>
+
+            <h4 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Channels</h4>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Verified</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    Curated, manually reviewed apps from <code>os8ai/os8-catalog</code>.
+                    Disabling hides verified apps from the catalog browser.
+                  </p>
+                </div>
+                <input type="checkbox" id="appStoreChannelVerified" checked />
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Community</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    Lightly-reviewed apps from <code>os8ai/os8-catalog-community</code>.
+                    Each install requires explicit per-capability permission grants.
+                  </p>
+                </div>
+                <input type="checkbox" id="appStoreChannelCommunity" />
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Developer Import</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    The "Import from GitHub" button on the home screen.
+                    Lets you paste a GitHub URL to install an arbitrary repo.
+                    Each install requires per-capability permission grants and
+                    explicit risk acknowledgment.
+                  </p>
+                </div>
+                <input type="checkbox" id="appStoreChannelDevImport" checked />
+              </div>
+            </div>
+
+            <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">External app idle reaper</h4>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <div>
+                  <label class="setting-label">Stop external apps after idle</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    Reclaims memory by stopping app dev servers that haven't been used.
+                  </p>
+                </div>
+                <select id="appStoreIdleTimeout" class="setting-select">
+                  <option value="300000">5 minutes</option>
+                  <option value="900000">15 minutes</option>
+                  <option value="1800000" selected>30 minutes</option>
+                  <option value="3600000">1 hour</option>
+                  <option value="7200000">2 hours</option>
+                  <option value="14400000">4 hours</option>
+                  <option value="0">Never (manual stop only)</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="margin-top: 24px; display: flex; gap: 12px; align-items: center;">
+              <button id="appStoreSaveBtn" class="primary-button">Save</button>
+              <span id="appStoreSaveStatus" class="setting-description" style="font-size: 12px; color: var(--color-success-text, #65a30d);" hidden></span>
             </div>
           </div>
           <!-- Privacy Section -->
