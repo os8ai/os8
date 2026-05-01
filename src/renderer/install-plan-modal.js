@@ -315,11 +315,26 @@ function gateEvaluation(manifest, state, hostArch) {
 
   if (state.lastStatus !== 'awaiting_approval') return { ok: false, reason: 'review not yet complete' };
   if (!state.review) return { ok: false, reason: 'review not yet available' };
+  // Critical findings (e.g., MAL-* known-malware advisories) remain a hard
+  // block on every channel — users shouldn't be able to install actual
+  // malware no matter how many ack checkboxes they've ticked.
   if ((state.review.findings || []).some(f => f.severity === 'critical')) {
     return { ok: false, reason: 'critical findings block install' };
   }
-  if (state.review.riskLevel === 'high') return { ok: false, reason: 'high risk — install blocked' };
-  if (state.review.riskLevel === 'medium' && !state.secondConfirmed) {
+  if (state.review.riskLevel === 'high') {
+    // Verified / community: hard block. Curators are expected to keep high-risk
+    // manifests out of these channels in the first place.
+    // Developer-import: the user has already ack'd unreviewed-code risk, so
+    // allow an explicit second-confirm override. This is the same pattern
+    // medium-risk uses; high-risk just needs a louder confirm dialog.
+    if (!state.devImportMode) {
+      return { ok: false, reason: 'high risk — install blocked' };
+    }
+    if (!state.secondConfirmed) {
+      return { ok: 'override', reason: 'high risk — confirm to override' };
+    }
+    // dev-import + secondConfirmed → fall through to ok:true
+  } else if (state.review.riskLevel === 'medium' && !state.secondConfirmed) {
     return { ok: 'override', reason: 'medium risk — confirm to override' };
   }
 
@@ -510,7 +525,13 @@ function wireEvents(state) {
     if (btn?.disabled) return;
 
     if (btn?.getAttribute('data-override') === '1' && !state.secondConfirmed) {
-      const ok = window.confirm('This app has medium-risk findings. Install anyway?');
+      const riskLevel = state.review?.riskLevel || 'medium';
+      const summary = state.review?.summary
+        ? `\n\nReview summary:\n${state.review.summary}`
+        : '';
+      const ok = window.confirm(
+        `This app has ${riskLevel}-risk findings. Install anyway?${summary}`
+      );
       if (!ok) return;
       state.secondConfirmed = true;
       patchModal(state);

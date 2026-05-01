@@ -145,6 +145,64 @@ describe('install plan gate — developer-import', () => {
     expect(out.reason).toMatch(/critical findings block/);
   });
 
+  // Hotfix regression — Leo's first real Developer Import (worldmonitor)
+  // came back high-risk and the install button stayed disabled with no path
+  // forward. For dev-import, the user has already ack'd unreviewed-code
+  // risk; high-risk should be overridable (one extra confirm), like medium.
+  it('dev-import with high-risk + ack offers an override on first click', () => {
+    const state = baseState({
+      lastStatus: 'awaiting_approval',
+      review: { riskLevel: 'high', findings: [] },
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+      secondConfirmed: false,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe('override');
+    expect(out.reason).toMatch(/high risk.*confirm to override/);
+  });
+
+  it('dev-import with high-risk + ack + secondConfirmed passes', () => {
+    const state = baseState({
+      lastStatus: 'awaiting_approval',
+      review: { riskLevel: 'high', findings: [] },
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+      secondConfirmed: true,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe(true);
+  });
+
+  it('verified channel high-risk is still hard-blocked (no override)', () => {
+    const verifiedManifest = { ...DEV_IMPORT_MANIFEST, review: { channel: 'verified' } };
+    const state = baseState({
+      lastStatus: 'awaiting_approval',
+      review: { riskLevel: 'high', findings: [] },
+      devImportMode: false,
+      secondConfirmed: true,   // even with second-confirm, verified high blocks
+    });
+    const out = gateEvaluation(verifiedManifest, state, 'arm64');
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/install blocked/);
+  });
+
+  it('high-risk + critical finding still hard-blocks even for dev-import', () => {
+    const state = baseState({
+      lastStatus: 'awaiting_approval',
+      review: {
+        riskLevel: 'high',
+        findings: [{ severity: 'critical', category: 'supply_chain', description: 'MAL-2024-1234 typosquat' }],
+      },
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+      secondConfirmed: true,   // even with both ack flags, critical blocks
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/critical findings block/);
+  });
+
   it('verified channel is unaffected by the dev-import ack flag', () => {
     const verifiedManifest = {
       ...DEV_IMPORT_MANIFEST,
