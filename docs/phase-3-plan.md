@@ -2044,4 +2044,146 @@ The user's project memory at `reference_app_store_repos.md` currently lists `os8
 
 ---
 
+## 7. Phase 3.5 — Realistic adapter smoke fixtures (post-Stage-6 follow-up)
+
+**Why this section exists.** Phase 3 PRs 3.1–3.6 merged on 2026-04-30. Stage 6 manual smoke testing surfaced **eleven additional hotfixes** (PRs #10–#20) before the first realistic Developer Import (`koala73/worldmonitor`) actually rendered end-to-end. The catalog of those hotfixes is in `MEMORY.md` (`project_phase_3_hotfix_retrospective.md`); the pattern is consistent: every smoke fixture used through Phase 1 and Phase 2 was a minimum-viable hello-world that didn't exercise the real-world paths users hit on first install.
+
+The standard going forward (recorded in `MEMORY.md` as `feedback_smoke_test_real_apps.md`): **before declaring an adapter "shipped", smoke against at least one real third-party app — not just the minimum-viable fixture under `tests/fixtures/`.** This section operationalises that for each existing adapter.
+
+**Scope.** Six PRs total. The minimum-viable fixtures (`vite-app`, `streamlit-hello`, `gradio-hello`, `hello-static`, plus whatever docker fixture is in place) **stay** — they're cheap, fast, and useful for unit-test-time validation. The realistic fixtures are **additions**, not replacements; they exist to be smoke-tested manually before any future change touches the runtime adapter or middleware chain.
+
+**Order.** Independent — pick whichever adapter you want to validate first. Phase 1/2 inheritance is unchanged.
+
+| PR | Adapter | Realistic fixture | Status |
+|---|---|---|---|
+| 3.5.1 | Node (Vite) | `koala73/worldmonitor` v2.5.23 | Already verified end-to-end during Stage 6; just needs official catalog entry |
+| 3.5.2 | Python (Streamlit) | TBD — candidate criteria below | Not yet smoked |
+| 3.5.3 | Python (Gradio) | TBD — candidate criteria below | Not yet smoked |
+| 3.5.4 | Static (Hugo / Jekyll) | TBD — candidate criteria below | Not yet smoked |
+| 3.5.5 | Docker (`schemaVersion: 2`) | TBD — candidate criteria below | Not yet smoked |
+| 3.5.6 | Cross-cutting follow-up: integration harness candidate (Playwright Electron) | n/a | Phase 4 candidate; spec only |
+
+### Candidate criteria (applies to PRs 3.5.2–3.5.5)
+
+A "realistic" fixture is a real public app, NOT one we control, that satisfies all of:
+
+- **Stable upstream.** Maintained for ≥6 months. At least one tagged release.
+- **Non-trivial config surface.** For Node: custom Vite/webpack config with path aliases, plugins, or PostCSS. For Python: `pyproject.toml` (not just `requirements.txt`), real dep set ≥10 packages, secrets handled via env. For static: real navigation, multiple HTML files, asset pipeline. For Docker: pinned by `image_digest`, declared `internal_port`, real readiness probe.
+- **Representative scale.** ≥100 deps for Node/Python; ≥20 routes for static; ≥1 GB image acceptable for Docker (we want to surface "first install is slow" issues, not hide them).
+- **License compatible.** Permissive or AGPL acceptable; document `legal.notes` for commercial-use restrictions.
+- **Smoke-testable without API keys.** Basic page render + nav must work without paid backends. The fixture's PR body documents which features need keys to be exercised further.
+- **Diversity.** Each fixture should exercise something the others don't. Worldmonitor covers Vite + Convex + Tauri infra surface; the Streamlit pick should NOT be another data dashboard if a Gradio ML app is also in scope, etc.
+
+### Per-PR contract
+
+Each PR (3.5.1 through 3.5.5) ships:
+
+1. **Manifest entry in `os8ai/os8-catalog`** (the verified channel) under `apps/<slug>/manifest.yaml`. The icon + screenshots + README are ≤100 KB / ≤500 KB respectively as the verified channel requires.
+2. **CI passes** the existing `validate`, `resolve-refs`, `lockfile-gate` workflows on the manifest.
+3. **End-to-end manual smoke checklist** in the PR body, run on Linux at minimum:
+   - [ ] Install via OS8 (Verified channel browse → Install) completes successfully.
+   - [ ] Approve flow runs through `pending → cloning → reviewing → awaiting_approval → installing → installed`.
+   - [ ] BrowserView renders the app without console errors (Vite/Streamlit/etc. boot to a useful state).
+   - [ ] App stays running for ≥60 seconds without crashing.
+   - [ ] Idle reaper kicks in after the configured timeout (or skip if testing with reaper at "Never").
+   - [ ] Uninstall removes the app, the apps row, and the per-app blob/db.
+4. **Hotfix cascade if needed.** First-install bugs (the PR-#10-through-#20 cluster) ARE allowed and expected; they're the entire point of doing this work. Cascades are documented inline in the PR description ("smoke surfaced N issue → opened PR #X to fix → re-ran smoke → green").
+5. **Cross-reference in `MEMORY.md`'s `feedback_smoke_test_real_apps.md`** entry — append the slug to the "go-to smoke targets" list so future agents know the fixture exists.
+
+### PR 3.5.1 — Node (Vite): worldmonitor
+
+**Lowest-risk, ship-this-first.** Already verified end-to-end during Stage 6. The implementation work is just adding a manifest in `os8ai/os8-catalog`.
+
+- **Slug:** `worldmonitor` (verified channel — separate from the dev-import-flow `koala73-worldmonitor` synthetic row).
+- **Upstream:** `https://github.com/koala73/worldmonitor`, `ref: v2.5.23` (resolves to commit `e51058e1765ef2f0c83ccb1d08d984bc59d23f10`).
+- **Manifest fields:** runtime kind `node`, framework `vite`, `dependency_strategy: frozen`, lockfile is `package-lock.json`. Permissions: outbound network true (the LLM review in Stage 6 documented all the upstream domains; declared in manifest matches). Reviewer: `os8ai`. Risk: `medium` (lots of warnings, no actual blockers post-#13).
+- **Files:** manifest yaml, icon (256×256 from upstream), 1–3 screenshots from upstream README, brief description.
+- **Acceptance:** the install Leo already ran during Stage 6 satisfies the manual checklist verbatim. Just transcribe.
+- **Risk:** very low. Opening the PR mostly just requires assembling the manifest and copying assets.
+
+### PR 3.5.2 — Python (Streamlit): TBD
+
+**Candidate criteria, pick one:**
+- A streamlit app from `https://github.com/streamlit/streamlit/tree/develop/lib/tests/streamlit/elements` is too minimal — skip.
+- A real dashboard like `https://github.com/jrieke/streamlit-fastapi` or one of the apps in `https://streamlit.io/gallery` (has license + repo links). Look for `requirements.txt` ≥20 packages and at least one Streamlit `multipage_app` structure.
+- An OSINT/data app to balance worldmonitor's intelligence theme — e.g., something with map rendering or HTTP API integrations.
+
+**Constraints unique to streamlit fixture:**
+- The `framework: streamlit` start argv (per `dev-import-drafter.js`) uses `--server.enableCORS=false` and `--server.enableXsrfProtection=false` — important for proxy compatibility (PR 2.2 GATE).
+- Streamlit binds via WebSocket; the reverse-proxy upgrade handler (PR 1.14) must work end-to-end.
+
+**Risk:** medium. PR 2.2 verified Streamlit-through-proxy with a minimal fixture; a real one might surface dep-install timing issues or new edge cases. Budget for one hotfix cascade.
+
+### PR 3.5.3 — Python (Gradio): TBD
+
+**Candidate criteria:**
+- A real ML demo from the Hugging Face Spaces gallery — most are gradio. Pick one that's CPU-runnable (no GPU dependency) for smoke purposes.
+- Look for ≥10 deps, includes model download, exposes a Gradio Interface or Blocks app.
+- Avoid anything requiring HF Hub auth tokens for the basic smoke path.
+
+**Constraints unique to gradio fixture:**
+- `framework: gradio` start argv defaults to `python app.py`. The drafter doesn't know about gradio's `share=True` parameter — the manifest needs to either bind via `server_name="127.0.0.1"` in the app code (likely if upstream-controlled) or override the start command.
+- ML model downloads on first install will be slow; the install plan modal should show progress (currently doesn't surface adapter logs well — possible Phase 4 follow-up).
+
+**Risk:** medium-high. Gradio is the least-tested adapter path; download + model surface adds complexity.
+
+### PR 3.5.4 — Static (Hugo / Jekyll): TBD
+
+**Candidate criteria:**
+- A real Hugo or Jekyll documentation site. Permissive license, plain HTML output (no client-side dynamic features that need a backend).
+- ≥20 generated pages, real CSS pipeline (Tailwind / SASS), at least one image + one font asset.
+
+**Suggestions to research:**
+- A Hugo site like `https://gohugo.io/themes/` (the theme gallery hosts real examples).
+- A Jekyll docs site for a small project.
+- Avoid Astro for now (Astro is technically static but uses a different adapter path).
+
+**Constraints unique to static fixture:**
+- The `static` adapter (PR 2.3) registers via `ReverseProxyService.registerStatic(slug, appId, appDir)` instead of `register(slug, appId, port)`. No upstream port; OS8 serves the bytes itself via `express.static`.
+- No HMR / WebSocket — should be the simplest install of the four.
+
+**Risk:** low. The static adapter has the smallest surface; main risk is `index.html` not being at the path the manifest declares.
+
+### PR 3.5.5 — Docker (`schemaVersion: 2`): TBD
+
+**Candidate criteria:**
+- A real public Docker image with a documented HTTP port. Pinned by digest. Permissive license.
+- ≥1 GB image is fine — we want to expose first-install network costs.
+- Examples to research: a small open-source service like `https://github.com/n8n-io/n8n` (CAREFUL — `n8n` is on the slug-blocklist for community channel, but verified channel is fine). Or a real ML serving image like `ghcr.io/huggingface/text-embeddings-inference`.
+
+**Constraints unique to docker fixture:**
+- v2 schema requires `image_digest`, `internal_port`, declared `runtime.kind: docker`.
+- Verified channel CI in `os8ai/os8-catalog` enforces `image_digest` is present (PR 2.5 invariant).
+- The docker adapter's readiness probe (HTTP on `internal_port`) must succeed before BrowserView loads.
+
+**Risk:** medium. The docker adapter (PR 2.5) had the least real-world testing in Phase 2 (only `os8ai/docker-hello`-style minimal fixtures). First real image install may surface image-pull retries, layer caching, port binding races.
+
+### PR 3.5.6 — Integration harness candidate (spec only)
+
+This is **not** an implementation PR — it's a Phase 4 candidate to write up so we don't lose the thread. The brief:
+
+> Add a Playwright-Electron driven harness that opens OS8, navigates to "Import from GitHub" or the verified-catalog browser, performs an install end-to-end against a known-good fixture, asserts the app icon appears and the BrowserView renders. Run as a CI job on `ubuntu-22.04` only initially. Replaces the manual smoke checklist for routine PRs.
+
+Sizing: 1-2 weeks. Out of scope for Phase 3.5; tracked here for Phase 4 planning.
+
+### Phase 3.5 acceptance criteria
+
+The whole Phase 3.5 work item ships when ALL of:
+
+1. **PR 3.5.1 (worldmonitor)** is merged with manifest live in `os8ai/os8-catalog`.
+2. **One** of PR 3.5.2 (Streamlit) or PR 3.5.3 (Gradio) is merged. Both is better, but one is enough — they exercise the same adapter (Python).
+3. **PR 3.5.4 (Static)** is merged.
+4. **PR 3.5.5 (Docker)** is merged.
+5. `feedback_smoke_test_real_apps.md` lists each shipped fixture as a "go-to smoke target".
+6. Any hotfix cascades surfaced during 3.5.* are merged into `main` first; the realistic fixture PR's smoke checklist is green at merge time.
+
+### Cross-cutting risks
+
+- **Each realistic fixture may surface its own hotfix cascade.** Stage 6 surfaced 11; this round may surface 0 or 5 or more. Budget the schedule with that in mind.
+- **Upstream version drift.** Pin `upstream.ref` aggressively (tag + resolved SHA in the manifest). Future tag-mutation alarms are the catalog's safety net (PR 0.8); they fire if the upstream re-points the tag.
+- **Dependency size on first install.** Vite cold-resolves ~2GB of node_modules for worldmonitor and takes 30+ seconds. Streamlit + Gradio + Docker each have similar first-install costs. The install plan modal currently doesn't show progress for the post-approval pipeline; users see "Installing..." with no detail. Phase 4 candidate: surface adapter logs in real-time during install (already buffered server-side; just needs UI).
+- **Post-merge upgrades.** Each fixture is pinned to a SHA, so it never drifts on its own. But when the upstream ships a new release we want to pull, the catalog PR is a normal `bump-tag` operation — no architectural difference from any other Verified-channel update.
+
+---
+
 *End of plan.*
