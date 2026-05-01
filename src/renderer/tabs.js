@@ -338,8 +338,15 @@ export async function createAppTab(app, options = {}) {
   let externalUrl = null;
   if (app.app_type === 'external') {
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(app.id)}/processes/start`,
-        { method: 'POST' });
+      // PR 3.13 hotfix: Electron loads index.html via `loadFile()` from a
+      // `file://` origin, so a relative `/api/...` fetch resolves to
+      // `file:///api/...` and fails with "Failed to fetch". Use the absolute
+      // localhost URL like the rest of the renderer (e.g., agent-panel.js).
+      const port = getServerPort();
+      const res = await fetch(
+        `http://localhost:${port}/api/apps/${encodeURIComponent(app.id)}/processes/start`,
+        { method: 'POST' }
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({ error: 'unknown' }));
         alert(`Failed to start ${app.name}: ${err.error || res.statusText}`);
@@ -701,8 +708,12 @@ export async function cleanupTabResources(tab) {
   // run inside OS8's server, not as a separate process.
   if (tab.app?.id && tab.app?.app_type === 'external') {
     try {
-      await fetch(`/api/apps/${encodeURIComponent(tab.app.id)}/processes/stop`,
-        { method: 'POST' });
+      // PR 3.13 hotfix: same absolute-URL fix as the start path above.
+      const port = getServerPort();
+      await fetch(
+        `http://localhost:${port}/api/apps/${encodeURIComponent(tab.app.id)}/processes/stop`,
+        { method: 'POST' }
+      );
     } catch (_) { /* best-effort — APR.stopAll() will catch leaks on quit */ }
   }
 
