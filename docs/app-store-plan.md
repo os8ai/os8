@@ -799,4 +799,12 @@ If new genuinely-open questions surface during implementation, append them below
 
 ---
 
+## 11. Deferred items
+
+A separate running list tracks items explicitly deferred during App Store work — small gaps, contingent migrations, optional polish, and intentional v1 exclusions kept on the radar.
+
+See **[app-store-deferred-items.md](./app-store-deferred-items.md)**.
+
+**Process:** before kicking off each new phase, scan the deferred-items doc and decide whether any items belong in that phase's scope. The list is not Phase 4 scope by default — phase scope is set by this master plan + the spec. The deferred list is a parking lot, not a backlog.
+
 *End of plan.*
