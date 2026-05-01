@@ -78,27 +78,43 @@ describe('install plan gate', () => {
     expect(out.reason).toMatch(/review not yet complete/);
   });
 
-  it('rejects critical findings even at low risk', () => {
-    const state = baseState({
+  // PR 3.10 hotfix: scan results are advisory across all channels — the
+  // user is the final authority. Critical findings are now an override
+  // path (single confirm), not a hard block. Same for high risk.
+  it('critical findings → override on first call, ok:true after secondConfirmed', () => {
+    const stateBefore = baseState({
       lastStatus: 'awaiting_approval',
       review: { riskLevel: 'low', findings: [{ severity: 'critical', description: 'a critical' }] },
       secrets: { NEWS_API_KEY: 'abcdefgh1234' },
     });
-    const out = gateEvaluation(VALID_MANIFEST, state, 'arm64');
-    expect(out.ok).toBe(false);
-    expect(out.reason).toMatch(/critical findings/);
+    const before = gateEvaluation(VALID_MANIFEST, stateBefore, 'arm64');
+    expect(before.ok).toBe('override');
+    expect(before.reason).toMatch(/critical finding/);
+
+    const stateAfter = baseState({
+      ...stateBefore,
+      secondConfirmed: true,
+    });
+    const after = gateEvaluation(VALID_MANIFEST, stateAfter, 'arm64');
+    expect(after.ok).toBe(true);
   });
 
-  it('blocks high-risk regardless of confirmation', () => {
-    const state = baseState({
+  it('high-risk → override on first call, ok:true after secondConfirmed', () => {
+    const stateBefore = baseState({
       lastStatus: 'awaiting_approval',
       review: { riskLevel: 'high', findings: [] },
       secrets: { NEWS_API_KEY: 'abcdefgh1234' },
+    });
+    const before = gateEvaluation(VALID_MANIFEST, stateBefore, 'arm64');
+    expect(before.ok).toBe('override');
+    expect(before.reason).toMatch(/high risk/);
+
+    const stateAfter = baseState({
+      ...stateBefore,
       secondConfirmed: true,
     });
-    const out = gateEvaluation(VALID_MANIFEST, state, 'arm64');
-    expect(out.ok).toBe(false);
-    expect(out.reason).toMatch(/high risk/);
+    const after = gateEvaluation(VALID_MANIFEST, stateAfter, 'arm64');
+    expect(after.ok).toBe(true);
   });
 
   it('medium risk requires second confirm', () => {

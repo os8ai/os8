@@ -315,26 +315,32 @@ function gateEvaluation(manifest, state, hostArch) {
 
   if (state.lastStatus !== 'awaiting_approval') return { ok: false, reason: 'review not yet complete' };
   if (!state.review) return { ok: false, reason: 'review not yet available' };
-  // Critical findings (e.g., MAL-* known-malware advisories) remain a hard
-  // block on every channel — users shouldn't be able to install actual
-  // malware no matter how many ack checkboxes they've ticked.
-  if ((state.review.findings || []).some(f => f.severity === 'critical')) {
-    return { ok: false, reason: 'critical findings block install' };
+
+  // PR 3.10 hotfix: scan results are ADVISORY across all channels — the user
+  // is always the final authority over what installs on their machine. Every
+  // severity now resolves to either ok:true (no findings) or ok:'override'
+  // (findings present, user confirms via dialog). The only remaining hard
+  // blocks are structural impossibilities (arch incompatibility, missing
+  // required secrets, both checked above) and the dev-import ack flag. Even
+  // MAL-* malware advisories from osv-scanner are overridable — the click-
+  // handler's confirm dialog surfaces the offending findings (with an extra
+  // KNOWN MALWARE warning when MAL-* is detected) so the user reads exactly
+  // what they're overriding before clicking OK.
+  const findings = state.review.findings || [];
+  const criticals = findings.filter(f => f.severity === 'critical');
+  if (criticals.length > 0 && !state.secondConfirmed) {
+    const hasMalwareAdvisory = criticals.some(f => /\bMAL-\d/.test(f.description || ''));
+    return {
+      ok: 'override',
+      reason: hasMalwareAdvisory
+        ? `${criticals.length} CRITICAL findings (incl. malware advisory) — confirm to override`
+        : `${criticals.length} critical finding${criticals.length === 1 ? '' : 's'} — confirm to override`,
+    };
   }
-  if (state.review.riskLevel === 'high') {
-    // Verified / community: hard block. Curators are expected to keep high-risk
-    // manifests out of these channels in the first place.
-    // Developer-import: the user has already ack'd unreviewed-code risk, so
-    // allow an explicit second-confirm override. This is the same pattern
-    // medium-risk uses; high-risk just needs a louder confirm dialog.
-    if (!state.devImportMode) {
-      return { ok: false, reason: 'high risk — install blocked' };
-    }
-    if (!state.secondConfirmed) {
-      return { ok: 'override', reason: 'high risk — confirm to override' };
-    }
-    // dev-import + secondConfirmed → fall through to ok:true
-  } else if (state.review.riskLevel === 'medium' && !state.secondConfirmed) {
+  if (state.review.riskLevel === 'high' && !state.secondConfirmed) {
+    return { ok: 'override', reason: 'high risk — confirm to override' };
+  }
+  if (state.review.riskLevel === 'medium' && !state.secondConfirmed) {
     return { ok: 'override', reason: 'medium risk — confirm to override' };
   }
 
@@ -525,13 +531,38 @@ function wireEvents(state) {
     if (btn?.disabled) return;
 
     if (btn?.getAttribute('data-override') === '1' && !state.secondConfirmed) {
-      const riskLevel = state.review?.riskLevel || 'medium';
-      const summary = state.review?.summary
-        ? `\n\nReview summary:\n${state.review.summary}`
-        : '';
-      const ok = window.confirm(
-        `This app has ${riskLevel}-risk findings. Install anyway?${summary}`
-      );
+      const review = state.review || {};
+      const riskLevel = review.riskLevel || 'medium';
+      const findings = review.findings || [];
+      const criticals = findings.filter(f => f.severity === 'critical');
+      const hasMalwareAdvisory = criticals.some(f => /\bMAL-\d/.test(f.description || ''));
+
+      let warning;
+      if (criticals.length > 0) {
+        const malwareHeader = hasMalwareAdvisory
+          ? '⚠ KNOWN MALWARE WARNING\n\n' +
+            'The security scan found dependencies flagged as known-malicious in the OSV malware advisory database (MAL-* IDs). Installing this app may compromise your machine.\n\n'
+          : '';
+        const lines = criticals.map((f, i) => {
+          const desc = (f.description || '').slice(0, 240);
+          return `${i + 1}. [${f.category || 'other'}] ${desc}`;
+        }).join('\n\n');
+        warning =
+          malwareHeader +
+          `This app has ${criticals.length} CRITICAL finding${criticals.length === 1 ? '' : 's'}:\n\n` +
+          lines +
+          (review.summary ? `\n\nReview summary:\n${review.summary}` : '') +
+          '\n\nInstall anyway?';
+      } else if (review.summary) {
+        warning =
+          `This app has ${riskLevel}-risk findings.\n\n` +
+          `Review summary:\n${review.summary}\n\n` +
+          'Install anyway?';
+      } else {
+        warning = `This app has ${riskLevel}-risk findings. Install anyway?`;
+      }
+
+      const ok = window.confirm(warning);
       if (!ok) return;
       state.secondConfirmed = true;
       patchModal(state);
@@ -624,10 +655,11 @@ function wireEvents(state) {
     });
   }
 
-  // Click-on-overlay closes (only when not actively installing).
-  root.addEventListener('click', e => {
-    if (e.target === root && state.lastStatus !== 'installing') closeInstallPlanModal();
-  });
+  // PR 3.10 hotfix: click-on-overlay no longer dismisses. The install-plan
+  // modal drives a state machine (review job in flight, secrets entered,
+  // ack ticked, etc.) — a stray click on the dimmed backdrop should not
+  // abort progress or lose state. Users dismiss via the explicit Cancel
+  // button.
 }
 
 function applyJobUpdate(state, payload) {
