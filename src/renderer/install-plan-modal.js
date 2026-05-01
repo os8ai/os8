@@ -294,6 +294,25 @@ function gateEvaluation(manifest, state, hostArch) {
     }
   }
 
+  // PR 3.2: developer-import requires explicit risk acknowledgment. Apply
+  // BEFORE the review-status gates below — for dev-import the modal opens
+  // before any install job runs, so we never reach 'awaiting_approval'
+  // unless the user can click Install to kick the job.
+  if (state.devImportMode && !state.devImportRisksAcknowledged) {
+    return { ok: false, reason: 'check "I understand the risks" to enable install' };
+  }
+
+  // PR 3.2 / hotfix: developer-import opens the modal BEFORE any install job
+  // is started. The first Install click kicks the pipeline (the click
+  // handler routes to `installFromManifest`). Verified deeplinks already
+  // have a job in flight by the time the modal opens, so the
+  // `awaiting_approval` gate below still applies for them.
+  // We only short-circuit when no job AND no review exist — once a review
+  // is present, we fall through to enforce critical-findings + risk-level.
+  if (state.devImportMode && !state.jobId && !state.review) {
+    return { ok: true };
+  }
+
   if (state.lastStatus !== 'awaiting_approval') return { ok: false, reason: 'review not yet complete' };
   if (!state.review) return { ok: false, reason: 'review not yet available' };
   if ((state.review.findings || []).some(f => f.severity === 'critical')) {
@@ -302,11 +321,6 @@ function gateEvaluation(manifest, state, hostArch) {
   if (state.review.riskLevel === 'high') return { ok: false, reason: 'high risk — install blocked' };
   if (state.review.riskLevel === 'medium' && !state.secondConfirmed) {
     return { ok: 'override', reason: 'medium risk — confirm to override' };
-  }
-
-  // PR 3.2: developer-import requires explicit risk acknowledgment.
-  if (state.devImportMode && !state.devImportRisksAcknowledged) {
-    return { ok: false, reason: 'check "I understand the risks" to enable install' };
   }
 
   return { ok: true };
