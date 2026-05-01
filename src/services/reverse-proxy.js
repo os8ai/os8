@@ -61,9 +61,18 @@ function _markHttpActive(appId) {
   } catch (_) { /* registry not available — acceptable in isolation */ }
 }
 
+// PR 3.14 — temporary diagnostic logging. Logs every register/unregister and
+// every host-header lookup the proxy makes. Lets us see whether a registered
+// slug is missing from `_proxies`, whether the Host header is what we expect,
+// and whether requests are being routed. Removable in a follow-up once
+// world-monitor's external-app launch is verified.
+const DEBUG = true;
+function dbg(...args) { if (DEBUG) console.log('[ReverseProxy]', ...args); }
+
 const ReverseProxyService = {
   register(localSlug, appId, port) {
     _proxies.set(localSlug, { appId, port });
+    dbg(`register slug="${localSlug}" → appId=${appId} port=${port} | _proxies.size=${_proxies.size}`);
   },
 
   // PR 2.3 — static-mode bypass. Mounts `express.static(appDir)` for the
@@ -81,11 +90,14 @@ const ReverseProxyService = {
       },
     });
     _staticServers.set(localSlug, { appId, appDir, handler });
+    dbg(`registerStatic slug="${localSlug}" → appId=${appId} dir=${appDir} | _staticServers.size=${_staticServers.size}`);
   },
 
   unregister(localSlug) {
+    const had = _proxies.has(localSlug) || _staticServers.has(localSlug);
     _proxies.delete(localSlug);
     _staticServers.delete(localSlug);
+    dbg(`unregister slug="${localSlug}" hadEntry=${had}`);
   },
 
   unregisterStatic(localSlug) {
@@ -110,7 +122,24 @@ const ReverseProxyService = {
   // install pipeline writes one or the other — but the order is documented).
   middleware() {
     return (req, res, next) => {
+      const host = req.headers?.host || '(no host)';
       const slug = ReverseProxyService._slugFromHost(req);
+
+      // PR 3.14 — log every request whose host LOOKS like it could be ours
+      // (contains '.localhost') so we can see when a request that should be
+      // routed isn't because of a regex / case / port mismatch. Also logs
+      // when slug extracted but no entry found.
+      if (host.includes('.localhost')) {
+        const staticHit = slug ? _staticServers.has(slug) : false;
+        const proxyHit  = slug ? _proxies.has(slug) : false;
+        dbg(
+          `middleware host="${host}" path="${req.url}"`,
+          `extractedSlug="${slug || ''}"`,
+          `staticHit=${staticHit} proxyHit=${proxyHit}`,
+          `_proxies.size=${_proxies.size} _staticServers.size=${_staticServers.size}`
+        );
+      }
+
       if (!slug) return next();
 
       const staticEntry = _staticServers.get(slug);
@@ -120,7 +149,11 @@ const ReverseProxyService = {
       }
 
       const proxyEntry = _proxies.get(slug);
-      if (!proxyEntry) return next();
+      if (!proxyEntry) {
+        dbg(`fallthrough — no entry for slug="${slug}", known=[${[..._proxies.keys()].join(',')}]`);
+        return next();
+      }
+      dbg(`proxying slug="${slug}" → 127.0.0.1:${proxyEntry.port} appId=${proxyEntry.appId}`);
       _markHttpActive(proxyEntry.appId);
       proxy.web(req, res, { target: `http://127.0.0.1:${proxyEntry.port}` });
     };
