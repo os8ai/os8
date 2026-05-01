@@ -669,7 +669,16 @@ export async function restoreTabState(tab) {
   // Ensure preview exists and position it
   setTimeout(async () => {
     await callbacks.ensurePreviewForApp(tab.app);
-    if (tab.state.previewUrl) {
+    // PR 3.17 hotfix: external apps (app_type='external') live at
+    // <slug>.localhost:<port>. createAppTab sets tab.state.externalUrl
+    // from the /processes/start response. Without this branch, we fall
+    // through to loadPreview() which builds an OS8-internal /<appId>/
+    // path — that goes through Core's central Vite (which doesn't know
+    // the app's vite.config.ts) and fails to resolve the app's path
+    // aliases like `@/services/...`.
+    if (tab.state.externalUrl) {
+      await window.os8.preview.setUrl(tab.app.id, tab.state.externalUrl);
+    } else if (tab.state.previewUrl) {
       await window.os8.preview.setUrl(tab.app.id, tab.state.previewUrl);
     } else {
       await loadPreview();
