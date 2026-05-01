@@ -261,6 +261,22 @@ app.whenReady().then(async () => {
   try { app.setAsDefaultProtocolClient('os8'); }
   catch (e) { console.warn('[main] setAsDefaultProtocolClient failed:', e.message); }
 
+  // Linux follow-up to setAsDefaultProtocolClient: write a user-level
+  // ~/.local/share/applications/os8.desktop with the right Exec= line and
+  // a MimeType= claim for x-scheme-handler/os8. Without this, packaged
+  // AppImage installs and dev-from-source users alike hit a dead-end on
+  // os8://install deeplinks (xdg-open's lookup chain finds no handler).
+  // No-op on macOS/Windows; soft-fails on filesystem errors.
+  try {
+    const { registerOnLinux } = require('./src/services/linux-protocol');
+    registerOnLinux({
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+    }).catch(e => console.warn('[main] linux-protocol register error:', e.message));
+  } catch (e) {
+    console.warn('[main] linux-protocol module load failed:', e.message);
+  }
+
   // Initialize database
   db = initDatabase();
   console.log('OS8 database initialized');
