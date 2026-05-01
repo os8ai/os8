@@ -352,6 +352,19 @@ const AppReviewService = {
       });
     }
 
+    // PR 3.2: developer-import + outbound network on → warning. Not blocking;
+    // the LLM review (phase 3) actually grep-confirms outbound URLs in source.
+    // This is a posture check that surfaces in the modal's review panel
+    // before the user grants the capability.
+    if (channel === 'developer-import' && manifest?.permissions?.network?.outbound === true) {
+      findings.push({
+        severity: 'warning', category: 'network',
+        file: null, line: null,
+        description: 'developer-import: outbound network granted; LLM review will list the domains the source actually reaches',
+        snippet: '',
+      });
+    }
+
     // PR 2.5: docker-specific static checks.
     if (manifest?.runtime?.kind === 'docker') {
       // Verified channel: image MUST be pinned by digest.

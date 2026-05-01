@@ -45,6 +45,21 @@ export function renderIconHtml(app, size = 64) {
   return `<div class="app-icon-img" style="background: ${color}; color: ${textColor}; font-size: ${fontSize}px;">${textIcon}</div>`;
 }
 
+/**
+ * Render the channel badge overlay for an external app (PR 3.2).
+ * Returns empty string for verified or built-in apps.
+ */
+function renderChannelBadge(app) {
+  const channel = app?.channel;
+  if (channel === 'developer-import') {
+    return `<span class="app-icon__channel-badge app-icon__channel-badge--developer-import" title="Developer Import">DEV</span>`;
+  }
+  if (channel === 'community') {
+    return `<span class="app-icon__channel-badge app-icon__channel-badge--community" title="Community">C</span>`;
+  }
+  return '';
+}
+
 // Callbacks for functions in other modules or index.html
 let callbacks = {
   createAppTab: async () => {},
@@ -79,8 +94,9 @@ export function renderApps() {
     const systemClass = isSystem ? ' system-app' : '';
     const draggable = isSystem ? 'false' : 'true'; // System apps can't be reordered
     return `
-      <div class="app-icon${systemClass}" data-id="${app.id}" data-index="${index}" data-system="${isSystem}" draggable="${draggable}">
+      <div class="app-icon${systemClass}" data-id="${app.id}" data-index="${index}" data-system="${isSystem}" draggable="${draggable}" style="position: relative;">
         ${renderIconHtml(app, 64)}
+        ${renderChannelBadge(app)}
         <div class="app-icon-name">${app.name}</div>
       </div>
     `;
