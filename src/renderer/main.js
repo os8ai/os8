@@ -1312,6 +1312,14 @@ async function init() {
     await loadApps();
   });
 
+  // PR 3.11 hotfix: dev-import installs (PR 3.1) don't fire `apps:created`
+  // because they go through AppService.createExternal. The install-plan
+  // modal dispatches this DOM event when the install pipeline completes;
+  // we refresh the home grid the same way `apps.onCreated` does.
+  document.addEventListener('os8:app-installed', async () => {
+    await loadApps();
+  });
+
   // Listen for build started events (add build status tab if build is dispatched)
   window.os8.build.onStarted(async ({ buildId, appId, appName, appColor, appIcon, backend, model, agentId, status, spec }) => {
     console.warn(`[Renderer] build:started received: status=${status}, buildId=${buildId}, appName=${appName}`);
