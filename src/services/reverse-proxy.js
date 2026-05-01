@@ -61,12 +61,13 @@ function _markHttpActive(appId) {
   } catch (_) { /* registry not available — acceptable in isolation */ }
 }
 
-// PR 3.14 — temporary diagnostic logging. Logs every register/unregister and
-// every host-header lookup the proxy makes. Lets us see whether a registered
-// slug is missing from `_proxies`, whether the Host header is what we expect,
-// and whether requests are being routed. Removable in a follow-up once
-// world-monitor's external-app launch is verified.
-const DEBUG = true;
+// Diagnostic logging hook. Off by default to keep logs quiet in normal use.
+// Flip to `true` to trace register/unregister + per-request middleware
+// dispatch when debugging external-app routing issues. Originally added
+// during the Phase 3 smoke (PRs #14/19) — diagnosed PRs #18 (middleware
+// order) and #20 (externalUrl in restoreTabState) by isolating that the
+// proxy was correctly registered but receiving no subdomain requests.
+const DEBUG = false;
 function dbg(...args) { if (DEBUG) console.log('[ReverseProxy]', ...args); }
 
 const ReverseProxyService = {
