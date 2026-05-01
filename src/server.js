@@ -698,6 +698,25 @@ async function createServer() {
     }
   }));
 
+  // PR 3.15 hotfix: subdomain handlers MUST mount before Vite's middleware.
+  // Vite's connect instance handles requests by URL path only — it doesn't
+  // care about the Host header — so without this order it eagerly serves
+  // `/src/main.ts` from its own root (~/os8/core/) for external-app requests
+  // at <slug>.localhost:8888, completely bypassing the reverse proxy. The
+  // result is a Vite that doesn't know about the external app's vite.config.ts,
+  // so path aliases (e.g., `@/services/...`) fail to resolve.
+  //
+  // Order from this point on:
+  //   1. scopedApiMiddleware  — claims /_os8/api/* on subdomain, rewrites to /api/apps/<id>/*
+  //   2. ReverseProxyService — claims everything else on <slug>.localhost
+  //   3. Vite middleware     — catches the rest (bare localhost:8888 traffic)
+  //   4. /:identifier        — legacy app-by-id loader
+  const { scopedApiMiddleware } = require('./services/scoped-api-surface');
+  app.use(scopedApiMiddleware(db));
+
+  const ReverseProxyService = require('./services/reverse-proxy');
+  app.use(ReverseProxyService.middleware());
+
   // Check if Core is ready and set up Vite
   if (CoreService.isReady()) {
     try {
@@ -736,20 +755,6 @@ async function createServer() {
   } else {
     console.log('Core not ready, using static file serving');
   }
-
-  // App Store: server-side capability enforcement (PR 1.7) — must mount
-  // BEFORE the reverse proxy, so /_os8/api/* on the subdomain is rewritten
-  // to /api/apps/<id>/* and forwarded to the existing app-blob/app-db
-  // routers (which run with `req.callerAppId` set). Subdomain traffic that
-  // isn't /_os8/api/* falls through to the proxy below.
-  const { scopedApiMiddleware } = require('./services/scoped-api-surface');
-  app.use(scopedApiMiddleware(db));
-
-  // App Store: subdomain reverse proxy for external apps. Dispatches on the
-  // request's Host header — bare `localhost:8888` falls through unchanged so
-  // native apps and the OS8 shell are untouched.
-  const ReverseProxyService = require('./services/reverse-proxy');
-  app.use(ReverseProxyService.middleware());
 
   // Serve app HTML files with Vite transformation
   // Accepts both appId and slug for backwards compatibility (will remove slug fallback later)
