@@ -64,6 +64,63 @@ describe('install plan gate — developer-import', () => {
     expect(out.ok).toBe(true);
   });
 
+  // Hotfix regression — Leo reported the Install button stayed disabled
+  // even after ticking the ack. Root cause: the modal opens before any
+  // install job is started, so lastStatus is null and the
+  // `lastStatus !== 'awaiting_approval'` gate blocked the first click.
+  // The first click is meant to kick the pipeline (installFromManifest).
+  it('passes for first-click when ack is checked but no job has started yet', () => {
+    const state = baseState({
+      lastStatus: null,
+      review: null,
+      jobId: null,
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe(true);
+  });
+
+  it('still rejects the first click when ack is unchecked', () => {
+    const state = baseState({
+      lastStatus: null,
+      review: null,
+      jobId: null,
+      devImportMode: true,
+      devImportRisksAcknowledged: false,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/I understand the risks/);
+  });
+
+  it('still rejects the first click when arch is incompatible', () => {
+    const state = baseState({
+      lastStatus: null,
+      review: null,
+      jobId: null,
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'mips64');
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/arch incompatible/);
+  });
+
+  it('once a job is in flight, falls through to the review-status gate', () => {
+    const state = baseState({
+      // Job started, but review hasn't completed yet.
+      lastStatus: 'reviewing',
+      review: null,
+      jobId: 'job-abc',
+      devImportMode: true,
+      devImportRisksAcknowledged: true,
+    });
+    const out = gateEvaluation(DEV_IMPORT_MANIFEST, state, 'arm64');
+    expect(out.ok).toBe(false);
+    expect(out.reason).toMatch(/review not yet complete/);
+  });
+
   it('still blocks for arch mismatch even with ack', () => {
     const state = baseState({
       lastStatus: 'awaiting_approval',
