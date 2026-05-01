@@ -9,7 +9,7 @@
     "start:raw": "electron .",
     "predev": "node tools/check-electron-abi.js",
     "dev": "electron . --enable-logging",
-    "pretest": "npm rebuild better-sqlite3 --loglevel=error",
+    "pretest": "node tools/invalidate-native-marker.js && npm rebuild better-sqlite3 --loglevel=error",
     "test": "vitest run",
     "test:watch": "npm rebuild better-sqlite3 --loglevel=error && vitest",
     "posttest": "node tools/rebuild-native.js",
