@@ -120,7 +120,7 @@ Future v2+ surfaces (`terminal` for TUIs via xterm.js + node-pty, `desktop-strea
 | **Community** | Lighter-review manifests in `os8ai/os8-catalog-community`. Lockfile recommended. | Warnings shown, explicit permission grants required, no auto-update |
 | **Developer Import** | User pastes a GitHub URL in OS8. Auto-generated draft AppSpec. | High-friction install plan UI, all permissions opt-in, "developer mode" badge |
 
-Security review (static analysis + LLM) gates all three; review depth and friction increase from Verified → Developer Import.
+Security review (static analysis + LLM) **surfaces** risks across all three channels; review depth and confirm-friction increase from Verified → Developer Import. The runtime gate is **advisory** — see §6.5 for the model. The user is the final authority over what installs on their machine; the security review's job is to inform that decision, not gate it. Curators still gate manifest *entry* to the Verified and Community catalogs at submission time (CI in `os8ai/os8-catalog` and `os8ai/os8-catalog-community`).
 
 ---
 
@@ -722,13 +722,13 @@ Port allocation: random `[40000, 49999]`, reroll on EADDRINUSE up to 5 attempts,
 
 App review pipeline (runs after clone, before install):
 
-1. **Static checks (deterministic, fast, blocking):**
+1. **Static checks (deterministic, fast):** these emit findings into the review report; they short-circuit the LLM phase when any blocker is present, but **do not by themselves block install** — see §6.5 for the gate model. The user can override on confirm. Checks:
    - Argv arrays only (no shell strings).
    - No `curl … | sh` or `wget … | sh` patterns in `install`/`postInstall`/`preStart`.
    - No remote-script execution in source (`eval(fetch(...))`-style patterns).
    - `package.json` `scripts.postinstall` / `preinstall` — present scripts get LLM scrutiny; absent is preferred for Verified.
    - Lockfile present and matches declared `package_manager` (Verified channel).
-   - Architecture compatibility (`runtime.arch` includes `process.arch`).
+   - Architecture compatibility (`runtime.arch` includes `process.arch`). **This is the one structural impossibility that DOES hard-block** at the gate — the runtime adapter would refuse to launch anyway.
    - Manifest pin: `upstream_resolved_commit` is a 40-char SHA.
 2. **Static analysis (advisory in v1):**
    - Node: `npm audit --json` parsed for high/critical CVEs.
@@ -743,7 +743,9 @@ App review pipeline (runs after clone, before install):
    - Secrets handling: are declared secrets sent to upstream servers?
    - Supply chain: count and flag suspicious deps.
 
-LLM produces a structured report (mirrors existing skill review format). UI surfaces: risk level, findings list, install commands that will run, dep counts, audit summary. Approval requires user confirmation in the install plan (§6.5).
+LLM produces a structured report (mirrors existing skill review format). UI surfaces: risk level, findings list, install commands that will run, dep counts, audit summary. **The report is advisory; final approval lives at the install-plan gate (§6.5)** where the user reads what was flagged and decides whether to install.
+
+**Phase 3 product principle (recorded 2026-05-01):** *"Scan surfaces, user decides."* The first realistic Developer Import (worldmonitor) was classified high-risk by the LLM with five critical findings — all judgment calls about manifest-vs-code drift, none of them malware. The original PR 1.17 hard-block model left users no path forward; the override-with-confirm model preserves the visibility of findings without making them load-bearing.
 
 #### 6.2.6 `os8://` protocol handler
 
@@ -973,7 +975,30 @@ Required visible fields:
 - **Dependency summary** — count, license summary, audit summary.
 - **Disk and time estimate** — rough estimate from prior installs of this manifest's framework.
 
-Buttons: `Cancel` (always enabled), `Install` (gated until: review status = approved, all required secrets entered, no critical-severity findings unless user explicitly overrides with a second confirm).
+Buttons: `Cancel` (always enabled), `Install`.
+
+#### Gate model (advisory across all channels)
+
+The install-plan gate is **advisory**. The security review surfaces risks; the user is the final authority over what installs on their machine. Findings are presented; nothing is silently blocked.
+
+**Hard blocks** — the only conditions that prevent install regardless of user intent. These are structural impossibilities, not findings:
+
+- **Architecture incompatibility.** The runtime adapter would refuse to launch.
+- **Missing required secrets.** The install / start command can't execute without them.
+- **Developer-Import provenance ack** — *"I understand this app has not been reviewed by OS8 curators."* This is a separate consent layer about *where the manifest came from*, not what the scan found. Required only for Developer Import.
+
+**Override paths** — every other gate condition resolves to either `ok:true` (clean) or `ok:'override'` (findings present; one explicit confirm). The confirm dialog enumerates each flagged finding with category + description so the user reads exactly what they're overriding before clicking OK:
+
+- Critical-severity findings → override with confirm.
+- High `riskLevel` → override with confirm.
+- Medium `riskLevel` → override with confirm (existing behavior).
+- Low / clean review → no confirm needed; install runs immediately.
+
+**MAL-* malware advisories** — when osv-scanner emits a critical finding whose advisory ID starts with `MAL-`, the confirm dialog gets a louder header (`⚠ KNOWN MALWARE WARNING`) listing the offending package + advisory ID. Still overridable in v1 (treats users as the trust authority over their own machine), but the dialog text is unmissable. Future versions may consider hard-blocking this category if telemetry shows users clicking through.
+
+**Verified channel implication.** Verified apps still benefit from curator vetting at *submission time* — `os8ai/os8-catalog`'s CI gates manifest entry. The runtime override matters only when a previously-curated manifest gets re-flagged by a newer LLM/scanner version. The runtime is not the place to enforce trust posture; the catalog CI is.
+
+**Why this model.** The first realistic Developer Import during Phase 3 Stage 6 (`koala73/worldmonitor`) was classified high-risk with five critical findings — all LLM judgment calls about manifest-vs-code drift, none of them malware. The original PR 1.17 hard-block left users no path forward. Treating the scan as advisory + a loud confirm-with-summary preserves the visibility of findings without making them load-bearing. Recorded as the "scan surfaces, user decides" principle in `MEMORY.md`.
 
 After click: progress UI streams runtime adapter logs from `app_install_jobs.log_path`. On completion, app icon appears with a brief animation.
 
