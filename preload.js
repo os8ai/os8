@@ -371,6 +371,8 @@ contextBridge.exposeInMainWorld('os8', {
   appStore: {
     validateManifest: (manifestYaml, opts) =>
       ipcRenderer.invoke('app-store:validate-manifest', manifestYaml, opts),
+    validateManifestObject: (manifest, opts) =>
+      ipcRenderer.invoke('app-store:validate-manifest-object', manifest, opts),
     renderPlan: (slug, channel) =>
       ipcRenderer.invoke('app-store:render-plan', slug, channel),
 
@@ -383,6 +385,12 @@ contextBridge.exposeInMainWorld('os8', {
       ipcRenderer.invoke('app-store:cancel', jobId),
     getJob: (jobId) =>
       ipcRenderer.invoke('app-store:get-job', jobId),
+
+    // PR 3.1 — Developer Import (paste GitHub URL → install)
+    devImportDraft: (url) =>
+      ipcRenderer.invoke('app-store:dev-import-draft', url),
+    installFromManifest: (manifest, upstreamResolvedCommit, source) =>
+      ipcRenderer.invoke('app-store:install-from-manifest', { manifest, upstreamResolvedCommit, source }),
 
     onJobUpdate: (callback) => {
       const listener = (_e, payload) => callback(payload);

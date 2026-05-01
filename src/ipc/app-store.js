@@ -27,6 +27,20 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
+  // PR 3.1 — validate a parsed manifest object (bypasses YAML round-trip).
+  // Used by the dev-import flow whose drafter already produces a parsed object.
+  ipcMain.handle('app-store:validate-manifest-object', (_e, manifest, opts) => {
+    try {
+      if (!manifest || typeof manifest !== 'object') {
+        return { ok: false, error: 'manifest must be an object' };
+      }
+      const validation = validateManifest(manifest, opts || {});
+      return { ok: true, manifest, validation };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('app-store:render-plan', async (_e, slug, channel = 'verified') => {
     try {
       const entry = await AppCatalogService.get(db, slug, { channel });
@@ -62,6 +76,29 @@ function registerAppStoreHandlers({ db, mainWindow }) {
   ipcMain.handle('app-store:cancel', async (_e, jobId) => {
     try {
       const job = AppInstaller.cancel(db, jobId);
+      return { ok: true, jobId: job.id, status: job.status };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // PR 3.1 — Developer Import: paste GitHub URL → draft AppSpec.
+  ipcMain.handle('app-store:dev-import-draft', async (_e, url) => {
+    try {
+      const Drafter = require('../services/dev-import-drafter');
+      const result = await Drafter.draft(url);
+      return { ok: true, ...result };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // PR 3.1 — Developer Import: launch install with an inline manifest.
+  ipcMain.handle('app-store:install-from-manifest', async (_e, { manifest, upstreamResolvedCommit, source = 'dev-import' } = {}) => {
+    try {
+      const job = await AppInstaller.startFromManifest(db, {
+        manifest, upstreamResolvedCommit, source,
+      });
       return { ok: true, jobId: job.id, status: job.status };
     } catch (err) {
       return { ok: false, error: err.message };

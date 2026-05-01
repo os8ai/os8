@@ -582,6 +582,55 @@ const AppCatalogService = {
 
     return result;
   },
+
+  /**
+   * Reap orphaned developer-import catalog rows (PR 3.1).
+   *
+   * A dev-import row is an orphan when:
+   *   - no apps row references its slug as external_slug, AND
+   *   - no app_install_jobs row in non-terminal status references its slug, AND
+   *   - the row was synced more than `maxAgeMs` ago (default 24h — don't
+   *     race in-flight imports the user is still considering).
+   *
+   * @param {object} db
+   * @param {{ now?: number, maxAgeMs?: number, slug?: string }} [opts]
+   *        slug: when supplied, ONLY consider that slug (used by
+   *        _rollbackInstall + cancel for same-session cleanup, which
+   *        bypasses the time cutoff).
+   * @returns {{ removed: number }}
+   */
+  reapDeveloperImportOrphans(db, { now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000, slug = null } = {}) {
+    const cutoffIso = new Date(now - maxAgeMs).toISOString();
+    let stmt;
+    let result;
+    if (slug) {
+      // Eager same-session cleanup — skip the time gate.
+      stmt = db.prepare(`
+        DELETE FROM app_catalog
+        WHERE channel = 'developer-import'
+          AND slug = ?
+          AND slug NOT IN (SELECT external_slug FROM apps WHERE external_slug IS NOT NULL)
+          AND slug NOT IN (
+            SELECT external_slug FROM app_install_jobs
+            WHERE status IN ('pending','cloning','reviewing','awaiting_approval','installing')
+          )
+      `);
+      result = stmt.run(slug);
+    } else {
+      stmt = db.prepare(`
+        DELETE FROM app_catalog
+        WHERE channel = 'developer-import'
+          AND synced_at < ?
+          AND slug NOT IN (SELECT external_slug FROM apps WHERE external_slug IS NOT NULL)
+          AND slug NOT IN (
+            SELECT external_slug FROM app_install_jobs
+            WHERE status IN ('pending','cloning','reviewing','awaiting_approval','installing')
+          )
+      `);
+      result = stmt.run(cutoffIso);
+    }
+    return { removed: result.changes };
+  },
 };
 
 module.exports = AppCatalogService;
