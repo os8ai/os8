@@ -455,6 +455,31 @@
       box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.35);
     }
 
+    /* PR 3.2 — channel badge in the icon corner for dev-import + community */
+    .app-icon__channel-badge {
+      position: absolute;
+      bottom: -2px;
+      right: -2px;
+      z-index: 2;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      padding: 2px 5px;
+      border-radius: 6px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+      pointer-events: none;
+    }
+
+    .app-icon__channel-badge--developer-import {
+      background: var(--color-danger-bg, #fee2e2);
+      color: var(--color-danger-text, #991b1b);
+    }
+
+    .app-icon__channel-badge--community {
+      background: var(--color-warning-bg, #fef3c7);
+      color: var(--color-warning-text, #92400e);
+    }
+
     .app-icon-img img {
       width: 100%;
       height: 100%;

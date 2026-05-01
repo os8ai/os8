@@ -63,7 +63,10 @@ function renderArchBadge(architectures, hostArch) {
   return `<div class="${cls}">${escapeHtml(text)}</div>`;
 }
 
-function renderPermissions(manifest) {
+function renderPermissions(manifest, state) {
+  // PR 3.2 — when dev-import mode, render interactive per-capability toggles.
+  if (state?.devImportMode) return renderPermissionsDevImport(manifest);
+
   const perms = manifest?.permissions || {};
   const parts = [];
   if (perms.network) {
@@ -84,6 +87,87 @@ function renderPermissions(manifest) {
     </li>`);
   }
   return `<ul class="install-plan-modal__permissions">${parts.join('')}</ul>`;
+}
+
+// PR 3.2: per-capability toggles for developer-import. Groups by trust axis
+// for scannability (the v1 capability list is 13 entries; flat is unreadable).
+const DEV_IMPORT_CAP_GROUPS = [
+  {
+    label: 'Per-app storage',
+    caps: ['blob.readwrite', 'blob.readonly', 'db.readwrite', 'db.readonly'],
+  },
+  {
+    label: 'Communications',
+    caps: ['telegram.send'],
+  },
+  {
+    label: 'AI services',
+    caps: ['imagegen', 'speak', 'youtube', 'x'],
+  },
+  {
+    label: 'Google (read-only by default)',
+    caps: ['google.calendar.readonly', 'google.calendar.readwrite',
+           'google.drive.readonly',    'google.gmail.readonly'],
+  },
+  // mcp.<server>.<tool> deferred — wildcard form needs its own UI; user can
+  // still hand-edit the manifest's permissions.os8_capabilities if needed.
+];
+
+function renderPermissionsDevImport(manifest) {
+  const perms = manifest?.permissions || {};
+  const declared = new Set(perms.os8_capabilities || []);
+  const renderGroup = (g) => `
+    <div class="install-plan-modal__perm-toggle-group">
+      <strong>${escapeHtml(g.label)}</strong>
+      ${g.caps.map(c => `
+        <label class="install-plan-modal__perm-toggle">
+          <input type="checkbox"
+            data-cap-toggle="${escapeHtml(c)}"
+            ${declared.has(c) ? 'checked' : ''} />
+          <code>${escapeHtml(c)}</code>
+        </label>
+      `).join('')}
+    </div>
+  `;
+  return `
+    <div class="install-plan-modal__perm-toggle-group">
+      <strong>Network</strong>
+      <label class="install-plan-modal__perm-toggle">
+        <input type="checkbox"
+          data-perm-toggle="network.outbound"
+          ${perms.network?.outbound ? 'checked' : ''} />
+        <span><strong>Outbound</strong> — let this app make HTTP requests to the internet</span>
+      </label>
+      <label class="install-plan-modal__perm-toggle">
+        <input type="checkbox"
+          data-perm-toggle="network.inbound"
+          ${perms.network?.inbound ? 'checked' : ''} />
+        <span style="color: var(--color-danger-text);"><strong>Inbound (rare)</strong> — let this app's dev server be reachable beyond localhost</span>
+      </label>
+    </div>
+    ${DEV_IMPORT_CAP_GROUPS.map(renderGroup).join('')}
+  `;
+}
+
+function renderDevImportWarnings() {
+  return `
+    <div class="install-plan-modal__dev-import-warning">
+      <strong>Developer Import — uncurated</strong>
+      <p>This app's manifest was auto-generated from upstream files. No human
+      curator has reviewed it. Capabilities below are off by default; tick
+      only the ones you want this app to have.</p>
+    </div>
+  `;
+}
+
+function renderDevImportRiskAck(state) {
+  return `
+    <label class="install-plan-modal__dev-import-ack">
+      <input type="checkbox" data-action="ack-dev-import-risks" ${state.devImportRisksAcknowledged ? 'checked' : ''} />
+      I understand this app has <strong>not</strong> been reviewed by OS8 curators.
+      I trust this source and accept the risks of installing it.
+    </label>
+  `;
 }
 
 function renderSecretInputs(manifest) {
@@ -220,6 +304,11 @@ function gateEvaluation(manifest, state, hostArch) {
     return { ok: 'override', reason: 'medium risk — confirm to override' };
   }
 
+  // PR 3.2: developer-import requires explicit risk acknowledgment.
+  if (state.devImportMode && !state.devImportRisksAcknowledged) {
+    return { ok: false, reason: 'check "I understand the risks" to enable install' };
+  }
+
   return { ok: true };
 }
 
@@ -241,6 +330,106 @@ function renderEntry(state) {
     || state.lastStatus === 'installed'
     || (gate.ok !== true && gate.ok !== 'override');
 
+  // PR 3.2: dev-import reorders sections to surface the security review
+  // before permissions (so the user reads findings before granting capabilities).
+  const sections = [];
+
+  if (state.devImportMode) sections.push(renderDevImportWarnings());
+
+  sections.push(`
+    <div class="install-plan-modal__section">
+      <h3>About</h3>
+      <p>${escapeHtml(entry.description || m.description || '')}</p>
+      ${m.upstream?.git ? `<div class="install-plan-modal__field">
+        <span class="install-plan-modal__field-label">Source</span>
+        <span class="install-plan-modal__field-value">${escapeHtml(m.upstream.git)}</span>
+      </div>` : ''}
+      ${state.devImportMode && entry.upstreamResolvedCommit ? `<div class="install-plan-modal__field">
+        <span class="install-plan-modal__field-label">Commit</span>
+        <span class="install-plan-modal__field-value"><code>${escapeHtml(entry.upstreamResolvedCommit)}</code></span>
+      </div>` : ''}
+      ${state.devImportMode && state.devImportMeta?.refLabel ? `<div class="install-plan-modal__field">
+        <span class="install-plan-modal__field-label">Ref</span>
+        <span class="install-plan-modal__field-value">${escapeHtml(state.devImportMeta.refLabel)} (${escapeHtml(state.devImportMeta.refKind || '')})</span>
+      </div>` : ''}
+    </div>
+  `);
+
+  if (state.devImportMode) {
+    sections.push(`
+      <div class="install-plan-modal__section" data-panel="review">
+        <h3>Security review</h3>
+        ${renderReviewPanel(state)}
+      </div>
+    `);
+    sections.push(`
+      <div class="install-plan-modal__section">
+        <h3>Permissions (off by default)</h3>
+        ${renderPermissions(m, state)}
+      </div>
+    `);
+    sections.push(`
+      <div class="install-plan-modal__section">
+        <h3>Secrets</h3>
+        ${renderSecretInputs(m)}
+      </div>
+    `);
+    sections.push(`
+      <div class="install-plan-modal__section">
+        <h3>Install commands</h3>
+        ${renderCommands(m)}
+      </div>
+    `);
+    sections.push(`
+      <details class="install-plan-modal__section">
+        <summary><h3 style="display:inline-block; margin: 0;">Architecture &amp; License</h3></summary>
+        ${renderArchBadge(entry.architectures, hostArch)}
+        <div class="install-plan-modal__field">
+          <span class="install-plan-modal__field-label">License</span>
+          <span class="install-plan-modal__field-value">${escapeHtml(entry.license || m.legal?.license || 'unknown')}</span>
+        </div>
+        <div class="install-plan-modal__field">
+          <span class="install-plan-modal__field-label">Commercial use</span>
+          <span class="install-plan-modal__field-value">${escapeHtml(m.legal?.commercial_use || 'unknown')}</span>
+        </div>
+      </details>
+    `);
+  } else {
+    sections.push(`
+      <div class="install-plan-modal__section">
+        <h3>Architecture</h3>
+        ${renderArchBadge(entry.architectures, hostArch)}
+      </div>
+      <div class="install-plan-modal__section">
+        <h3>License</h3>
+        <div class="install-plan-modal__field">
+          <span class="install-plan-modal__field-label">License</span>
+          <span class="install-plan-modal__field-value">${escapeHtml(entry.license || m.legal?.license || 'unknown')}</span>
+        </div>
+        <div class="install-plan-modal__field">
+          <span class="install-plan-modal__field-label">Commercial use</span>
+          <span class="install-plan-modal__field-value">${escapeHtml(m.legal?.commercial_use || 'unknown')}</span>
+        </div>
+      </div>
+      <div class="install-plan-modal__section">
+        <h3>Permissions</h3>
+        ${renderPermissions(m, state)}
+      </div>
+      <div class="install-plan-modal__section">
+        <h3>Secrets</h3>
+        ${renderSecretInputs(m)}
+      </div>
+      <div class="install-plan-modal__section">
+        <h3>Install commands</h3>
+        ${renderCommands(m)}
+      </div>
+      <div class="install-plan-modal__section" data-panel="review">
+        <h3>Security review</h3>
+        ${renderReviewPanel(state)}
+      </div>
+    `);
+  }
+
   return `
     <div class="install-plan-modal" role="dialog" aria-labelledby="install-plan-title">
       <div class="install-plan-modal__header">
@@ -253,57 +442,15 @@ function renderEntry(state) {
 
       ${renderValidationErrors(state.validation)}
 
-      <div class="install-plan-modal__section">
-        <h3>About</h3>
-        <p>${escapeHtml(entry.description || m.description || '')}</p>
-        ${m.upstream?.git ? `<div class="install-plan-modal__field">
-          <span class="install-plan-modal__field-label">Source</span>
-          <span class="install-plan-modal__field-value">${escapeHtml(m.upstream.git)}</span>
-        </div>` : ''}
-      </div>
-
-      <div class="install-plan-modal__section">
-        <h3>Architecture</h3>
-        ${renderArchBadge(entry.architectures, hostArch)}
-      </div>
-
-      <div class="install-plan-modal__section">
-        <h3>License</h3>
-        <div class="install-plan-modal__field">
-          <span class="install-plan-modal__field-label">License</span>
-          <span class="install-plan-modal__field-value">${escapeHtml(entry.license || m.legal?.license || 'unknown')}</span>
-        </div>
-        <div class="install-plan-modal__field">
-          <span class="install-plan-modal__field-label">Commercial use</span>
-          <span class="install-plan-modal__field-value">${escapeHtml(m.legal?.commercial_use || 'unknown')}</span>
-        </div>
-      </div>
-
-      <div class="install-plan-modal__section">
-        <h3>Permissions</h3>
-        ${renderPermissions(m)}
-      </div>
-
-      <div class="install-plan-modal__section">
-        <h3>Secrets</h3>
-        ${renderSecretInputs(m)}
-      </div>
-
-      <div class="install-plan-modal__section">
-        <h3>Install commands</h3>
-        ${renderCommands(m)}
-      </div>
-
-      <div class="install-plan-modal__section" data-panel="review">
-        <h3>Security review</h3>
-        ${renderReviewPanel(state)}
-      </div>
+      ${sections.join('')}
 
       <div class="install-plan-modal__section" data-panel="logs">
         ${renderLogPanel(state)}
       </div>
 
       ${state.error ? `<div class="install-plan-modal__validation-errors"><strong>Install failed:</strong> ${escapeHtml(state.error)}</div>` : ''}
+
+      ${state.devImportMode ? renderDevImportRiskAck(state) : ''}
 
       <div class="install-plan-modal__footer">
         <span style="margin-right: auto; color: var(--color-text-secondary); font-size: 12px;">
@@ -402,6 +549,43 @@ function wireEvents(state) {
       installBtn.toggleAttribute('data-override', gate.ok === 'override');
       const reasonEl = root.querySelector('.install-plan-modal__footer span');
       if (reasonEl) reasonEl.textContent = gate.ok === true ? '' : (gate.reason || '');
+    });
+  }
+
+  // PR 3.2 — developer-import per-capability toggles. Mutate the manifest
+  // in place so the toggled values flow through to startFromManifest's
+  // synthetic catalog row, the security review, and the running app's
+  // capability surface.
+  for (const cb of root.querySelectorAll('[data-perm-toggle]')) {
+    cb.addEventListener('change', () => {
+      const path = cb.dataset.permToggle.split('.');
+      const perms = state.entry.manifest.permissions = state.entry.manifest.permissions || {};
+      let target = perms;
+      for (let i = 0; i < path.length - 1; i++) {
+        target[path[i]] = target[path[i]] || {};
+        target = target[path[i]];
+      }
+      target[path[path.length - 1]] = cb.checked;
+      patchModal(state);
+    });
+  }
+  for (const cb of root.querySelectorAll('[data-cap-toggle]')) {
+    cb.addEventListener('change', () => {
+      const cap = cb.dataset.capToggle;
+      const perms = state.entry.manifest.permissions = state.entry.manifest.permissions || {};
+      const list = perms.os8_capabilities = perms.os8_capabilities || [];
+      const idx = list.indexOf(cap);
+      if (cb.checked && idx < 0) list.push(cap);
+      else if (!cb.checked && idx >= 0) list.splice(idx, 1);
+      patchModal(state);
+    });
+  }
+  // PR 3.2 — risk acknowledgment checkbox.
+  const ackCb = root.querySelector('[data-action="ack-dev-import-risks"]');
+  if (ackCb) {
+    ackCb.addEventListener('change', () => {
+      state.devImportRisksAcknowledged = ackCb.checked;
+      patchModal(state);
     });
   }
 

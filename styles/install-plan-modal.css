@@ -217,3 +217,87 @@
     color: white;
     border-color: var(--color-primary);
   }
+
+  /* ==========================================================================
+     PR 3.2 — Developer-Import strict modal mode
+     ========================================================================== */
+
+  .install-plan-modal__dev-import-warning {
+    background: var(--color-danger-bg, #fee2e2);
+    color: var(--color-danger-text, #991b1b);
+    border: 1px solid var(--color-danger-text, #991b1b);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    margin-bottom: 16px;
+  }
+
+  .install-plan-modal__dev-import-warning strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 14px;
+  }
+
+  .install-plan-modal__dev-import-warning p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .install-plan-modal__perm-toggle-group {
+    margin-bottom: 14px;
+    padding: 10px 12px;
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .install-plan-modal__perm-toggle-group strong {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+    margin-bottom: 6px;
+  }
+
+  .install-plan-modal__perm-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 4px 0;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+
+  .install-plan-modal__perm-toggle input[type="checkbox"] {
+    margin-top: 3px;
+    flex-shrink: 0;
+  }
+
+  .install-plan-modal__perm-toggle code {
+    background: var(--color-bg-panel);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+  }
+
+  .install-plan-modal__dev-import-ack {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    margin: 16px 0 0;
+    background: var(--color-warning-bg, #fef3c7);
+    color: var(--color-warning-text, #92400e);
+    border: 1px solid var(--color-warning-text, #92400e);
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    line-height: 1.4;
+    cursor: pointer;
+  }
+
+  .install-plan-modal__dev-import-ack input[type="checkbox"] {
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
