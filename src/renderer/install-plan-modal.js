@@ -743,7 +743,36 @@ export async function openInstallPlanModalBySlug(slug, channel = 'verified', opt
   const state = startState(result.entry, result.validation);
   if (opts.jobId) state.jobId = opts.jobId;
   showModal(state);
-  fetchInitialReviewIfNeeded(state);
+
+  if (state.jobId) {
+    // Caller already kicked an install job (e.g. catalog browse → install →
+    // user cancelled mid-review → reopened). Pull current state so the
+    // review report + status render immediately.
+    fetchInitialReviewIfNeeded(state);
+    return;
+  }
+
+  // Verified-deeplink path: kick the install pipeline now so the review
+  // job runs and the gate transitions through pending → cloning →
+  // reviewing → awaiting_approval. Without this the Install button stays
+  // disabled forever (gate waits on a job that nothing started).
+  try {
+    const r = await window.os8.appStore.install(
+      state.entry.slug,
+      state.entry.upstreamResolvedCommit,
+      state.entry.channel,
+      opts.source || 'os8.ai'
+    );
+    if (r?.ok) {
+      state.jobId = r.jobId;
+      state.lastStatus = state.lastStatus || 'pending';
+    } else {
+      state.error = r?.error || 'Failed to start install';
+    }
+  } catch (e) {
+    state.error = e?.message || String(e);
+  }
+  patchModal(state);
 }
 
 export async function openInstallPlanModalFromYaml(yamlText, opts = {}) {
