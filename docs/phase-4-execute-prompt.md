@@ -1,0 +1,270 @@
+You are executing Phase 4 of the OS8 App Store. You're coming in cold. Read the
+plan and supporting docs, verify state with the GitHub CLI, then ship the PRs in
+the prescribed order. Do not skip the verification step.
+
+# Project context
+
+OS8 is a desktop AI app platform (Electron main + Express server + React/Vite
+apps) at `/home/leo/Claude/os8`. The App Store is a multi-phase initiative
+spanning four repos:
+
+- `os8ai/os8` — desktop runtime (this checkout)
+- `os8ai/os8dotai` — os8.ai web app + Postgres at `/home/leo/Claude/os8dotai`
+- `os8ai/os8-catalog` — verified channel manifests
+- `os8ai/os8-catalog-community` — community channel manifests
+
+Phase 4 also stands up a fifth repo: `os8ai/os8-sdk-types` (new, npm-published).
+
+Assume Phases 0, 1, 2, 3, and 3.5 are complete. Verify with `gh` before writing
+any code (Phase 3 docs underestimated work by ~11 hotfix PRs — do not trust the
+plan blindly).
+
+# The plan
+
+The execution plan lives at `/home/leo/Claude/os8/docs/phase-4-plan.md`. It
+specifies 14 PRs (11 code, 3 doc) across the five repos. Each PR has a goal,
+files-touched list, acceptance criteria, dependency notes, and (where applicable)
+a smoke gate that must pass before downstream PRs merge.
+
+**Read this plan end-to-end before doing anything else.** It is the contract.
+
+# Read order
+
+Read in this order. Do not skim — this is your only briefing.
+
+1. `/home/leo/Claude/os8/docs/phase-4-plan.md` (~2400 lines) — your contract.
+   §1 (scope/ordering), §3 (cross-PR dependencies), §6 (smoke gates), §7
+   (risks and decisions needing user input) are the load-bearing sections.
+2. `/home/leo/Claude/os8/docs/app-store-spec.md` (~1391 lines) — the spec.
+   Pay attention to §2.3 (channels), §6.2.5 (capability enforcement), §6.3
+   (trust boundary), §6.5 (advisory gating), §6.9 (update flow), §11 (open
+   items — the source of most Phase 4 scope).
+3. `/home/leo/Claude/os8/docs/app-store-plan.md` (~810 lines) — the master
+   plan. Phase 4 is **not** in the master plan; the Phase 4 plan derives its
+   scope from spec §11 and from "Phase 4 candidate" callouts in phase-3-plan.
+4. `/home/leo/Claude/os8/docs/phase-3-plan.md` (~2200 lines) — the structural
+   template. Your PR descriptions and per-PR discipline must mirror Phase 3.
+   §1 (scope/ordering/inheritance), §7 (Phase 3.5 pattern) are the parts that
+   directly inform Phase 4.
+5. `/home/leo/Claude/os8/docs/app-store-deferred-items.md` (~310 lines) —
+   parking lot. Phase 4 promotes 5 items from this list (#6, #8, #9, #18, #20),
+   already justified in phase-4-plan §7. Do not promote others without asking.
+6. `/home/leo/Claude/os8/docs/phase-1-plan.md` and `phase-2-plan.md` — skim
+   only when a Phase 4 PR cites them. Phase 4 inherits load-bearing primitives
+   from these (`AppCatalogService.update`, `RuntimeAdapter` interface,
+   scoped-API middleware, install-job state machine, install plan modal SSE
+   relay). Do not re-spec them.
+7. `/home/leo/Claude/os8/CLAUDE.md` and `OS8-project-design-principles.md` —
+   code conventions, IPC structure, migration policy, service patterns.
+
+# Verify current state with `gh` (do not trust docs)
+
+Before opening any PR, confirm what's actually merged:
+
+    gh pr list --state merged --limit 50 --json number,title,headRefName,mergedAt --repo os8ai/os8
+    gh pr list --state merged --limit 30 --json number,title,headRefName,mergedAt --repo os8ai/os8dotai
+    gh pr list --state merged --limit 30 --json number,title,headRefName,mergedAt --repo os8ai/os8-catalog
+    gh pr list --state merged --limit 20 --json number,title,headRefName,mergedAt --repo os8ai/os8-catalog-community
+    gh pr list --state open --json number,title,headRefName --repo os8ai/os8
+    gh pr list --state open --json number,title,headRefName --repo os8ai/os8dotai
+    gh pr list --state open --json number,title,headRefName --repo os8ai/os8-catalog
+    gh pr list --state open --json number,title,headRefName --repo os8ai/os8-catalog-community
+
+Confirm: Phases 0–3 main PRs merged; Phase 3.5.1 (worldmonitor) and 3.5.2
+(CyberChef) merged in `os8ai/os8-catalog`; Phases 3.5.3–3.5.5 should be
+landing or already landed before any Phase 4 PR that uses those fixtures
+(PRs 4.1, 4.10 in particular). If Phase 3.5 is still in flight when you start,
+pause and ask before proceeding on PRs 4.1 / 4.10 — they need real Streamlit /
+Gradio / Docker fixtures to smoke against.
+
+# Constraints to honor
+
+These are non-negotiable. Several were learned the hard way during Phases 1–3.
+
+**Advisory gating, not enforcement.** Spec §6.5. The user is the final authority
+over what installs on their machine. Security review **surfaces** risk; it does
+not silently block. PR 4.6 (`requireAppContext` strict flip) tightens an
+internal trust boundary, NOT the user-facing scan-vs-install posture. Don't
+conflate the two.
+
+**Smoke real apps, not fixtures.** Phase 3 surfaced 11 hotfixes because original
+smokes used hello-world fixtures. Phase 4 inherits the rule: every smoke gate
+in §6 of the plan calls a real app by name (worldmonitor, a real Streamlit app,
+the actual native React apps in `~/os8/apps/`). Do not replace these with
+trivial fixtures.
+
+**Per-PR discipline.** Each PR in phase-4-plan.md is its own branch, its own
+PR, its own review, its own merge. Do not bundle. Match phase-3-plan.md's
+granularity — ~150–500 LOC per code PR, smoke gates separating dependent PRs.
+
+**Doc PRs separate from code PRs.** Phase 3 used dedicated PRs for spec
+updates (#19 advisory gating, #21–#24 deferred-items + master-plan pointers).
+Phase 4 has three named doc PRs (4.D1, 4.D2, 4.D3); file each as its own PR.
+
+**Migration discipline.** PR 4.11 is the only desktop schema migration in
+Phase 4. It bumps `package.json` version `0.5.x` → `0.6.0` and lives at
+`src/migrations/0.6.0-app-store-telemetry.js`. Read `src/services/migrator.js`
+and the existing `0.5.0-app-store.js` for the pattern. Idempotent re-runs are
+mandatory. Test against a freshly-seeded 0.5.x DB before merging.
+
+**Cross-repo coordination.** Several PRs need to land in a specific cross-repo
+order:
+
+- PR 4.5 (os8.ai ingest endpoint) before PR 4.4 (desktop emitter) — endpoint
+  must exist or emitter retries forever.
+- PR 4.7 (MCP wildcards) on desktop before catalog repos sync the new schema.
+- PR 4.7 before PR 4.9 (npm SDK types must reflect wildcard syntax).
+- PR 4.10 (Playwright harness) **gates** PR 4.6 (`requireAppContext` strict
+  flip). Do not merge 4.6 until 4.10's harness passes against every Phase 3.5
+  fixture + every native React app + the OS8 home grid.
+
+The full sequencing graph is in phase-4-plan §3. The hard constraints are 4.11
+first (foundation migration) and 4.10 → 4.6.
+
+**Verify before recommending.** When the plan names a file, function, or flag,
+check it exists before writing code that touches it. The plan was written
+against a specific commit; small drift is normal.
+
+**Git identity for OS8 repos.** Use `Leo <leo@os8.ai>` for commits in
+`/home/leo/Claude/os8`. (Stored in user memory; do not change git config.)
+
+# Suggested merge order
+
+Phase 4 plan §4 proposes a 3-week-ish ordering; treat it as guidance, not a
+deadline. The skeleton:
+
+**First wave (foundation + low-risk):**
+4.11 (migration) → 4.5 (os8.ai ingest, accepts zero traffic) → 4.1 (streaming
+logs, smokes against Streamlit) → 4.7 (MCP wildcards) → 4.10 (Playwright
+harness scaffold).
+
+**Second wave (depends on first):**
+4.2 (auto-update, after 4.1's smoke) → 4.4 (desktop telemetry emitter, after
+4.5 + 4.11) → 4.9 (npm SDK package, after 4.7).
+
+**Third wave (cross-platform + critical-path tightening):**
+4.3 (os8.ai update badge) → 4.8 (Windows CI promotion) → 4.10 (full suite) →
+4.6 (strict mode flip, gated by 4.10).
+
+**Doc PRs throughout:**
+4.D2 alongside 4.2 (`docs/auto-update.md`); 4.D3 (deferred-items decisions
+log) as items close; 4.D1 (spec + master-plan close-out) at end of phase.
+
+# Top three smoke gates (do not bypass)
+
+Per phase-4-plan §6:
+
+1. **G3 — strict `requireAppContext` against the full app inventory.**
+   Before merging PR 4.6, run PR 4.10's Playwright harness across every
+   Phase 3.5 fixture (worldmonitor, cyberchef, real Streamlit, real Gradio,
+   real Docker app), every native React app in `~/os8/apps/`, and the OS8
+   home grid. All must pass. If any fail, debug — do not flip the constant
+   to "permissive" and call it shipped.
+2. **G2 — Verified-channel auto-update bump.** After PR 4.2 lands, smoke
+   the full update cycle: install worldmonitor at the current pin in `os8ai/
+   os8-catalog`, toggle Auto-Update ON in the per-app flyout, open a PR
+   bumping worldmonitor in the catalog, merge, wait for the next OS8 catalog
+   sync (or trigger via Settings), verify the toast appears + the app is
+   on the new SHA + `git log` in `~/os8/apps/<id>/` shows the upstream
+   commit at user/main HEAD. Then revert the catalog test bump.
+3. **G1 — streaming logs against a real multi-minute install.** Use the
+   Phase 3.5.3 Streamlit fixture once it lands. Verify: log lines stream
+   in within ~1s of `pip install` starting; ML model downloads show MB
+   progress; auto-scroll behavior works; Download Logs writes a complete
+   `.log` file.
+
+# Risks and items needing user decision
+
+Phase 4 plan §7 lists open items that need the user's decision before or
+during execution. Read them. **Specifically:**
+
+- The plan promotes 5 deferred-items into Phase 4 (#6, #8, #9, #18, #20).
+  All have explicit justification. **If the user wants tighter scope**, the
+  natural cut points are dropping 4.4+4.5 (telemetry) or 4.6+4.10
+  (trust-boundary tightening) or 4.8 (Windows CI). Confirm scope before
+  starting if any doubt.
+- Telemetry privacy contract (PR 4.4): default ON at first-install consent
+  moment, allowlist-sanitized, fingerprints not raw lines, double-hashed
+  client IDs. **Confirm this matches the user's privacy expectations**
+  before shipping 4.4.
+- Auto-update restart policy (PR 4.2): "smart restart" — restart only when
+  start-relevant files change. **Validate in G2.** If wrong, fall back to
+  "always restart" with a notification.
+- TypeScript SDK strategy (PR 4.9): both in-folder `.d.ts` and npm package.
+  Cost is a new public repo (`os8ai/os8-sdk-types`) and a release pipeline.
+  **Confirm we want that surface area** before creating the repo.
+- Windows CI strictness during transition (PR 4.8): some existing tests may
+  not pass first run. Plan §7 #6 proposes only the Playwright harness gets
+  `test.skip(({ os }) => os === 'windows', ...)` initially; everything
+  else must pass on Windows or get fixed in PR 4.8 itself. **Confirm
+  before opening 4.8.**
+
+When in doubt, surface the question rather than guessing. Plan §7 has 14
+decision-shaped items; treat any that surprise you as worth a one-line ask
+before proceeding.
+
+# Stop conditions
+
+Stop and ask the user when:
+
+- A PR's smoke gate fails for a non-obvious reason (the Phase 3 hotfix
+  cascade — 11 PRs surfaced from one smoke — is the precedent; do not paper
+  over). Diagnose root cause, propose a hotfix path, get sign-off before
+  cascading.
+- A spec ambiguity (plan §7 lists 8) materially affects implementation.
+- You'd need to take a destructive action (force-push, branch delete,
+  uncommitted-change discard, --no-verify, --no-gpg-sign).
+- A migration's `up()` would mutate user data in a way that's not trivially
+  reversible.
+- You'd promote a deferred-items entry beyond the 5 already promoted in §7.
+- Phase 3.5 is still in flight when you reach a PR that depends on a Phase
+  3.5 fixture (PRs 4.1, 4.10).
+- You're tempted to bundle multiple PRs into one. Don't — ask if the
+  bundling is wanted.
+
+# Per-PR workflow
+
+For each PR:
+
+1. Re-read the relevant phase-4-plan PR section. Note the "Files" and
+   "Depends on" lines.
+2. Branch from up-to-date `main` (or the relevant cross-repo's main).
+   Branch name: `pr-4.<n>-<short-slug>` matching Phase 3 convention.
+3. Implement against the plan. Diverge only if the codebase has drifted; if
+   you diverge, document the divergence in the PR body.
+4. Add tests as the plan specifies. Match existing test conventions
+   (vitest for desktop; Prisma + Vercel preview for os8.ai).
+5. Run the relevant smoke gate if the plan calls for one. Do not merge
+   downstream PRs while a smoke gate is failing.
+6. Open the PR with a description that mirrors phase-3-plan.md PR-body
+   conventions: goal, what changed, smoke output, deviations from plan
+   (if any), spec sections updated.
+7. After merge: update phase-4-plan.md's relevant subsection with the merged
+   PR number (`✅ Merged in #N`). This makes Phase 5 planning easier.
+8. Update `MEMORY.md` per phase-4-plan §10 when the relevant PR lands.
+
+# Output
+
+You will produce, across all 14 PRs:
+
+- Code PRs targeting `main` on the four (later five) repos.
+- Doc PRs (4.D1, 4.D2, 4.D3) updating spec, master plan, and deferred-items.
+- Updates to `MEMORY.md` per phase-4-plan §10.
+- A short final report after the last PR merges: total LOC, smoke-gate
+  outcomes, any deferred-items closed, any new items added to deferred-items.
+
+Do not invent extra deliverables. Do not write a separate retrospective doc
+unless the user asks. Do not refactor unrelated code "while you're in there."
+
+# Two final reminders
+
+You are executing a plan, not redesigning it. The plan was reviewed; trust
+its decisions unless the codebase contradicts them. Surface contradictions
+to the user; do not silently re-architect.
+
+Phase 3's lesson — recorded in `MEMORY.md` as `feedback_smoke_test_real_apps`
+— applies again: hello-world fixtures lie. Smoke against the real apps the
+plan names. If a smoke produces a hotfix cascade, work through it the way
+Phase 3 did (§7.2 of phase-3-plan.md): diagnose root cause, hotfix PR with
+regression test, merge, retry the smoke. Each hotfix gets a one-line entry
+in the eventual feature PR's body.
