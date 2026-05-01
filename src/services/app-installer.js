@@ -149,6 +149,78 @@ const AppInstaller = {
   },
 
   /**
+   * Developer Import entry point (PR 3.1). Bypasses the catalog lookup at
+   * the top of `_run` by inserting a synthetic `app_catalog` row keyed by
+   * `channel='developer-import'` before kicking off `start`. The state
+   * machine, review pipeline, and atomic move all behave exactly as for a
+   * verified install — only the catalog entry is local-only.
+   *
+   * The synthetic row uses ON CONFLICT(slug) DO UPDATE so re-importing the
+   * same repo at a different commit refreshes the row. Abandoned rows get
+   * reaped by `AppCatalogService.reapDeveloperImportOrphans` (24h cutoff)
+   * or eagerly on rollback / cancel.
+   */
+  async startFromManifest(db, { manifest, upstreamResolvedCommit, secrets = {}, source = 'dev-import' } = {}) {
+    if (manifest?.review?.channel !== 'developer-import') {
+      throw new Error('startFromManifest is only valid for developer-import channel');
+    }
+    if (!/^[0-9a-f]{40}$/.test(String(upstreamResolvedCommit || ''))) {
+      throw new Error('upstreamResolvedCommit must be a 40-char SHA');
+    }
+
+    const yaml = require('js-yaml');
+    const crypto = require('crypto');
+    const manifestYaml = yaml.dump(manifest);
+    const manifestSha = crypto.createHash('sha256').update(manifestYaml).digest('hex');
+
+    db.prepare(`
+      INSERT INTO app_catalog (
+        id, slug, name, description, publisher, channel, category, icon_url,
+        screenshots, manifest_yaml, manifest_sha, catalog_commit_sha,
+        upstream_declared_ref, upstream_resolved_commit, license, runtime_kind,
+        framework, architectures, risk_level, install_count, rating,
+        synced_at, deleted_at
+      ) VALUES (
+        ?, ?, ?, ?, ?, 'developer-import', ?, NULL,
+        '[]', ?, ?, 'dev-import',
+        ?, ?, ?, ?,
+        ?, ?, 'high', 0, NULL,
+        datetime('now'), NULL
+      )
+      ON CONFLICT(slug) DO UPDATE SET
+        manifest_yaml = excluded.manifest_yaml,
+        manifest_sha = excluded.manifest_sha,
+        upstream_declared_ref = excluded.upstream_declared_ref,
+        upstream_resolved_commit = excluded.upstream_resolved_commit,
+        synced_at = excluded.synced_at,
+        deleted_at = NULL
+    `).run(
+      `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      manifest.slug,
+      manifest.name,
+      manifest.description || '',
+      manifest.publisher || '',
+      manifest.category || 'utilities',
+      manifestYaml,
+      manifestSha,
+      manifest.upstream?.ref || upstreamResolvedCommit,
+      upstreamResolvedCommit,
+      manifest.legal?.license || 'UNKNOWN',
+      manifest.runtime?.kind || 'node',
+      manifest.framework || null,
+      JSON.stringify(manifest.runtime?.arch || ['arm64', 'x86_64']),
+    );
+
+    return AppInstaller.start(db, {
+      slug: manifest.slug,
+      commit: upstreamResolvedCommit,
+      channel: 'developer-import',
+      secrets,
+      source,
+    });
+  },
+
+  /**
    * The state-machine driver. Each `transition` call atomically advances the
    * row, and we publish progress events between them so subscribers see the
    * intermediate states.
@@ -367,11 +439,15 @@ const AppInstaller = {
 
     // 10. Fire-and-forget track-install. Anonymous, rate-limited per IP/day
     //     server-side. No await — the install finishes the moment the row
-    //     activates, regardless of network.
-    fetch(`https://os8.ai/api/apps/${encodeURIComponent(manifest.slug)}/track-install`, {
-      method: 'POST',
-      signal: AbortSignal.timeout(5000),
-    }).catch(() => { /* best-effort */ });
+    //     activates, regardless of network. Skip for developer-import: the
+    //     synthesized slug doesn't map to an os8.ai App row and the call
+    //     would always 404.
+    if (entry.channel !== 'developer-import') {
+      fetch(`https://os8.ai/api/apps/${encodeURIComponent(manifest.slug)}/track-install`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(5000),
+      }).catch(() => { /* best-effort */ });
+    }
   },
 
   async _rollbackInstall(db, jobId, errorMessage) {
@@ -394,16 +470,32 @@ const AppInstaller = {
       try { fs.rmSync(job.staging_dir, { recursive: true, force: true }); }
       catch (_) { /* leave for reapStaging */ }
     }
+
+    // PR 3.1: developer-import synthetic catalog rows are local-only state;
+    // drop them eagerly on rollback so an abandoned import doesn't sit in
+    // app_catalog until the 24h reaper fires.
+    if (job.channel === 'developer-import' && job.external_slug) {
+      try { AppCatalogService.reapDeveloperImportOrphans(db, { slug: job.external_slug }); }
+      catch (_) { /* best-effort */ }
+    }
   },
 
   /**
    * Cancel from awaiting_approval. Cleans the staging dir best-effort.
    */
   cancel(db, jobId) {
+    const before = InstallJobs.get(db, jobId);
     const job = InstallJobs.cancel(db, jobId);
     if (job?.staging_dir && fs.existsSync(job.staging_dir)) {
       try { fs.rmSync(job.staging_dir, { recursive: true, force: true }); }
       catch (_) { /* leave for reapStaging (PR 1.29) */ }
+    }
+    // PR 3.1: same-session orphan cleanup for developer-import.
+    const channel = job?.channel || before?.channel;
+    const slug = job?.external_slug || before?.external_slug;
+    if (channel === 'developer-import' && slug) {
+      try { AppCatalogService.reapDeveloperImportOrphans(db, { slug }); }
+      catch (_) { /* best-effort */ }
     }
     publish(jobId, { kind: 'status', status: 'cancelled', job });
     return job;

@@ -432,6 +432,15 @@ async function init() {
     nextNewApp.disabled = true;
   });
 
+  // ===== Developer Import (PR 3.1) =====
+  const devImportBtn = document.getElementById('devImportBtn');
+  if (devImportBtn) {
+    devImportBtn.addEventListener('click', async () => {
+      const m = await import('./dev-import-dialog.js');
+      m.openDevImportDialog();
+    });
+  }
+
   // Vault button
   document.getElementById('vaultBtn')?.addEventListener('click', () => openVaultTab());
 

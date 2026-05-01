@@ -365,12 +365,18 @@ function wireEvents(state) {
     } else if (!state.jobId) {
       // No job yet — this happens when the modal was opened by-slug and no
       // prior `appStore.install(...)` was issued. Kick the install now.
-      const r = await window.os8.appStore.install(
-        state.entry.slug,
-        state.entry.upstreamResolvedCommit,
-        state.entry.channel,
-        'modal'
-      );
+      const r = state.devImportMode
+        ? await window.os8.appStore.installFromManifest(
+            state.entry.manifest,
+            state.entry.upstreamResolvedCommit,
+            'modal'
+          )
+        : await window.os8.appStore.install(
+            state.entry.slug,
+            state.entry.upstreamResolvedCommit,
+            state.entry.channel,
+            'modal'
+          );
       if (!r?.ok) {
         state.error = r?.error || 'install failed';
         patchModal(state);
@@ -448,6 +454,11 @@ function startState(entry, validation) {
     secondConfirmed: false,
     jobId: null,
     appId: null,
+    // PR 3.1: dev-import mode toggles strict modal styling + per-capability
+    // opt-in toggles (PR 3.2). Off for verified/community installs.
+    devImportMode: false,
+    devImportRisksAcknowledged: false,
+    devImportMeta: null,
   };
 }
 
@@ -497,6 +508,45 @@ export async function openInstallPlanModalFromYaml(yamlText, opts = {}) {
     manifest: result.manifest,
   };
   const state = startState(entry, result.validation);
+  showModal(state);
+}
+
+/**
+ * Open the install plan modal with a manifest object directly (PR 3.1).
+ * Used by Developer Import to skip the YAML round-trip — the drafter
+ * produces a parsed manifest that we feed straight in.
+ *
+ * @param {object} manifest - parsed AppSpec
+ * @param {{ upstreamResolvedCommit?: string, importMeta?: object }} [opts]
+ */
+export async function openInstallPlanModalFromManifest(manifest, opts = {}) {
+  // Re-validate via the parsed-object IPC path (no YAML round-trip needed
+  // since the drafter already produces a structured manifest).
+  const result = await window.os8.appStore.validateManifestObject(manifest, {
+    upstreamResolvedCommit: opts.upstreamResolvedCommit,
+  });
+  if (!result?.ok) {
+    alert(`Manifest validation failed: ${result?.error || 'unknown'}`);
+    return;
+  }
+  const entry = {
+    slug: manifest.slug,
+    name: manifest.name,
+    publisher: manifest.publisher,
+    channel: 'developer-import',
+    iconUrl: null,
+    description: manifest.description,
+    license: manifest.legal?.license,
+    runtimeKind: manifest.runtime?.kind,
+    framework: manifest.framework,
+    architectures: manifest.runtime?.arch || [],
+    upstreamResolvedCommit: opts.upstreamResolvedCommit || null,
+    manifest: result.manifest,
+    devImportMeta: opts.importMeta || null,
+  };
+  const state = startState(entry, result.validation);
+  state.devImportMode = true;            // PR 3.2 reads this for strict-modal styling
+  state.devImportMeta = opts.importMeta || null;
   showModal(state);
 }
 
