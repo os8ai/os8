@@ -74,10 +74,21 @@ async function getRepoMeta({ owner, repo }) {
 }
 
 /**
- * Resolve a ref to an immutable 40-char SHA. Strategy:
+ * Resolve a ref to an immutable 40-char commit SHA.
+ *
+ * Strategy:
  *   1. If ref is already a 40-char SHA → return as-is.
- *   2. If no ref → try `releases/latest` for tag_name; otherwise default branch.
- *   3. Try `/git/refs/tags/<ref>` then `/git/refs/heads/<ref>`.
+ *   2. If no ref → use `releases/latest` tag_name when present, else the
+ *      default branch.
+ *   3. Resolve via `/repos/:owner/:repo/commits/:ref` — this endpoint
+ *      auto-dereferences both lightweight AND annotated tags, returning
+ *      the commit they point to.
+ *
+ * Why /commits and not /git/refs/tags/{ref}: `/git/refs/tags/{tag}` returns
+ * the *tag object*'s SHA for annotated tags, NOT the commit SHA — feeding
+ * that SHA into `/git/trees/{sha}` then 422s. The verified catalog's
+ * `resolve-refs.js` learned this against `koala73/worldmonitor v2.5.23`
+ * (an annotated tag); we use the same fix.
  */
 async function resolveRef({ owner, repo, ref }) {
   if (ref && /^[0-9a-f]{40}$/.test(ref)) {
@@ -109,24 +120,24 @@ async function resolveRef({ owner, repo, ref }) {
     kindHint = 'branch';
   }
 
-  // Try tag first when we have a hint, then heads, then the other.
-  const tryOrder = kindHint === 'branch' ? ['heads', 'tags'] : ['tags', 'heads'];
-  for (const refType of tryOrder) {
-    try {
-      const r = await fetch(
-        `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/refs/${refType}/${encodeURIComponent(resolvedRef)}`,
-        { headers: ghHeaders(), signal: AbortSignal.timeout(10_000) }
-      );
-      if (r.ok) {
-        const j = await r.json();
-        const sha = j?.object?.sha;
-        if (sha && /^[0-9a-f]{40}$/.test(sha)) {
-          return { ref: resolvedRef, sha, kind: refType === 'tags' ? 'tag' : 'branch' };
-        }
-      }
-    } catch (_) { /* try next */ }
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/commits/${encodeURIComponent(resolvedRef)}`;
+  const r = await fetch(url, {
+    headers: ghHeaders(),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (r.status === 404 || r.status === 422) {
+    throw new Error(`could not resolve ref '${resolvedRef}' to a commit in ${owner}/${repo} (status ${r.status})`);
   }
-  throw new Error(`could not resolve ref '${resolvedRef}' to a 40-char SHA in ${owner}/${repo}`);
+  if (!r.ok) {
+    const rate = rateLimitMessage(r.status);
+    throw new Error(rate || `github returned ${r.status} resolving ref '${resolvedRef}'`);
+  }
+  const j = await r.json();
+  const sha = j?.sha;
+  if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+    throw new Error(`unexpected commit response for '${resolvedRef}': missing 40-char SHA`);
+  }
+  return { ref: resolvedRef, sha, kind: kindHint || 'ref' };
 }
 
 async function fetchRawFile({ owner, repo, sha, path }) {
