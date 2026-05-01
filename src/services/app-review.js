@@ -99,9 +99,10 @@ const SHELL_PIPE_RES = [
   /\bwget\b[^|]*\|\s*\b(?:sh|bash|zsh)\b/i,
 ];
 
-// Known typosquat list — Phase 3 PR 3.6 will replace this with a real
-// supply-chain analyzer (safety / osv-scanner). Keep small + curated; the
-// list is not exhaustive on purpose. Keyed lowercased.
+// Known typosquat list — kept as a fallback when no real supply-chain
+// analyzer is on PATH (PR 3.6 wired osv-scanner / safety; both are
+// optional). Keep small + curated; the list is not exhaustive on purpose.
+// Keyed lowercased.
 const KNOWN_MALICIOUS_PYTHON = new Set([
   'requestes',  'reuests',     'requessts',
   'numpyy',     'numpyz',      'numpie',
@@ -492,15 +493,44 @@ const AppReviewService = {
       }
     }
 
-    // PR 2.1: Python branch — typosquat scan + dep summary. We don't shell
-    // out to safety/osv-scanner in v1 (Phase 3 PR 3.6 plugs those in here);
-    // this stub flags known typosquats against a small hardcoded list.
+    // PR 3.6: real supply-chain analyzer (osv-scanner + safety). Both
+    // tools are optional CLIs detected on PATH at scan time; when neither
+    // is available we fall back to the typosquat-list stub below. The
+    // scanner covers Node (osv-scanner) and Python (osv-scanner + safety),
+    // so `osvRan` alone is enough to skip the fallback for Node repos
+    // that have no Python lockfile.
+    let osvRan = false;
+    let safetyRan = false;
+    try {
+      const Scanner = require('./supply-chain-scanner');
+      const r = await Scanner.scan(stagingDir);
+      osvRan = r.osvRan;
+      safetyRan = r.safetyRan;
+      findings.push(...r.findings);
+    } catch (e) {
+      findings.push({
+        severity: 'info', category: 'supply_chain',
+        file: null, line: null,
+        description: `supply-chain scan failed: ${e.message?.slice(0, 200) || 'unknown'}`,
+        snippet: '',
+      });
+    }
+
+    // Python typosquat fallback — only fires when neither scanner ran AND
+    // a Python manifest is present. Surface an info finding pointing at
+    // the install instructions so the user knows coverage is reduced.
     const hasPyManifest =
       fs.existsSync(path.join(stagingDir, 'pyproject.toml')) ||
       fs.existsSync(path.join(stagingDir, 'requirements.txt')) ||
       fs.existsSync(path.join(stagingDir, 'uv.lock')) ||
       fs.existsSync(path.join(stagingDir, 'poetry.lock'));
-    if (hasPyManifest) {
+    if (hasPyManifest && !osvRan && !safetyRan) {
+      findings.push({
+        severity: 'info', category: 'supply_chain',
+        file: null, line: null,
+        description: 'no supply-chain scanner found on PATH; using typosquat-list fallback. See docs/supply-chain-tools.md to install osv-scanner or safety for deeper checks.',
+        snippet: '',
+      });
       try {
         findings.push(...scanPythonDeps(stagingDir));
       } catch (e) {

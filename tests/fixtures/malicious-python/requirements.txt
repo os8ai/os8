@@ -1,0 +1,4 @@
+# Test fixture for PR 3.6 typosquat fallback.
+# `requestes` is a known-typosquat entry in app-review.js's KNOWN_MALICIOUS_PYTHON.
+requestes==1.0.0
+flask==2.0.0
