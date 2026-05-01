@@ -181,6 +181,11 @@
     border-radius: var(--radius-sm);
     font-size: 12px;
     margin-bottom: 12px;
+    /* Override the global `user-select: none` on <body>. Error text needs to
+       be highlightable + copyable so users can paste it into bug reports. */
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
   }
 
   .install-plan-modal__validation-errors ul {

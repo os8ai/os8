@@ -202,3 +202,87 @@ describe('github-importer.parseGithubUrl', () => {
     expect(() => Importer.parseGithubUrl('')).toThrow(/unsupported URL/);
   });
 });
+
+describe('github-importer.resolveRef — annotated-tag dereferencing', () => {
+  let Importer;
+  let originalFetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    delete require.cache[require.resolve('../src/services/github-importer')];
+    Importer = require('../src/services/github-importer');
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  function mockFetch(handler) {
+    global.fetch = (url, opts) => {
+      const u = String(url);
+      const result = handler(u, opts);
+      if (!result) return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+      return Promise.resolve(result);
+    };
+  }
+
+  it('returns 40-char COMMIT SHA when tag is annotated (regression: koala73/worldmonitor v2.5.23)', async () => {
+    // Annotated tag — /git/refs/tags/<tag> returns object.type='tag' with the
+    // tag-object SHA, NOT the commit SHA. /commits/{ref} resolves to the
+    // underlying commit. We must use the latter.
+    const TAG_OBJECT_SHA = '6417c972a840377cfc4327ae063fe9606c7d2f3b';
+    const COMMIT_SHA     = 'e51058e1765ef2f0c83ccb1d08d984bc59d23f10';
+
+    mockFetch((url) => {
+      if (url.includes('/repos/koala73/worldmonitor/commits/v2.5.23')) {
+        return { ok: true, status: 200, json: async () => ({ sha: COMMIT_SHA }) };
+      }
+      return null;
+    });
+
+    const r = await Importer.resolveRef({ owner: 'koala73', repo: 'worldmonitor', ref: 'v2.5.23' });
+    expect(r.sha).toBe(COMMIT_SHA);
+    expect(r.sha).not.toBe(TAG_OBJECT_SHA);
+  });
+
+  it('passes through 40-char SHA without an API call', async () => {
+    let called = false;
+    mockFetch(() => { called = true; return null; });
+    const sha = 'a'.repeat(40);
+    const r = await Importer.resolveRef({ owner: 'x', repo: 'y', ref: sha });
+    expect(r.sha).toBe(sha);
+    expect(called).toBe(false);
+  });
+
+  it('falls back to default branch when no ref + no releases', async () => {
+    mockFetch((url) => {
+      if (url.includes('/releases/latest')) return { ok: false, status: 404, json: async () => ({}) };
+      if (url.endsWith('/repos/x/y'))        return { ok: true,  status: 200, json: async () => ({ default_branch: 'main' }) };
+      if (url.includes('/commits/main'))     return { ok: true,  status: 200, json: async () => ({ sha: 'b'.repeat(40) }) };
+      return null;
+    });
+    const r = await Importer.resolveRef({ owner: 'x', repo: 'y', ref: null });
+    expect(r.sha).toBe('b'.repeat(40));
+    expect(r.ref).toBe('main');
+  });
+
+  it('uses release tag_name when /releases/latest succeeds', async () => {
+    mockFetch((url) => {
+      if (url.includes('/releases/latest')) return { ok: true, status: 200, json: async () => ({ tag_name: 'v9.9.9' }) };
+      if (url.includes('/commits/v9.9.9'))  return { ok: true, status: 200, json: async () => ({ sha: 'c'.repeat(40) }) };
+      return null;
+    });
+    const r = await Importer.resolveRef({ owner: 'x', repo: 'y', ref: null });
+    expect(r.sha).toBe('c'.repeat(40));
+    expect(r.ref).toBe('v9.9.9');
+    expect(r.kind).toBe('tag');
+  });
+
+  it('throws a clean error when ref resolves to 404', async () => {
+    mockFetch((url) => {
+      if (url.includes('/commits/nonexistent')) return { ok: false, status: 404, json: async () => ({}) };
+      return null;
+    });
+    await expect(Importer.resolveRef({ owner: 'x', repo: 'y', ref: 'nonexistent' })).rejects.toThrow(/could not resolve ref/);
+  });
+});
