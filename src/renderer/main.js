@@ -439,6 +439,18 @@ async function init() {
       const m = await import('./dev-import-dialog.js');
       m.openDevImportDialog();
     });
+
+    // PR 3.5 — hide button when Developer Import is disabled in Settings.
+    const refreshDevImportVisibility = async () => {
+      try {
+        const v = await window.os8.settings.get('app_store.channel.developer-import.enabled');
+        // Default ON; only hide when explicitly disabled.
+        const enabled = !(v === 'false' || v === false);
+        devImportBtn.style.display = enabled ? '' : 'none';
+      } catch (_) { /* settings not ready — leave button visible */ }
+    };
+    refreshDevImportVisibility();
+    document.addEventListener('app-store:settings-changed', refreshDevImportVisibility);
   }
 
   // Vault button

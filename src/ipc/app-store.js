@@ -105,6 +105,36 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
+  // PR 3.5 — Reschedule the daily catalog sync after a settings change.
+  ipcMain.handle('app-store:reschedule-syncs', () => {
+    try {
+      // Lazy require to avoid a circular import — the server module attaches
+      // the reschedule fn at startup. When the server hasn't booted yet
+      // (tests) the call is a no-op.
+      const server = require('../server');
+      if (typeof server.rescheduleAppCatalogSync === 'function') {
+        server.rescheduleAppCatalogSync();
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // PR 3.5 — Trigger an immediate sync of one channel (used after first-enable
+  // so the user sees community apps without waiting for the daily timer).
+  ipcMain.handle('app-store:sync-channel-now', async (_e, channel) => {
+    if (!['verified', 'community'].includes(channel)) {
+      return { ok: false, error: 'invalid channel' };
+    }
+    try {
+      const r = await AppCatalogService.sync(db, { channel });
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // PR 1.9 — preload-external-app.js calls this on init to read the manifest's
   // declared os8_capabilities and build the right SDK surface.
   ipcMain.handle('app-store:get-manifest-for-preload', (_e, appId) => {
