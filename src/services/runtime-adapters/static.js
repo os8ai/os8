@@ -116,9 +116,20 @@ const StaticRuntimeAdapter = {
       await spawnPromise(['bundle', 'install', '--path', '.bundle'],
         { cwd: appDir, env: sanitizedEnv, onLog });
     }
-    for (const cmd of (Array.isArray(spec?.postInstall) ? spec.postInstall : [])) {
+
+    // Honor the manifest's install:/postInstall: arrays the same way Node and
+    // Python adapters do. Static apps with build steps (e.g. CyberChef's
+    // `npm ci && npm run build` → build/prod) need this; without it, the
+    // adapter only runs framework-specific dep commands and the build output
+    // never gets produced, so OS8-served `os8:static --dir build/prod`
+    // fails at start with "static directory not found".
+    const runList = [
+      ...(Array.isArray(spec?.install) ? spec.install : []),
+      ...(Array.isArray(spec?.postInstall) ? spec.postInstall : []),
+    ];
+    for (const cmd of runList) {
       if (!Array.isArray(cmd?.argv)) {
-        throw new Error('postInstall commands must be argv arrays');
+        throw new Error('install/postInstall commands must be argv arrays');
       }
       onLog?.('stdout', `+ ${cmd.argv.join(' ')}\n`);
       await spawnPromise(cmd.argv, { cwd: appDir, env: sanitizedEnv, onLog });

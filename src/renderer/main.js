@@ -301,7 +301,9 @@ async function init() {
         return;
       }
       try {
-        await openInstallPlanModalBySlug(payload.slug, payload.channel || 'verified');
+        await openInstallPlanModalBySlug(payload.slug, payload.channel || 'verified', {
+          source: payload.source || 'os8.ai',
+        });
       } catch (e) {
         console.warn('[install-plan] open from deeplink failed:', e?.message);
       }

@@ -196,6 +196,25 @@ describe('StaticRuntimeAdapter — install', () => {
     await StaticAdapter.install(m, dir, { ...process.env }, () => {});
     expect(fs.readFileSync(path.join(dir, 'built.txt'), 'utf8')).toBe('built');
   });
+
+  // Regression: spec.install was silently ignored by the static adapter, so
+  // static apps that need a build step (e.g. CyberChef's `npm ci && npm run
+  // build` -> build/prod) cloned without their build output. The Node and
+  // Python adapters honored it; static didn't until we fixed it.
+  it('spec.install commands run in order before postInstall', async () => {
+    const dir = makeAppDir(parent, { 'src.txt': 'hello' });
+    const m = clone(BASE_MANIFEST);
+    m.install = [
+      { argv: ['node', '-e', `require('fs').writeFileSync('step1.txt','1')`] },
+      { argv: ['node', '-e', `require('fs').writeFileSync('step2.txt','2')`] },
+    ];
+    m.postInstall = [{ argv: ['node', '-e',
+      `require('fs').writeFileSync('post.txt','p')`] }];
+    await StaticAdapter.install(m, dir, { ...process.env }, () => {});
+    expect(fs.readFileSync(path.join(dir, 'step1.txt'), 'utf8')).toBe('1');
+    expect(fs.readFileSync(path.join(dir, 'step2.txt'), 'utf8')).toBe('2');
+    expect(fs.readFileSync(path.join(dir, 'post.txt'), 'utf8')).toBe('p');
+  });
 });
 
 // Live Hugo / Jekyll coverage is exercised via PR 2.4's hello-static
