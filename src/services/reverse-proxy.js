@@ -125,18 +125,24 @@ const ReverseProxyService = {
       const host = req.headers?.host || '(no host)';
       const slug = ReverseProxyService._slugFromHost(req);
 
-      // PR 3.14 — log every request whose host LOOKS like it could be ours
-      // (contains '.localhost') so we can see when a request that should be
-      // routed isn't because of a regex / case / port mismatch. Also logs
-      // when slug extracted but no entry found.
-      if (host.includes('.localhost')) {
+      // PR 3.14/3.16 — log EVERY request reaching the proxy middleware so
+      // we can see exactly what Host header (if any) Chromium is sending
+      // for external-app traffic. Skip our own /api and /shared/avatars
+      // noise so the log is readable.
+      const url = req.url || '';
+      const isOs8Internal =
+        url.startsWith('/api/') ||
+        url.startsWith('/shared/') ||
+        url.startsWith('/avatars/') ||
+        url.startsWith('/oauth/');
+      if (!isOs8Internal) {
         const staticHit = slug ? _staticServers.has(slug) : false;
         const proxyHit  = slug ? _proxies.has(slug) : false;
         dbg(
-          `middleware host="${host}" path="${req.url}"`,
-          `extractedSlug="${slug || ''}"`,
+          `middleware host="${host}" url="${url}"`,
+          `extractedSlug="${slug || '(none)'}"`,
           `staticHit=${staticHit} proxyHit=${proxyHit}`,
-          `_proxies.size=${_proxies.size} _staticServers.size=${_staticServers.size}`
+          `_proxies=[${[..._proxies.keys()].join(',') || '(empty)'}]`
         );
       }
 
