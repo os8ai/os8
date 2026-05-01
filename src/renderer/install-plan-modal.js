@@ -675,6 +675,14 @@ function applyJobUpdate(state, payload) {
     if (payload.status === 'installed') {
       state.appId = payload.appId || state.appId;
       patchModal(state);
+      // PR 3.11 hotfix: dev-import installs go through AppService.createExternal
+      // which doesn't fire the `apps:created` IPC event that manual app
+      // creation does — so the home grid is stale after install. Dispatch a
+      // renderer-internal event main.js listens for; main.js's existing
+      // loadApps() refreshes the grid + assistant button.
+      document.dispatchEvent(new CustomEvent('os8:app-installed', {
+        detail: { appId: state.appId },
+      }));
       // Auto-close after a short success delay.
       setTimeout(() => closeInstallPlanModal(), 1500);
       return;
