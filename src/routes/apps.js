@@ -360,6 +360,10 @@ function createAppsRouter(db, deps) {
   // External-app process lifecycle (PR 1.19).
   // POST /api/apps/:id/processes/start — start the dev server, register
   // the proxy, return the URL the BrowserView should load.
+  //
+  // On failure, response body carries the structured error detail used by
+  // the renderer's failure modal (Tier 3A): code, stderrTail, hints.
+  // Pre-Tier-3A clients still see the same `error` string.
   router.post('/:id/processes/start', async (req, res) => {
     try {
       const app = AppService.getById(db, req.params.id);
@@ -389,7 +393,66 @@ function createAppsRouter(db, deps) {
       });
     } catch (err) {
       console.error('[Apps API] processes/start error:', err.message);
-      res.status(500).json({ error: err.message });
+      const { matchHints, parseStartError } = require('../services/failure-hints');
+      const parsed = parseStartError(err.message);
+      res.status(500).json({
+        error: parsed.summary || err.message,
+        errorDetail: {
+          code: parsed.code,
+          stderrTail: parsed.stderrTail,
+          hints: matchHints(parsed.stderrTail || err.message),
+        },
+      });
+    }
+  });
+
+  // Tier 3A — retry-start. Stops the existing process if any (so a
+  // half-started state from a previous crash doesn't linger), then runs
+  // the same start path. Used by the failure modal's "Retry start"
+  // action after the user has fixed something on disk (downloaded
+  // weights, edited app.py, etc.). Returns the same shape as
+  // processes/start.
+  router.post('/:id/processes/retry-start', async (req, res) => {
+    try {
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'app not found' });
+      if (app.app_type !== 'external') {
+        return res.status(400).json({ error: 'not an external app' });
+      }
+
+      const APR = require('../services/app-process-registry').get();
+      const ReverseProxyService = require('../services/reverse-proxy');
+
+      // Best-effort stop. APR.stop is idempotent; ignore "not running" errors.
+      try { await APR.stop(app.id); } catch (_) { /* ignore */ }
+      try { ReverseProxyService.unregister(app.slug); } catch (_) { /* ignore */ }
+
+      const entry = await APR.start(app.id);
+      if (entry?._adapterInfo?._kind === 'static') {
+        ReverseProxyService.registerStatic(app.slug, app.id, entry._adapterInfo._staticDir);
+      } else {
+        ReverseProxyService.register(app.slug, app.id, entry.port);
+      }
+
+      const os8Port = require('../server').getPort();
+      res.json({
+        url: `http://${app.slug}.localhost:${os8Port}/?__os8_app_id=${encodeURIComponent(app.id)}`,
+        slug: app.slug,
+        port: os8Port,
+        upstreamPort: entry.port,
+      });
+    } catch (err) {
+      console.error('[Apps API] processes/retry-start error:', err.message);
+      const { matchHints, parseStartError } = require('../services/failure-hints');
+      const parsed = parseStartError(err.message);
+      res.status(500).json({
+        error: parsed.summary || err.message,
+        errorDetail: {
+          code: parsed.code,
+          stderrTail: parsed.stderrTail,
+          hints: matchHints(parsed.stderrTail || err.message),
+        },
+      });
     }
   });
 

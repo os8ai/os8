@@ -21,6 +21,7 @@ import {
   getServerPort
 } from './state.js';
 import { hideAllPreviews, hidePreviewForApp, loadPreview, updatePreviewBounds, destroyPreviewForApp } from './preview.js';
+import { openAppStartFailureModal } from './app-start-failure-modal.js';
 import { switchStorageView, loadStorageView } from './file-tree.js';
 import { loadTasks } from './tasks.js';
 import { loadJobs } from './jobs.js';
@@ -343,19 +344,43 @@ export async function createAppTab(app, options = {}) {
       // `file:///api/...` and fails with "Failed to fetch". Use the absolute
       // localhost URL like the rest of the renderer (e.g., agent-panel.js).
       const port = getServerPort();
-      const res = await fetch(
-        `http://localhost:${port}/api/apps/${encodeURIComponent(app.id)}/processes/start`,
-        { method: 'POST' }
-      );
+      const startUrl = `http://localhost:${port}/api/apps/${encodeURIComponent(app.id)}/processes/start`;
+      const retryUrl = `http://localhost:${port}/api/apps/${encodeURIComponent(app.id)}/processes/retry-start`;
+      const res = await fetch(startUrl, { method: 'POST' });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'unknown' }));
-        alert(`Failed to start ${app.name}: ${err.error || res.statusText}`);
+        // Tier 3A: server now returns { error, errorDetail: { code, stderrTail, hints } }.
+        // Show the failure modal instead of a window.alert so users see
+        // the actual root cause + heuristic hints, and can Retry without
+        // navigating elsewhere first.
+        const errorPayload = await res.json().catch(() => ({ error: res.statusText || 'unknown' }));
+        openAppStartFailureModal(app, errorPayload, {
+          onRetry: async () => {
+            const r = await fetch(retryUrl, { method: 'POST' });
+            if (r.ok) {
+              // Re-launch the tab now that start succeeded. Closing the
+              // modal here is the caller's responsibility (return ok:true).
+              const body = await r.json();
+              // Open a fresh tab — the original createAppTab() invocation
+              // bailed out, so we re-trigger it. Defer to the next tick so
+              // the modal can close cleanly first.
+              setTimeout(() => createAppTab(app), 0);
+              return { ok: true };
+            }
+            const errPayload = await r.json().catch(() => ({ error: r.statusText || 'unknown' }));
+            return { ok: false, error: errPayload.error, errorPayload: errPayload };
+          },
+        });
         return null;
       }
       const body = await res.json();
       externalUrl = body.url;
     } catch (e) {
-      alert(`Failed to start ${app.name}: ${e.message}`);
+      // Network-level failure (server down, fetch threw). Fall back to a
+      // simple modal with no errorDetail — the hint matcher just returns
+      // an empty list and the modal renders the bare summary.
+      openAppStartFailureModal(app, { error: e.message }, {
+        onRetry: async () => ({ ok: false, error: 'OS8 server unreachable' }),
+      });
       return null;
     }
   }
