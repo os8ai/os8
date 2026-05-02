@@ -163,6 +163,44 @@ describe('PythonRuntimeAdapter — _frozenInstallCmds', () => {
   // "uv pip install <pkg> exited 2: No virtual environment found"
   // even though the venv existed on disk. Adapter now rewrites argv[0]
   // === 'uv' to the same OS8-managed binary used by _frozenInstallCmds.
+  // Regression: Tier 2A's setup-script detection auto-injected
+  // `{argv: ['python', 'scripts/download_model.py']}` as a postInstall step
+  // for HivisionIDPhotos. Install spawned `python ...` with the bare
+  // sanitized env, which doesn't include the venv's bin/ on PATH —
+  // ENOENT, even though the venv had python at .venv/bin/python.
+  // _installEnv now prepends .venv/bin to PATH once the venv exists.
+  it('_installEnv prepends .venv/bin to PATH once the venv exists', () => {
+    const dir = makeAppDir(parent, {});
+    const venvBin = path.join(dir, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin');
+    fs.mkdirSync(venvBin, { recursive: true });
+    fs.writeFileSync(path.join(venvBin, 'python'), '#!/bin/sh\nexit 0\n');
+
+    const env = PyAdapter._installEnv(dir, { PATH: '/usr/bin:/bin', FOO: 'bar' });
+    expect(env.PATH.startsWith(venvBin + path.delimiter)).toBe(true);
+    expect(env.PATH).toContain('/usr/bin:/bin');
+    expect(env.FOO).toBe('bar'); // other env vars passed through
+  });
+
+  it('_installEnv leaves env untouched when .venv/bin does not exist yet', () => {
+    const dir = makeAppDir(parent, {});
+    // No venv created — first spawn (uv venv) must use the original env.
+    const original = { PATH: '/usr/bin:/bin', BAZ: 'qux' };
+    const env = PyAdapter._installEnv(dir, original);
+    expect(env).toBe(original);
+  });
+
+  it('_installEnv handles missing PATH in sanitizedEnv', () => {
+    const dir = makeAppDir(parent, {});
+    const venvBin = path.join(dir, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin');
+    fs.mkdirSync(venvBin, { recursive: true });
+
+    const env = PyAdapter._installEnv(dir, { /* no PATH */ });
+    expect(env.PATH.startsWith(venvBin)).toBe(true);
+    // Trailing delimiter is harmless but should be consistent: PATH should
+    // start with venvBin.
+    expect(env.PATH).toBe(`${venvBin}${path.delimiter}`);
+  });
+
   it('install rewrites bare `uv` in spec.install to the OS8-managed uv binary', async () => {
     const dir = makeAppDir(parent, { 'requirements.txt': 'pandas\n' });
     const m = clone(BASE_MANIFEST);
