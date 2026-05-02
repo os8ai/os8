@@ -58,12 +58,18 @@ function renderHints(hints) {
   `;
 }
 
+function formatFailedAt(date) {
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString();
+}
+
 function renderModal(app, errorPayload, state) {
   const detail = errorPayload?.errorDetail || {};
   const code = detail.code ?? '?';
   const stderrTail = detail.stderrTail || '';
   const hints = Array.isArray(detail.hints) ? detail.hints : [];
   const summary = errorPayload?.error || 'process exited before ready';
+  const failedAtText = formatFailedAt(state.failedAt);
 
   return `
     <div class="install-plan-modal" role="dialog" aria-labelledby="app-start-failure-title">
@@ -111,6 +117,21 @@ function renderModal(app, errorPayload, state) {
         </div>
       ` : ''}
 
+      <div class="install-plan-modal__footer-meta" style="
+        font-size: 11px;
+        color: var(--color-text-secondary, #999);
+        font-family: monospace;
+        padding: 6px 0;
+        border-top: 1px solid var(--color-border, #333);
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+      ">
+        <span>app: <code>${escapeHtml(app?.slug || '?')}</code></span>
+        <span>id: <code>${escapeHtml(app?.id || '?')}</code></span>
+        ${failedAtText ? `<span>Failed at ${escapeHtml(failedAtText)}</span>` : ''}
+      </div>
+
       <div class="install-plan-modal__footer">
         <button data-action="close" type="button">Close</button>
         <button data-action="retry" type="button" class="primary"
@@ -133,7 +154,11 @@ let _activeKeyHandler = null;
  */
 export function openAppStartFailureModal(app, errorPayload, opts = {}) {
   const root = ensureRoot();
-  const state = { retrying: false, retryError: null };
+  // Capture the original-failure timestamp once; retries that re-paint the
+  // modal must not reset it. Anchoring to the first failure (not the latest
+  // re-paint) is what tells a user "this modal is stale" when they've
+  // deleted+reinstalled the app between attempts.
+  const state = { retrying: false, retryError: null, failedAt: new Date() };
 
   function paint() {
     root.innerHTML = renderModal(app, errorPayload, state);

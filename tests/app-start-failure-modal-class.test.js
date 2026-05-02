@@ -54,3 +54,47 @@ describe('app-start-failure-modal — root container CSS class', () => {
     expect(src).toMatch(/classList\.remove\(['"]active['"]\)/);
   });
 });
+
+describe('app-start-failure-modal — install-instance anchoring', () => {
+  // Background: a user (Leo) hit the failure modal, then deleted +
+  // reinstalled the app in another window before clicking Retry start.
+  // The retry ran against a different app id than the one whose stderr
+  // was being shown, but nothing in the modal made the mismatch visible.
+  // Fix: render the slug, app id, and original-failure timestamp in a
+  // footer-meta row so a stale modal is identifiable at a glance.
+  //
+  // No JSDOM in this project, so these are source-level checks. They go
+  // red if a future restyle silently drops the anchor fields.
+
+  it('renders the app slug from app?.slug', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/app\?\.slug/);
+  });
+
+  it('renders the app id from app?.id', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/app\?\.id/);
+  });
+
+  it('formats the original-failure time via toLocaleTimeString()', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/toLocaleTimeString\(\)/);
+  });
+
+  it("uses the literal class 'install-plan-modal__footer-meta' so future restyles can't silently drop it", () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/install-plan-modal__footer-meta/);
+  });
+
+  it('captures failedAt at modal-open time (not on every re-paint)', () => {
+    // Retries call paint() repeatedly; if failedAt were re-derived inside
+    // renderModal/paint, the timestamp would tick to "now" on each retry
+    // and stop anchoring to the original failure event.
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    // Exactly one `new Date()` in the module, and it must live inside
+    // openAppStartFailureModal's state initializer.
+    const newDateMatches = src.match(/new Date\(\)/g) || [];
+    expect(newDateMatches.length).toBe(1);
+    expect(src).toMatch(/state\s*=\s*\{[^}]*failedAt:\s*new Date\(\)/);
+  });
+});
