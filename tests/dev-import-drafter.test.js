@@ -288,6 +288,186 @@ describe('dev-import-drafter — runtime + framework detection', () => {
     expect(argv).toEqual(['python', 'app.py']);
   });
 
+  // ─── Tier 2A: setup-script detection ──────────────────────────────────────
+  it('detects root-level download_models.py as a setup-script candidate', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['download_models.py', 'requirements.txt'],
+      scriptsDirEntries: [],
+      sourceFor: (p) => p === 'download_models.py' ? '"""Fetch model weights to weights/."""\nimport requests\n' : null,
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].path).toBe('download_models.py');
+    expect(candidates[0].argv).toEqual(['python', 'download_models.py']);
+    expect(candidates[0].summary).toContain('Fetch model weights');
+  });
+
+  it('detects scripts/download_*.py via subdirectory listing', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts', 'requirements.txt'],
+      scriptsDirEntries: [
+        { name: 'download_model.py', type: 'blob' },
+        { name: 'build_pypi.py', type: 'blob' },         // not a setup script
+        { name: '__pycache__',     type: 'tree' },        // dir, ignored
+      ],
+      sourceFor: (p) => p === 'scripts/download_model.py' ? '# Download ONNX weights for matting\nimport os\n' : null,
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].path).toBe('scripts/download_model.py');
+    expect(candidates[0].argv).toEqual(['python', 'scripts/download_model.py']);
+    expect(candidates[0].summary).toContain('Download ONNX weights');
+  });
+
+  it('detects scripts/setup_*.sh as a shell candidate (bash invocation)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts'],
+      scriptsDirEntries: [{ name: 'setup_env.sh', type: 'blob' }],
+      sourceFor: () => '#!/bin/bash\n# Initialise environment + fetch fixtures\n',
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].kind).toBe('shell');
+    expect(candidates[0].argv).toEqual(['bash', 'scripts/setup_env.sh']);
+  });
+
+  it('detects Makefile targets matching download/setup/init/prepare/fetch', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const makefile = `
+.PHONY: build clean download setup test
+
+build:
+\tcc -o foo foo.c
+
+download:
+\tcurl -O https://example.com/weights.bin
+
+setup: download
+\t./bootstrap.sh
+
+test:
+\tpytest
+
+clean:
+\trm -rf build/
+`;
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['Makefile'],
+      scriptsDirEntries: [],
+      sourceFor: () => null,
+      makefileText: makefile,
+    });
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map(c => c.path)).toEqual(['Makefile:download', 'Makefile:setup']);
+    expect(candidates[0].argv).toEqual(['make', 'download']);
+  });
+
+  it('caps the candidate list at 3 to keep the modal scannable', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['download_models.py', 'download_weights.py', 'fetch_models.py', 'setup_models.py', 'prepare_models.py'],
+      scriptsDirEntries: [],
+      sourceFor: () => '',
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(3);
+  });
+
+  it('ignores Django manage.py / setuptools setup.py at root (false-positive guard)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['manage.py', 'setup.py', 'requirements.txt'],
+      scriptsDirEntries: [],
+      sourceFor: () => '',
+      makefileText: null,
+    });
+    expect(candidates).toEqual([]);
+  });
+
+  it('parseMakefileTargets skips .PHONY, comments, indented lines, and macro defs', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const makefile = `
+# Comment line
+.PHONY: build clean
+
+VAR := value           # not a target
+build: deps
+\trecipe-line
+clean :
+\tcleanup-recipe
+target_with_underscore:
+\trun
+`;
+    const targets = Drafter.parseMakefileTargets(makefile);
+    expect(targets).toContain('build');
+    expect(targets).toContain('clean');
+    expect(targets).toContain('target_with_underscore');
+    expect(targets).not.toContain('.PHONY');
+    expect(targets).not.toContain('recipe-line');
+    expect(targets).not.toContain('VAR');
+  });
+
+  it('summariseScript extracts python triple-quoted docstring', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `"""Download ONNX matting weights for HivisionIDPhotos.
+
+Drops weights into hivision/creator/weights/.
+"""
+import os
+`;
+    const s = Drafter.summariseScript(src, 'python');
+    expect(s).toContain('Download ONNX matting weights');
+  });
+
+  it('summariseScript falls back to top-of-file # comment block', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `#!/bin/bash
+# Fetch model weights into ./weights
+# Used by ComfyUI's first-run flow
+
+set -e
+`;
+    const s = Drafter.summariseScript(src, 'shell');
+    expect(s).toContain('Fetch model weights');
+  });
+
+  it('end-to-end: HivisionIDPhotos-shaped repo surfaces scripts/download_model.py in importMeta.setupScripts', async () => {
+    installFakeImporter({
+      parseGithubUrl: () => ({ owner: 'Zeyi-Lin', repo: 'HivisionIDPhotos', ref: null }),
+      getRepoMeta: async () => ({
+        clone_url: 'https://github.com/Zeyi-Lin/HivisionIDPhotos.git',
+        default_branch: 'master',
+        license: { spdx_id: 'Apache-2.0' },
+        description: 'AI ID photos',
+      }),
+      resolveRef: async () => ({ ref: 'v1.3.1', sha: STAR_SHA, kind: 'tag' }),
+      listTopLevel: async () => [
+        'app.py', 'requirements.txt', 'requirements-app.txt', 'scripts',
+      ],
+      listSubdir: async ({ dir }) => dir === 'scripts' ? [
+        { name: 'download_model.py', type: 'blob' },
+        { name: 'build_pypi.py',     type: 'blob' },
+      ] : [],
+      fetchRawFile: async ({ path }) => {
+        if (path === 'requirements.txt') return 'opencv-python\nonnxruntime\n';
+        if (path === 'requirements-app.txt') return 'gradio>=4.43.0\n';
+        if (path === 'app.py') return `argparser.add_argument("--port", type=int, default=7860)\nargparser.add_argument("--host", type=str, default="127.0.0.1")\n`;
+        if (path === 'scripts/download_model.py') return '# Download ONNX matting weights into hivision/creator/weights/\nimport requests\n';
+        return null;
+      },
+    });
+    Drafter = require('../src/services/dev-import-drafter');
+    const r = await Drafter.draft('https://github.com/Zeyi-Lin/HivisionIDPhotos');
+    expect(r.importMeta.setupScripts).toBeDefined();
+    expect(r.importMeta.setupScripts).toHaveLength(1);
+    expect(r.importMeta.setupScripts[0].path).toBe('scripts/download_model.py');
+    expect(r.importMeta.setupScripts[0].argv).toEqual(['python', 'scripts/download_model.py']);
+    expect(r.importMeta.setupScripts[0].summary).toContain('Download ONNX matting weights');
+  });
+
   it('end-to-end: HivisionIDPhotos-shaped repo produces gradio framework + secondary-file install + --port flags', async () => {
     installFakeImporter({
       parseGithubUrl: () => ({ owner: 'Zeyi-Lin', repo: 'HivisionIDPhotos', ref: null }),

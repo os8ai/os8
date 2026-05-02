@@ -208,6 +208,41 @@ function renderCommands(manifest) {
   return `<div class="install-plan-modal__commands">${blocks.join('\n\n')}</div>`;
 }
 
+// Tier 2A: render the opt-in setup-script panel. One row per candidate
+// with a checkbox, the file path, a one-line summary, the exact command
+// that will run, and a collapsible source preview.
+function renderSetupScripts(setupScripts, checkedPaths) {
+  const rows = setupScripts.map((s, i) => {
+    const checked = checkedPaths.has(s.path);
+    const summary = s.summary || `Will run: ${s.argv.join(' ')}`;
+    const previewBlock = s.source ? `
+      <details class="install-plan-modal__setup-script-preview">
+        <summary>Preview source</summary>
+        <pre><code>${escapeHtml(s.source)}</code></pre>
+      </details>
+    ` : '';
+    return `
+      <div class="install-plan-modal__setup-script">
+        <label class="install-plan-modal__setup-script-row">
+          <input type="checkbox"
+                 data-setup-script="${escapeHtml(s.path)}"
+                 ${checked ? 'checked' : ''}
+                 aria-describedby="setup-script-cmd-${i}">
+          <div class="install-plan-modal__setup-script-body">
+            <div class="install-plan-modal__setup-script-path"><code>${escapeHtml(s.path)}</code></div>
+            ${summary ? `<div class="install-plan-modal__setup-script-summary">${escapeHtml(summary)}</div>` : ''}
+            <div id="setup-script-cmd-${i}" class="install-plan-modal__setup-script-cmd">
+              Will run: <code>${escapeHtml(s.argv.join(' '))}</code>
+            </div>
+            ${previewBlock}
+          </div>
+        </label>
+      </div>
+    `;
+  });
+  return rows.join('');
+}
+
 function renderValidationErrors(validation) {
   if (!validation || validation.ok) return '';
   return `
@@ -415,6 +450,24 @@ function renderEntry(state) {
         ${renderCommands(m)}
       </div>
     `);
+    // Tier 2A: opt-in setup scripts detected in the upstream repo. Render
+    // only when the drafter found candidates — quiet otherwise.
+    {
+      const ss = state.devImportMeta?.setupScripts || [];
+      if (ss.length > 0) {
+        sections.push(`
+          <div class="install-plan-modal__section">
+            <h3>Setup scripts (optional)</h3>
+            <p class="install-plan-modal__hint">
+              This repo has scripts that aren't in the install commands above. Some apps
+              need them to download models, weights, or fixtures before first launch.
+              Checked items will run after install completes.
+            </p>
+            ${renderSetupScripts(ss, state.setupScriptsChecked)}
+          </div>
+        `);
+      }
+    }
     sections.push(`
       <details class="install-plan-modal__section">
         <summary><h3 style="display:inline-block; margin: 0;">Architecture &amp; License</h3></summary>
@@ -578,9 +631,31 @@ function wireEvents(state) {
     } else if (!state.jobId) {
       // No job yet — this happens when the modal was opened by-slug and no
       // prior `appStore.install(...)` was issued. Kick the install now.
+      // Tier 2A: assemble the manifest with any opt-in setup-script entries
+      // prepended to postInstall. We mutate state.entry.manifest so the
+      // displayed "Install commands" panel keeps showing the live state if
+      // the modal is patched after this click. Verified/community paths
+      // skip this — setup scripts only apply to dev-import.
+      let manifestToInstall = state.entry.manifest;
+      if (state.devImportMode) {
+        const ss = state.devImportMeta?.setupScripts || [];
+        const additions = ss
+          .filter(s => state.setupScriptsChecked.has(s.path))
+          .map(s => ({ argv: s.argv }));
+        if (additions.length > 0) {
+          manifestToInstall = {
+            ...state.entry.manifest,
+            postInstall: [
+              ...additions,
+              ...(state.entry.manifest.postInstall || []),
+            ],
+          };
+          state.entry.manifest = manifestToInstall;
+        }
+      }
       const r = state.devImportMode
         ? await window.os8.appStore.installFromManifest(
-            state.entry.manifest,
+            manifestToInstall,
             state.entry.upstreamResolvedCommit,
             'modal'
           )
@@ -615,6 +690,16 @@ function wireEvents(state) {
       installBtn.toggleAttribute('data-override', gate.ok === 'override');
       const reasonEl = root.querySelector('.install-plan-modal__footer span');
       if (reasonEl) reasonEl.textContent = gate.ok === true ? '' : (gate.reason || '');
+    });
+  }
+
+  // Tier 2A — setup-script opt-in checkboxes. Track in state; the actual
+  // injection into manifest.postInstall happens at Install click time.
+  for (const cb of root.querySelectorAll('[data-setup-script]')) {
+    cb.addEventListener('change', () => {
+      const path = cb.dataset.setupScript;
+      if (cb.checked) state.setupScriptsChecked.add(path);
+      else state.setupScriptsChecked.delete(path);
     });
   }
 
@@ -718,6 +803,11 @@ function startState(entry, validation) {
     devImportMode: false,
     devImportRisksAcknowledged: false,
     devImportMeta: null,
+    // Tier 2A: paths of detected setup scripts the user has opted into.
+    // Default-checked at openInstallPlanModalFromManifest() if devImportMeta
+    // includes setupScripts. Mutated via [data-setup-script] checkboxes;
+    // injected into manifest.postInstall on Install.
+    setupScriptsChecked: new Set(),
   };
 }
 
@@ -835,6 +925,13 @@ export async function openInstallPlanModalFromManifest(manifest, opts = {}) {
   const state = startState(entry, result.validation);
   state.devImportMode = true;            // PR 3.2 reads this for strict-modal styling
   state.devImportMeta = opts.importMeta || null;
+  // Tier 2A: pre-check the top setup-script candidate so the common case
+  // (one well-named download_*.py) just works on Install. The user can
+  // uncheck if they want to skip it; everything below the top is left
+  // unchecked because false-positive risk is non-trivial for less obvious
+  // candidates.
+  const ss = opts.importMeta?.setupScripts || [];
+  if (ss.length > 0) state.setupScriptsChecked.add(ss[0].path);
   showModal(state);
 }
 
