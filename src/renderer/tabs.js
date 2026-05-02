@@ -716,6 +716,19 @@ export async function cleanupTabResources(tab) {
   // proxy when the user closes the tab. Native apps don't need this — they
   // run inside OS8's server, not as a separate process.
   if (tab.app?.id && tab.app?.app_type === 'external') {
+    // Navigate the BrowserView to about:blank BEFORE killing the upstream.
+    // WebSocket-based frameworks (Streamlit, Gradio) auto-reconnect when
+    // their WS drops. Without this step there's a ~hundred-ms gap where
+    // the BV still shows the live page, the frontend retries WS against
+    // a now-dead upstream, the reverse proxy correctly returns 502, and
+    // the framework renders a "Connection error" toast right before tab
+    // teardown. about:blank stops the frontend code so no retries fire.
+    // Static apps (no WS) and Vite (silent HMR retry) are unaffected by
+    // the change but get the same teardown path for consistency.
+    try {
+      await window.os8.preview.setUrl(tab.app.id, 'about:blank');
+    } catch (_) { /* preview may already be gone — best-effort */ }
+
     try {
       // PR 3.13 hotfix: same absolute-URL fix as the start path above.
       const port = getServerPort();

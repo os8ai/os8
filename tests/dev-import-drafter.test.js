@@ -162,6 +162,101 @@ describe('dev-import-drafter — runtime + framework detection', () => {
     expect(Drafter.detectPackageManager({ topLevel: ['bun.lockb'], runtimeKind: 'node' })).toBe('bun');
     expect(Drafter.detectPackageManager({ topLevel: ['package-lock.json'], runtimeKind: 'node' })).toBe('npm');
   });
+
+  // Regression for streamlit/30days: requirements.txt doesn't list streamlit
+  // (Streamlit Cloud injects it). Drafter must still detect framework=streamlit
+  // via streamlit_app.py file presence and synthesize a venv-aware install
+  // command for streamlit itself.
+  it('detects streamlit via streamlit_app.py filename even without dep match', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const fw = Drafter.detectFramework({
+      pkg: null,
+      pyproject: null,
+      requirementsTxt: 'pandas\nclick==8.0\n',
+      topLevel: ['streamlit_app.py', 'requirements.txt'],
+    });
+    expect(fw).toBe('streamlit');
+  });
+
+  it('streamlit start.argv picks streamlit_app.py when present', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const argv = Drafter.defaultStartArgv('streamlit', 'python', null,
+      ['streamlit_app.py', 'requirements.txt']);
+    expect(argv[0]).toBe('streamlit');
+    expect(argv[1]).toBe('run');
+    expect(argv[2]).toBe('streamlit_app.py');
+  });
+
+  it('streamlit start.argv falls back to app.py when streamlit_app.py absent', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const argv = Drafter.defaultStartArgv('streamlit', 'python', null,
+      ['app.py', 'requirements.txt']);
+    expect(argv[2]).toBe('app.py');
+  });
+
+  it('python+none does NOT fall through to npm fallback', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const argv = Drafter.defaultStartArgv('none', 'python', null, ['main.py']);
+    expect(argv[0]).toBe('python');
+    expect(argv[1]).toBe('main.py');
+  });
+
+  it('install argv synthesises uv pip install streamlit when not in requirements.txt', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const cmds = Drafter.defaultInstallArgv('streamlit', 'python', 'pandas\nclick==8.0\n');
+    expect(cmds).toEqual([{ argv: ['uv', 'pip', 'install', 'streamlit'] }]);
+  });
+
+  it('install argv is empty when streamlit IS in requirements.txt (no double-install)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const cmds = Drafter.defaultInstallArgv('streamlit', 'python', 'streamlit==1.32\npandas\n');
+    expect(cmds).toEqual([]);
+  });
+
+  it('install argv synthesises uv pip install gradio when not in requirements.txt', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const cmds = Drafter.defaultInstallArgv('gradio', 'python', 'numpy\n');
+    expect(cmds).toEqual([{ argv: ['uv', 'pip', 'install', 'gradio'] }]);
+  });
+
+  // Regression: when resolveRef fell back to a branch name like `master`
+  // (no input ref + no releases), the drafter wrote `upstream.ref: master`
+  // which fails the v1 schema (requires SHA or vX.Y.Z). Branch refs are
+  // mutable too — pinning to SHA is correct on both counts.
+  it('upstream.ref is pinned to SHA when resolveRef returned a branch name', async () => {
+    installFakeImporter({
+      parseGithubUrl: () => ({ owner: 'streamlit', repo: '30days', ref: null }),
+      resolveRef: async () => ({ ref: 'master', sha: 'a'.repeat(40), kind: 'branch' }),
+      getRepoMeta: async () => ({
+        clone_url: 'https://github.com/streamlit/30days.git',
+        description: 'demo', license: { spdx_id: 'Apache-2.0' },
+      }),
+      listTopLevel: async () => ['streamlit_app.py', 'requirements.txt'],
+      fetchRawFile: async ({ path }) => path === 'requirements.txt' ? 'pandas\nclick==8.0\n' : null,
+    });
+    Drafter = require('../src/services/dev-import-drafter');
+    const result = await Drafter.draft('https://github.com/streamlit/30days');
+    // Branch name 'master' must NOT leak into upstream.ref; SHA wins.
+    expect(result.manifest.upstream.ref).toBe('a'.repeat(40));
+    expect(result.upstreamResolvedCommit).toBe('a'.repeat(40));
+  });
+
+  it('upstream.ref preserves a semver tag when resolveRef returned one', async () => {
+    installFakeImporter({
+      parseGithubUrl: () => ({ owner: 'streamlit', repo: 'streamlit-app', ref: null }),
+      resolveRef: async () => ({ ref: 'v1.2.3', sha: 'b'.repeat(40), kind: 'tag' }),
+      getRepoMeta: async () => ({
+        clone_url: 'https://github.com/streamlit/streamlit-app.git',
+        description: 'demo', license: { spdx_id: 'Apache-2.0' },
+      }),
+      listTopLevel: async () => ['streamlit_app.py', 'requirements.txt'],
+      fetchRawFile: async ({ path }) => path === 'requirements.txt' ? 'streamlit\n' : null,
+    });
+    Drafter = require('../src/services/dev-import-drafter');
+    const result = await Drafter.draft('https://github.com/streamlit/streamlit-app');
+    // Semver tag is acceptable per schema and more human-readable than a SHA.
+    expect(result.manifest.upstream.ref).toBe('v1.2.3');
+  });
 });
 
 describe('github-importer.parseGithubUrl', () => {
