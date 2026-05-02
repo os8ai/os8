@@ -210,10 +210,18 @@ const PythonRuntimeAdapter = {
       // (could be 0.11+) and `uv pip install <pkg>` would fail with
       // "No virtual environment found".
       const argv = cmd.argv[0] === 'uv' ? [uv, ...cmd.argv.slice(1)] : cmd.argv;
+      // Once the venv exists, prepend its bin directory to PATH for every
+      // subsequent install/postInstall spawn. Without this, manifest commands
+      // like `python scripts/download_model.py` (auto-injected by Tier 2A's
+      // setup-script detection, or hand-written in catalog manifests) fail
+      // with `spawn python ENOENT`: OS8's sanitized PATH may not include a
+      // system `python3`, and even when it does, that python wouldn't have
+      // the app's venv-installed packages. See _installEnv below.
+      const env = this._installEnv(appDir, sanitizedEnv);
       onLog?.('stdout', `+ ${argv.join(' ')}\n`);
       console.log(`[python-adapter] + ${argv.join(' ')}`);
       try {
-        await spawnPromise(argv, { cwd: appDir, env: sanitizedEnv, onLog });
+        await spawnPromise(argv, { cwd: appDir, env, onLog });
       } catch (err) {
         console.log(`[python-adapter] FAILED: ${argv.join(' ')}`);
         console.log(`[python-adapter] error: ${err.message}`);
@@ -475,6 +483,22 @@ const PythonRuntimeAdapter = {
       { timeout: 5000 }
     );
     return stdout.trim();
+  },
+
+  // Build the env passed to spawnPromise for an install/postInstall command.
+  // Once `<appDir>/.venv/bin` exists, prepend it to PATH so manifest commands
+  // like `python scripts/download_model.py` resolve to the venv's python with
+  // the app's installed packages. Frozen-install commands themselves use the
+  // absolute uv path so they don't need the prepend; we still apply it
+  // because it's harmless when unused. Exposed for unit-testing without
+  // patching the closure-captured spawnPromise.
+  _installEnv(appDir, sanitizedEnv) {
+    const venvBin = path.join(appDir, '.venv', process.platform === 'win32' ? 'Scripts' : 'bin');
+    if (!fs.existsSync(venvBin)) return sanitizedEnv;
+    return {
+      ...sanitizedEnv,
+      PATH: `${venvBin}${path.delimiter}${sanitizedEnv.PATH || ''}`,
+    };
   },
 
   // ── Test helpers ────────────────────────────────────────────────────────────
