@@ -314,6 +314,20 @@ const PythonRuntimeAdapter = {
       PATH: `${venvBin}${path.delimiter}${sanitizedEnv.PATH || ''}`,
     };
 
+    // Gradio defensive port binding: Gradio reads GRADIO_SERVER_PORT and
+    // GRADIO_SERVER_NAME from the environment iff the script calls
+    // `demo.launch()` without an explicit `server_port=` kwarg. Apps that
+    // pass the kwarg (e.g. HivisionIDPhotos: `demo.launch(server_port=args.port)`)
+    // will ignore these, which is fine — the drafter detects --port argparse
+    // flags from the source and threads them via start.argv. For all other
+    // bare `demo.launch()` apps, these vars are what makes the allocated
+    // OS8 port get respected. Setting them is idempotent and harmless even
+    // when start.argv already has --port.
+    if (effective?.framework === 'gradio') {
+      env.GRADIO_SERVER_PORT = String(sanitizedEnv.PORT);
+      env.GRADIO_SERVER_NAME = '127.0.0.1';
+    }
+
     const child = spawn(startArgv[0], startArgv.slice(1), {
       cwd: appDir,
       env,

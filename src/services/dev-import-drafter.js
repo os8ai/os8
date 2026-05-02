@@ -30,14 +30,23 @@ const FRAMEWORK_HINTS = {
   jekyll:     { files: ['_config.yml', 'Gemfile'] },
 };
 
-function detectFramework({ pkg, pyproject, requirementsTxt, topLevel }) {
+function detectFramework({ pkg, pyproject, requirementsTxt, requirementsFiles, topLevel }) {
   const npmDeps = { ...(pkg?.dependencies || {}), ...(pkg?.devDependencies || {}) };
+  // Apps like HivisionIDPhotos split deps across requirements.txt +
+  // requirements-app.txt; detection scans the union of every
+  // `requirements*.txt` we fetched (including dev/test files — those
+  // sometimes pin the framework too).
+  let pyText;
+  if (requirementsFiles && Object.keys(requirementsFiles).length > 0) {
+    pyText = Object.values(requirementsFiles).map(s => (s || '').toLowerCase()).join('\n');
+  } else {
+    pyText = (requirementsTxt || '').toLowerCase();
+  }
+  const ppt = (pyproject || '').toLowerCase();
   for (const [fw, hint] of Object.entries(FRAMEWORK_HINTS)) {
     if (hint.deps?.some(d => d in npmDeps)) return fw;
     if (hint.pyDeps) {
-      const t = (requirementsTxt || '').toLowerCase();
-      const ppt = (pyproject || '').toLowerCase();
-      if (hint.pyDeps.some(d => t.includes(d) || ppt.includes(d))) return fw;
+      if (hint.pyDeps.some(d => pyText.includes(d) || ppt.includes(d))) return fw;
     }
     if (hint.files?.some(f => topLevel.includes(f))) return fw;
   }
@@ -101,29 +110,47 @@ function pinnedRef(refResolution) {
   return refResolution.sha;
 }
 
-function defaultInstallArgv(framework, runtimeKind, requirementsTxt) {
+function defaultInstallArgv(framework, runtimeKind, requirementsTxt, requirementsFiles) {
   if (runtimeKind === 'node') {
     return [{ argv: ['npm', 'install', '--ignore-scripts'] }];
   }
   if (runtimeKind === 'python') {
     // Detected-but-not-listed framework deps: many Streamlit/Gradio repos
     // expect their host (Streamlit Cloud / HF Spaces) to inject the framework,
-    // so requirements.txt may omit it. Add a venv-aware install command so
-    // the framework binary lands in the venv. uv discovers .venv/ in cwd.
-    const t = (requirementsTxt || '').toLowerCase();
+    // so requirements.txt may omit it. We have three cases:
+    //   1. Framework dep is in requirements.txt → base install handles it.
+    //   2. Framework dep is in another `requirements-*.txt` (e.g.
+    //      HivisionIDPhotos's requirements-app.txt) → install that file
+    //      explicitly so we pick up its full set of deps (gradio + fastapi
+    //      + …), not just `pip install gradio` alone.
+    //   3. Not declared anywhere → synthesize a bare `uv pip install <fw>`.
+    const baseReqs = (requirementsTxt || requirementsFiles?.['requirements.txt'] || '').toLowerCase();
     const cmds = [];
-    if (framework === 'streamlit' && !t.includes('streamlit')) {
-      cmds.push({ argv: ['uv', 'pip', 'install', 'streamlit'] });
+    const dep = framework === 'streamlit' ? 'streamlit'
+              : framework === 'gradio'    ? 'gradio'
+              : null;
+    if (!dep) return cmds;
+    if (baseReqs.includes(dep)) return cmds;
+
+    // Look for the dep in a sibling requirements-*.txt; skip files that
+    // smell like dev/test overlays which would pull noise into the venv.
+    if (requirementsFiles) {
+      for (const [name, content] of Object.entries(requirementsFiles)) {
+        if (name === 'requirements.txt') continue;
+        if (/-(dev|test|tests)\.txt$/i.test(name)) continue;
+        if ((content || '').toLowerCase().includes(dep)) {
+          cmds.push({ argv: ['uv', 'pip', 'install', '-r', name] });
+          return cmds;
+        }
+      }
     }
-    if (framework === 'gradio' && !t.includes('gradio')) {
-      cmds.push({ argv: ['uv', 'pip', 'install', 'gradio'] });
-    }
+    cmds.push({ argv: ['uv', 'pip', 'install', dep] });
     return cmds;
   }
   return [];
 }
 
-function defaultStartArgv(framework, runtimeKind, pkg, topLevel = []) {
+function defaultStartArgv(framework, runtimeKind, pkg, topLevel = [], appSources = {}) {
   switch (framework) {
     case 'vite':
       return ['npm', 'run', 'dev', '--', '--port', '{{PORT}}', '--host', '127.0.0.1'];
@@ -147,6 +174,24 @@ function defaultStartArgv(framework, runtimeKind, pkg, topLevel = []) {
     }
     case 'gradio': {
       const entry = ['app.py', 'main.py', 'demo.py'].find(f => topLevel.includes(f)) || 'app.py';
+      // Two world conventions for binding the port in a Gradio app:
+      //   (A) argparse with --port/--host flags piped into demo.launch(...)
+      //       — common in CLI-aware repos like HivisionIDPhotos.
+      //   (B) bare demo.launch() that reads GRADIO_SERVER_PORT/_NAME from
+      //       env — common in HF Spaces-style demos.
+      // We pick (A) when the entry source declares --port via argparse;
+      // otherwise (B), which the python adapter handles defensively by
+      // setting the env vars at start time. Adding --port to an app that
+      // doesn't accept it would crash argparse with "unrecognized arguments",
+      // so we only add the flags when we've seen them declared.
+      const src = appSources[entry] || '';
+      const hasPortFlag = /add_argument\(\s*['"]--port['"]/.test(src);
+      const hasHostFlag = /add_argument\(\s*['"]--host['"]/.test(src);
+      if (hasPortFlag) {
+        const argv = ['python', entry, '--port', '{{PORT}}'];
+        if (hasHostFlag) argv.push('--host', '127.0.0.1');
+        return argv;
+      }
       return ['python', entry];
     }
     case 'hugo':
@@ -188,17 +233,41 @@ async function draft(url) {
   const refResolution = await Importer.resolveRef({ ...parsed, ref: parsed.ref });
   const topLevel = await Importer.listTopLevel({ ...parsed, sha: refResolution.sha });
 
-  const [pkgRaw, pyprojectRaw, requirementsRaw] = await Promise.all([
-    Importer.fetchRawFile({ ...parsed, sha: refResolution.sha, path: 'package.json' }),
-    Importer.fetchRawFile({ ...parsed, sha: refResolution.sha, path: 'pyproject.toml' }),
-    Importer.fetchRawFile({ ...parsed, sha: refResolution.sha, path: 'requirements.txt' }),
+  const fetch = (path) => Importer.fetchRawFile({ ...parsed, sha: refResolution.sha, path });
+
+  // Discover sibling requirements-*.txt files (HivisionIDPhotos splits
+  // gradio/fastapi out into requirements-app.txt) and likely Python entry
+  // sources (so the gradio default-argv check can see argparse flags).
+  const secondaryReqNames = topLevel.filter(
+    f => /^requirements.*\.txt$/i.test(f) && f !== 'requirements.txt'
+  );
+  const entryNames = ['app.py', 'main.py', 'demo.py'].filter(f => topLevel.includes(f));
+
+  const [pkgRaw, pyprojectRaw, requirementsRaw, ...rest] = await Promise.all([
+    fetch('package.json'),
+    fetch('pyproject.toml'),
+    fetch('requirements.txt'),
+    ...secondaryReqNames.map(fetch),
+    ...entryNames.map(fetch),
   ]);
+
+  const requirementsFiles = {};
+  if (requirementsRaw) requirementsFiles['requirements.txt'] = requirementsRaw;
+  secondaryReqNames.forEach((name, i) => {
+    if (rest[i]) requirementsFiles[name] = rest[i];
+  });
+  const appSources = {};
+  entryNames.forEach((name, i) => {
+    const content = rest[secondaryReqNames.length + i];
+    if (content) appSources[name] = content;
+  });
+
   let pkg = null;
   try { pkg = pkgRaw ? JSON.parse(pkgRaw) : null; }
   catch (_) { /* malformed package.json — treat as missing for detection */ }
 
   const runtime = detectRuntime({ pkg, pyproject: pyprojectRaw, requirementsTxt: requirementsRaw, topLevel });
-  const framework = detectFramework({ pkg, pyproject: pyprojectRaw, requirementsTxt: requirementsRaw, topLevel });
+  const framework = detectFramework({ pkg, pyproject: pyprojectRaw, requirementsTxt: requirementsRaw, requirementsFiles, topLevel });
   const pm = detectPackageManager({ topLevel, runtimeKind: runtime.kind });
 
   const slug = buildSlug(parsed.owner, parsed.repo);
@@ -223,9 +292,9 @@ async function draft(url) {
       package_manager: pm,
       dependency_strategy: 'best-effort',
     },
-    install: defaultInstallArgv(framework, runtime.kind, requirementsRaw),
+    install: defaultInstallArgv(framework, runtime.kind, requirementsRaw, requirementsFiles),
     start: {
-      argv: defaultStartArgv(framework, runtime.kind, pkg, topLevel),
+      argv: defaultStartArgv(framework, runtime.kind, pkg, topLevel, appSources),
       port: 'detect',
       readiness: { type: 'http', path: '/', timeout_seconds: 60 },
     },
