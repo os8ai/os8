@@ -311,6 +311,28 @@ describe('NodeRuntimeAdapter — start/stop integration', () => {
     await NodeAdapter.stop(info);
   }, 15_000);
 
+  // Tier 1A regression: stderr tail must be visible in the error so
+  // callers can debug without reproducing manually.
+  it('exited-before-ready error includes the tail of stderr/stdout', async () => {
+    const dir = makeAppDir(parent, {
+      'crash.js': `
+        console.error('NODE_SENTINEL_ERR_42 — custom Node-side traceback');
+        process.exit(9);
+      `,
+    });
+    const m = clone(BASE_MANIFEST);
+    m.framework = 'none';
+    m.start = {
+      argv: ['node', 'crash.js'],
+      port: 'detect',
+      readiness: { type: 'http', path: '/', timeout_seconds: 3 },
+    };
+    const env = { ...process.env, PORT: '40009' };
+    const info = await NodeAdapter.start(m, dir, env, () => {});
+    await expect(info.ready).rejects.toThrow(/code=9[\s\S]*NODE_SENTINEL_ERR_42[\s\S]*Node-side traceback/);
+    await NodeAdapter.stop(info);
+  }, 15_000);
+
   it('log-regex readiness resolves when the regex appears in stdout', async () => {
     const dir = makeAppDir(parent, {
       'log.js': `

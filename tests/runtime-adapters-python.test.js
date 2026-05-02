@@ -427,6 +427,30 @@ describe('PythonRuntimeAdapter — start/stop integration', () => {
     await PyAdapter.stop(info);
   }, 15_000);
 
+  // Surfacing stderr in the "exited before ready" error message — without
+  // this, callers see `code=1` and have to reproduce the failure manually
+  // to learn what went wrong (e.g. ModuleNotFoundError, ValueError from
+  // an app that needs setup).
+  it('exited-before-ready error includes the tail of stderr/stdout', async () => {
+    const dir = makeAppDir(parent, {
+      'crash.js': `
+        console.error('SENTINEL_ERROR_TEXT_42 — an explanatory traceback');
+        process.exit(7);
+      `,
+    });
+    const m = clone(BASE_MANIFEST);
+    m.framework = 'none';
+    m.start = {
+      argv: ['node', 'crash.js'],
+      port: 'detect',
+      readiness: { type: 'http', path: '/', timeout_seconds: 3 },
+    };
+    const env = { ...process.env, PORT: '40005' };
+    const info = await PyAdapter.start(m, dir, env, () => {});
+    await expect(info.ready).rejects.toThrow(/code=7[\s\S]*SENTINEL_ERROR_TEXT_42[\s\S]*explanatory traceback/);
+    await PyAdapter.stop(info);
+  }, 15_000);
+
   it('log-regex readiness resolves when the regex appears in stdout', async () => {
     const dir = makeAppDir(parent, {
       'log.js': `

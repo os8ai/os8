@@ -57,6 +57,15 @@ const FRAMEWORK_DEFAULTS = {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// Format the "process exited before ready" error to include a tail of the
+// process output. Without this, callers see an opaque `code=N` and have to
+// reproduce the failure manually to learn what happened.
+function exitedBeforeReady(code, collected) {
+  const tail = (collected || '').slice(-1500).trim();
+  const suffix = tail ? `\n--- last process output ---\n${tail}` : '';
+  return new Error(`process exited before ready code=${code}${suffix}`);
+}
+
 function spawnPromise(argv, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
@@ -186,6 +195,13 @@ const NodeRuntimeAdapter = {
       OS8_API_BASE: sanitizedEnv.OS8_API_BASE,
     });
 
+    // Surface the start command in the OS8 main-process terminal for parity
+    // with install-time logging. When a start fails, this is the line that
+    // tells you what was actually spawned.
+    console.log(
+      `[node-adapter] start: ${startArgv.join(' ')} (cwd=${appDir}, port=${sanitizedEnv.PORT})`
+    );
+
     const child = spawn(startArgv[0], startArgv.slice(1), {
       cwd: appDir,
       env: sanitizedEnv,
@@ -246,7 +262,7 @@ const NodeRuntimeAdapter = {
       const url = `http://127.0.0.1:${env.PORT}${probe.path || '/'}`;
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error(`process exited before ready code=${child.exitCode}`);
+          throw exitedBeforeReady(child.exitCode, getCollected());
         }
         try {
           const r = await fetch(url, { signal: AbortSignal.timeout(1000) });
@@ -261,7 +277,7 @@ const NodeRuntimeAdapter = {
       const re = new RegExp(probe.regex);
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error('process exited before ready');
+          throw exitedBeforeReady(child.exitCode, getCollected());
         }
         if (re.test(getCollected())) return;
         await sleep(100);
