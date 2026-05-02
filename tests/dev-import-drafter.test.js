@@ -511,6 +511,117 @@ parser.add_argument('--models', nargs='+', choices=['a', 'b'], required=True)
     expect(candidates[0].requiresArgs).toBe(false);
   });
 
+  // Tier 2A follow-up — argparse `choices=[...]` extraction. Lets the
+  // install-plan modal render a dropdown so the user picks a value
+  // without leaving the modal. Strict scope: long flags only, literal
+  // string lists only. Anything weird (variables, escapes, nested) must
+  // be dropped — false-positive risk reopens the "drafter understands
+  // argparse" rabbit hole the prior critique flagged.
+  it('extractArgChoices captures the HivisionIDPhotos --models pattern', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+parser.add_argument(
+    '--models', nargs='+', required=True,
+    choices=['hivision_modnet', 'modnet_photographic_portrait_matting', 'rmbg-1.4', 'birefnet-lite', 'all'],
+    help='which models to fetch'
+)
+`;
+    expect(Drafter.extractArgChoices(src)).toEqual({
+      '--models': ['hivision_modnet', 'modnet_photographic_portrait_matting', 'rmbg-1.4', 'birefnet-lite', 'all'],
+    });
+  });
+
+  it('extractArgChoices accepts mixed single + double quotes', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('--mode', choices=['a', "b", 'c'])`;
+    expect(Drafter.extractArgChoices(src)).toEqual({ '--mode': ['a', 'b', 'c'] });
+  });
+
+  it('extractArgChoices captures multiple add_argument calls into one map', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+parser.add_argument('--mode',  choices=['fast', 'slow'])
+parser.add_argument('--level', choices=['1', '2', '3'])
+`;
+    expect(Drafter.extractArgChoices(src)).toEqual({
+      '--mode': ['fast', 'slow'],
+      '--level': ['1', '2', '3'],
+    });
+  });
+
+  it('extractArgChoices rejects choices=<variable_ref> (no literal list)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('--mode', choices=MY_LIST)`;
+    expect(Drafter.extractArgChoices(src)).toEqual({});
+  });
+
+  it('extractArgChoices rejects positional args (no leading --)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('mode', choices=['a', 'b'])`;
+    expect(Drafter.extractArgChoices(src)).toEqual({});
+  });
+
+  it('extractArgChoices rejects -x short-only flags', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('-m', choices=['a', 'b'])`;
+    expect(Drafter.extractArgChoices(src)).toEqual({});
+  });
+
+  it('extractArgChoices rejects non-string-literal items (numbers, bare words)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    expect(Drafter.extractArgChoices(`parser.add_argument('--n', choices=[1, 2, 3])`)).toEqual({});
+    expect(Drafter.extractArgChoices(`parser.add_argument('--n', choices=[a, b])`)).toEqual({});
+  });
+
+  it('extractArgChoices rejects strings with escaped quotes (would need a tokenizer)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('--msg', choices=['hi', 'it\\'s'])`;
+    expect(Drafter.extractArgChoices(src)).toEqual({});
+  });
+
+  it('extractArgChoices returns empty for scripts with no choices=', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `parser.add_argument('--models', required=True, help='...')`;
+    expect(Drafter.extractArgChoices(src)).toEqual({});
+  });
+
+  it('detectSetupScripts attaches argChoices alongside requiresArgs on python candidates', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts'],
+      scriptsDirEntries: [{ name: 'download_model.py', type: 'blob' }],
+      sourceFor: () => `parser.add_argument('--models', required=True, choices=['a', 'b'])`,
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].requiresArgs).toBe(true);
+    expect(candidates[0].argChoices).toEqual({ '--models': ['a', 'b'] });
+  });
+
+  it('detectSetupScripts gives shell candidates an empty argChoices map (no parser)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts'],
+      scriptsDirEntries: [{ name: 'setup_env.sh', type: 'blob' }],
+      sourceFor: () => '#!/bin/bash\necho hello\n',
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].argChoices).toEqual({});
+  });
+
+  it('detectSetupScripts gives make targets an empty argChoices map', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['Makefile'],
+      scriptsDirEntries: [],
+      sourceFor: () => '',
+      makefileText: 'download:\n\tcurl -O https://x.com/y\n',
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].argChoices).toEqual({});
+  });
+
   it('summariseScript falls back to top-of-file # comment block', () => {
     Drafter = require('../src/services/dev-import-drafter');
     const src = `#!/bin/bash

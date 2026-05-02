@@ -321,6 +321,51 @@ function pythonScriptRequiresArgs(content) {
   return false;
 }
 
+// Heuristic: extract argparse `choices=[...]` literal lists keyed by long
+// flag name. Lets the install-plan modal render a dropdown so the user
+// can pick a value without leaving the modal — the next step up from
+// pythonScriptRequiresArgs's "default-uncheck and warn".
+//
+// Strict scope (intentionally narrow — false positives reopen the
+// "drafter understands argparse" rabbit hole the prior critique flagged):
+//   - long flags only: `--<name>`. Positional args + `-x` short forms
+//     are skipped.
+//   - choices must be a literal list of string literals: ['a', "b"].
+//     Variable refs (choices=MY_LIST), nested structures, or any
+//     non-string token aborts the match for that add_argument call.
+//   - escapes inside string literals (e.g. 'it\'s') abort the match —
+//     research-script choice lists never use them in practice and the
+//     parser stays a single-pass regex.
+//
+// Returns: { '--models': ['hivision_modnet', 'all'], ... } — empty
+// object when nothing matches.
+function extractArgChoices(content) {
+  if (!content || typeof content !== 'string') return {};
+  const result = {};
+  const calls = content.match(/add_argument\([\s\S]{0,300}?\)/g) || [];
+  for (const call of calls) {
+    const flagMatch = call.match(/['"](--[a-z][a-z0-9_-]*)['"]/i);
+    if (!flagMatch) continue;
+    const flag = flagMatch[1];
+    const choicesMatch = call.match(/choices\s*=\s*\[([^\]]+)\]/);
+    if (!choicesMatch) continue;
+    const inner = choicesMatch[1];
+    // Strict tokenizer: split on commas, each token must be a quoted
+    // string literal with no escapes inside the quotes.
+    const tokens = inner.split(',').map(t => t.trim()).filter(Boolean);
+    const values = [];
+    let aborted = false;
+    for (const tok of tokens) {
+      const m = tok.match(/^(['"])([^'"\\]*)\1$/);
+      if (!m) { aborted = true; break; }
+      values.push(m[2]);
+    }
+    if (aborted || values.length === 0) continue;
+    result[flag] = values;
+  }
+  return result;
+}
+
 // First-pass summary: grab a docstring or top-of-file comment so the
 // modal can render a one-liner without making the user expand source.
 function summariseScript(content, kind = 'python') {
@@ -364,6 +409,7 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
         summary: summariseScript(src, 'python'),
         source: src.slice(0, 1000),
         requiresArgs: pythonScriptRequiresArgs(src),
+        argChoices: extractArgChoices(src),
       });
     }
   }
@@ -386,6 +432,10 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
       // real parser. Flag them as requiresArgs=true conservatively so
       // they default unchecked and the user explicitly opts in.
       requiresArgs: isShell ? true : pythonScriptRequiresArgs(src),
+      // Shell scripts get an empty argChoices map — no parser. Modal
+      // treats this the same as a python script that just doesn't
+      // declare choices.
+      argChoices: isShell ? {} : extractArgChoices(src),
     });
   }
 
@@ -401,6 +451,7 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
         summary: `Runs the \`make ${t}\` target`,
         source: '',
         requiresArgs: false,  // make targets are self-contained by construction
+        argChoices: {},
       });
     }
   }
@@ -579,4 +630,5 @@ module.exports = {
   parseMakefileTargets,
   summariseScript,
   pythonScriptRequiresArgs,
+  extractArgChoices,
 };
