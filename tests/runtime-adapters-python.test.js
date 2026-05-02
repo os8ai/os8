@@ -279,6 +279,61 @@ describe('PythonRuntimeAdapter — framework defaults', () => {
     const out = PyAdapter._applyFrameworkDefaults(m);
     expect(out.start.argv).toEqual(m.start.argv);
   });
+
+  // Defensive port plumbing for Gradio: many real-world apps (HF Spaces
+  // demos) call `demo.launch()` bare, in which case Gradio reads the
+  // GRADIO_SERVER_PORT/_NAME env vars. We set them at start time so the
+  // adapter doesn't need to mutate user code or rely on argparse flags
+  // landing in start.argv. Apps that explicitly pass server_port=... ignore
+  // these vars (which is fine — the drafter detects --port argparse and
+  // routes via start.argv instead).
+  it('gradio framework sets GRADIO_SERVER_PORT/_NAME env vars at process spawn', async () => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'os8-py-gradio-env-'));
+    try {
+      const dir = makeAppDir(parent, {
+        // Stand-in script: print env vars + bind to PORT so the readiness
+        // probe resolves. This proves the adapter set the env vars before
+        // spawn (we can't introspect the spawned env any other way).
+        'server.js': `
+          const http = require('http');
+          const port = parseInt(process.env.PORT, 10);
+          // Echo to stdout so the test can assert via the log buffer.
+          process.stdout.write('GRADIO_SERVER_PORT=' + (process.env.GRADIO_SERVER_PORT || '') + '\\n');
+          process.stdout.write('GRADIO_SERVER_NAME=' + (process.env.GRADIO_SERVER_NAME || '') + '\\n');
+          http.createServer((_, res) => { res.writeHead(200); res.end('ok'); })
+              .listen(port, '127.0.0.1');
+        `,
+      });
+      const m = clone(BASE_MANIFEST);
+      m.framework = 'gradio';
+      m.start = {
+        argv: ['node', 'server.js'],
+        port: 'detect',
+        readiness: { type: 'http', path: '/', timeout_seconds: 5 },
+      };
+      const port = 39977;
+      const env = {
+        ...process.env,
+        PORT: String(port),
+        OS8_APP_ID: 'gradio-fixture',
+        OS8_APP_DIR: dir,
+        OS8_BLOB_DIR: dir,
+        OS8_BASE_URL: 'http://localhost:8888',
+        OS8_API_BASE: 'http://gradio-fixture.localhost:8888/_os8/api',
+      };
+      let logged = '';
+      const info = await PyAdapter.start(m, dir, env, (_kind, s) => { logged += s; });
+      try {
+        await info.ready;
+        expect(logged).toContain(`GRADIO_SERVER_PORT=${port}`);
+        expect(logged).toContain('GRADIO_SERVER_NAME=127.0.0.1');
+      } finally {
+        await PyAdapter.stop(info);
+      }
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  }, 15000);
 });
 
 describe('PythonRuntimeAdapter — _writeEnvFile', () => {

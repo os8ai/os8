@@ -219,6 +219,114 @@ describe('dev-import-drafter — runtime + framework detection', () => {
     expect(cmds).toEqual([{ argv: ['uv', 'pip', 'install', 'gradio'] }]);
   });
 
+  // Regression for Zeyi-Lin/HivisionIDPhotos: gradio is in requirements-app.txt,
+  // not requirements.txt. Detection must scan the union of all
+  // `requirements*.txt` files we fetched so framework=gradio is set,
+  // and the install step must reference the file that actually pins
+  // gradio (so its sibling deps like fastapi land in the venv too).
+  it('detects gradio via requirements-app.txt when requirements.txt is silent', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const fw = Drafter.detectFramework({
+      pkg: null,
+      pyproject: null,
+      requirementsFiles: {
+        'requirements.txt': 'opencv-python\nonnxruntime\n',
+        'requirements-app.txt': 'gradio>=4.43.0\nfastapi\n',
+      },
+      topLevel: ['requirements.txt', 'requirements-app.txt', 'app.py'],
+    });
+    expect(fw).toBe('gradio');
+  });
+
+  it('install argv installs the secondary requirements file holding the framework dep', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const cmds = Drafter.defaultInstallArgv('gradio', 'python', 'opencv-python\nonnxruntime\n', {
+      'requirements.txt': 'opencv-python\nonnxruntime\n',
+      'requirements-app.txt': 'gradio>=4.43.0\nfastapi\n',
+      'requirements-dev.txt': 'pytest\n',
+    });
+    // requirements-dev.txt is filtered out (dev/test heuristic); the
+    // app-overlay file is preferred over a bare `pip install gradio` so
+    // sibling deps (fastapi here) land in the venv with the correct version
+    // constraints.
+    expect(cmds).toEqual([{ argv: ['uv', 'pip', 'install', '-r', 'requirements-app.txt'] }]);
+  });
+
+  it('install argv falls back to bare pip install when no sibling file holds the dep', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const cmds = Drafter.defaultInstallArgv('gradio', 'python', 'numpy\n', {
+      'requirements.txt': 'numpy\n',
+      'requirements-dev.txt': 'pytest\n',
+    });
+    expect(cmds).toEqual([{ argv: ['uv', 'pip', 'install', 'gradio'] }]);
+  });
+
+  // Regression: if the entry script declares `--port` (and ideally `--host`)
+  // via argparse — like HivisionIDPhotos's app.py — pass them so the server
+  // binds to the OS8-allocated port. Without this the script's argparse
+  // default (typically 7860) wins and the BrowserView 502s. Apps that
+  // *don't* declare the flags get a bare `python app.py`; the python
+  // adapter sets GRADIO_SERVER_PORT/GRADIO_SERVER_NAME defensively for
+  // those.
+  it('gradio start.argv adds --port + --host when entry source declares argparse flags', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const argv = Drafter.defaultStartArgv('gradio', 'python', null, ['app.py'], {
+      'app.py': `
+        argparser.add_argument("--port", type=int, default=7860, help="The port number")
+        argparser.add_argument("--host", type=str, default="127.0.0.1", help="The host")
+        demo.launch(server_name=args.host, server_port=args.port)
+      `,
+    });
+    expect(argv).toEqual(['python', 'app.py', '--port', '{{PORT}}', '--host', '127.0.0.1']);
+  });
+
+  it('gradio start.argv stays bare when entry source does not declare --port', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const argv = Drafter.defaultStartArgv('gradio', 'python', null, ['app.py'], {
+      'app.py': `import gradio as gr\ndemo = gr.Interface(...)\ndemo.launch()\n`,
+    });
+    expect(argv).toEqual(['python', 'app.py']);
+  });
+
+  it('end-to-end: HivisionIDPhotos-shaped repo produces gradio framework + secondary-file install + --port flags', async () => {
+    installFakeImporter({
+      parseGithubUrl: () => ({ owner: 'Zeyi-Lin', repo: 'HivisionIDPhotos', ref: null }),
+      getRepoMeta: async () => ({
+        clone_url: 'https://github.com/Zeyi-Lin/HivisionIDPhotos.git',
+        default_branch: 'master',
+        license: { spdx_id: 'Apache-2.0' },
+        description: 'AI ID photos',
+      }),
+      resolveRef: async () => ({ ref: 'v1.3.1', sha: STAR_SHA, kind: 'tag' }),
+      listTopLevel: async () => [
+        'app.py', 'inference.py', 'requirements.txt',
+        'requirements-app.txt', 'requirements-dev.txt', 'README.md',
+      ],
+      fetchRawFile: async ({ path }) => {
+        if (path === 'requirements.txt') return 'opencv-python>=4.8.1.78\nonnxruntime>=1.15.0\nnumpy<=1.26.4\n';
+        if (path === 'requirements-app.txt') return 'gradio>=4.43.0\nfastapi\n';
+        if (path === 'requirements-dev.txt') return 'pytest\n';
+        if (path === 'app.py') return `
+          argparser = argparse.ArgumentParser()
+          argparser.add_argument("--port", type=int, default=7860)
+          argparser.add_argument("--host", type=str, default="127.0.0.1")
+          demo.launch(server_name=args.host, server_port=args.port)
+        `;
+        return null;
+      },
+    });
+    Drafter = require('../src/services/dev-import-drafter');
+    const r = await Drafter.draft('https://github.com/Zeyi-Lin/HivisionIDPhotos');
+    expect(r.manifest.framework).toBe('gradio');
+    expect(r.manifest.runtime.kind).toBe('python');
+    expect(r.manifest.install).toEqual([
+      { argv: ['uv', 'pip', 'install', '-r', 'requirements-app.txt'] },
+    ]);
+    expect(r.manifest.start.argv).toEqual([
+      'python', 'app.py', '--port', '{{PORT}}', '--host', '127.0.0.1',
+    ]);
+  });
+
   // Regression: when resolveRef fell back to a branch name like `master`
   // (no input ref + no releases), the drafter wrote `upstream.ref: master`
   // which fails the v1 schema (requires SHA or vX.Y.Z). Branch refs are
