@@ -31,7 +31,12 @@ function ensureRoot() {
   if (root) return root;
   root = document.createElement('div');
   root.id = MODAL_ID;
-  root.className = 'install-plan-modal-root';
+  // Reuse the existing `.modal-overlay` rules (modals.css): position:fixed,
+  // inset:0, z-index:100, display:none → display:flex when .active is added.
+  // The original PR #34 used a made-up `install-plan-modal-root` class that
+  // had no CSS, so the modal rendered as an in-flow div somewhere off-screen
+  // and looked like nothing happened on app launch failure.
+  root.className = 'modal-overlay';
   root.style.display = 'none';
   document.body.appendChild(root);
   return root;
