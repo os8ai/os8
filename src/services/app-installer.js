@@ -439,10 +439,30 @@ const AppInstaller = {
     await adapter.install(manifest, job.staging_dir, env, (stream, chunk) =>
       publish(jobId, { kind: 'log', stream, message: String(chunk).slice(0, 8000) }));
 
+    // Diagnostic: list top-level staging entries post-install. If a runtime
+    // adapter is supposed to produce a .venv / node_modules / build output
+    // but it's missing here, the bug is in install (not atomic move).
+    try {
+      const before = fs.readdirSync(job.staging_dir).sort();
+      console.log(`[installer] staging post-install (${job.staging_dir}): ${before.join(', ')}`);
+    } catch (e) {
+      console.log(`[installer] staging readdir failed: ${e.message}`);
+    }
+
     // 5. Atomic move staging → apps.
     const finalDir = path.join(APPS_DIR, app.id);
     await atomicMove(job.staging_dir, finalDir);
     publish(jobId, { kind: 'log', message: `moved to ${finalDir}` });
+
+    // Diagnostic: list top-level final entries post-move. Compared with
+    // the post-install listing above, this tells us whether atomic move
+    // dropped anything (it shouldn't — fs.renameSync is atomic).
+    try {
+      const after = fs.readdirSync(finalDir).sort();
+      console.log(`[installer] apps post-move (${finalDir}): ${after.join(', ')}`);
+    } catch (e) {
+      console.log(`[installer] apps readdir failed: ${e.message}`);
+    }
 
     // 6. git init for fork-on-first-edit (PR 1.23 wires the watcher; here
     //    we just create the user/main branch + .gitignore). Docker apps

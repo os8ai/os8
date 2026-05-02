@@ -21,7 +21,10 @@ const FRAMEWORK_HINTS = {
   nextjs:     { deps: ['next'] },
   sveltekit:  { deps: ['@sveltejs/kit'] },
   astro:      { deps: ['astro'] },
-  streamlit:  { pyDeps: ['streamlit'] },
+  // Streamlit Cloud convention: `streamlit_app.py` at repo root. The dep
+  // hint alone misses real-world apps whose requirements.txt omits
+  // `streamlit` (e.g. streamlit/30days expects Cloud to inject it).
+  streamlit:  { pyDeps: ['streamlit'], files: ['streamlit_app.py'] },
   gradio:     { pyDeps: ['gradio'] },
   hugo:       { files: ['hugo.toml', 'hugo.yaml', 'config.toml'] },
   jekyll:     { files: ['_config.yml', 'Gemfile'] },
@@ -82,7 +85,45 @@ function detectPackageManager({ topLevel, runtimeKind }) {
   return 'auto';
 }
 
-function defaultStartArgv(framework, runtimeKind, pkg) {
+// AppSpec v1 schema accepts only `^[0-9a-f]{40}$` (SHA) or
+// `^v\d+\.\d+\.\d+(-.+)?$` (semver tag) for upstream.ref. A branch name
+// like `master` or `main` is mutable and rejected by the schema. When
+// resolveRef fell back to a branch (no tag, no input ref), we'd otherwise
+// generate an invalid manifest — pin to the resolved SHA instead, which
+// gives the manifest immutability for free.
+function pinnedRef(refResolution) {
+  const SHA_RE = /^[0-9a-f]{40}$/;
+  const TAG_RE = /^v\d+\.\d+\.\d+(-.+)?$/;
+  const ref = refResolution.ref;
+  if (typeof ref === 'string' && (SHA_RE.test(ref) || TAG_RE.test(ref))) {
+    return ref;
+  }
+  return refResolution.sha;
+}
+
+function defaultInstallArgv(framework, runtimeKind, requirementsTxt) {
+  if (runtimeKind === 'node') {
+    return [{ argv: ['npm', 'install', '--ignore-scripts'] }];
+  }
+  if (runtimeKind === 'python') {
+    // Detected-but-not-listed framework deps: many Streamlit/Gradio repos
+    // expect their host (Streamlit Cloud / HF Spaces) to inject the framework,
+    // so requirements.txt may omit it. Add a venv-aware install command so
+    // the framework binary lands in the venv. uv discovers .venv/ in cwd.
+    const t = (requirementsTxt || '').toLowerCase();
+    const cmds = [];
+    if (framework === 'streamlit' && !t.includes('streamlit')) {
+      cmds.push({ argv: ['uv', 'pip', 'install', 'streamlit'] });
+    }
+    if (framework === 'gradio' && !t.includes('gradio')) {
+      cmds.push({ argv: ['uv', 'pip', 'install', 'gradio'] });
+    }
+    return cmds;
+  }
+  return [];
+}
+
+function defaultStartArgv(framework, runtimeKind, pkg, topLevel = []) {
   switch (framework) {
     case 'vite':
       return ['npm', 'run', 'dev', '--', '--port', '{{PORT}}', '--host', '127.0.0.1'];
@@ -92,21 +133,35 @@ function defaultStartArgv(framework, runtimeKind, pkg) {
       return ['npm', 'run', 'dev', '--', '--port', '{{PORT}}', '--host', '127.0.0.1'];
     case 'astro':
       return ['npm', 'run', 'dev', '--', '--port', '{{PORT}}', '--host', '127.0.0.1'];
-    case 'streamlit':
+    case 'streamlit': {
+      // Pick whichever entry file the repo actually has. Streamlit Cloud's
+      // convention is `streamlit_app.py`; older / custom apps use `app.py`.
+      const entry = ['streamlit_app.py', 'app.py', 'streamlit.py', 'main.py']
+        .find(f => topLevel.includes(f)) || 'streamlit_app.py';
       return [
-        'streamlit', 'run', 'app.py',
+        'streamlit', 'run', entry,
         '--server.port={{PORT}}', '--server.address=127.0.0.1',
         '--server.enableCORS=false', '--server.enableXsrfProtection=false',
         '--server.headless=true', '--browser.gatherUsageStats=false',
       ];
-    case 'gradio':
-      return ['python', 'app.py'];
+    }
+    case 'gradio': {
+      const entry = ['app.py', 'main.py', 'demo.py'].find(f => topLevel.includes(f)) || 'app.py';
+      return ['python', entry];
+    }
     case 'hugo':
       return ['hugo', 'serve', '--port', '{{PORT}}', '--bind', '127.0.0.1'];
     case 'jekyll':
       return ['bundle', 'exec', 'jekyll', 'serve', '--port', '{{PORT}}', '--host', '127.0.0.1'];
     default:
       if (runtimeKind === 'static') return ['os8:static', '--dir', '.'];
+      if (runtimeKind === 'python') {
+        // No recognized framework but it's a Python repo. Pick a likely entry
+        // file rather than the npm fallback (which is just wrong for Python).
+        const entry = ['main.py', 'app.py', '__main__.py'].find(f => topLevel.includes(f));
+        if (entry) return ['python', entry];
+        return ['python', '-c', "print('No entry file detected — edit start.argv in the manifest.')"];
+      }
       // node + no recognized framework: prefer a real script the repo declares
       // over a guess. The user's review surfaces the actual argv before install.
       if (runtimeKind === 'node' && pkg?.scripts) {
@@ -159,7 +214,7 @@ async function draft(url) {
     name: pkg?.name || parsed.repo,
     publisher: parsed.owner,
     description: pkg?.description || meta.description || `Imported from ${parsed.owner}/${parsed.repo}`,
-    upstream: { git: meta.clone_url, ref: refResolution.ref },
+    upstream: { git: meta.clone_url, ref: pinnedRef(refResolution) },
     framework,
     runtime: {
       kind: runtime.kind,
@@ -168,11 +223,9 @@ async function draft(url) {
       package_manager: pm,
       dependency_strategy: 'best-effort',
     },
-    install: runtime.kind === 'node'
-      ? [{ argv: ['npm', 'install', '--ignore-scripts'] }]
-      : [],
+    install: defaultInstallArgv(framework, runtime.kind, requirementsRaw),
     start: {
-      argv: defaultStartArgv(framework, runtime.kind, pkg),
+      argv: defaultStartArgv(framework, runtime.kind, pkg, topLevel),
       port: 'detect',
       readiness: { type: 'http', path: '/', timeout_seconds: 60 },
     },
@@ -217,5 +270,6 @@ module.exports = {
   detectRuntime,
   detectPackageManager,
   defaultStartArgv,
+  defaultInstallArgv,
   buildSlug,
 };

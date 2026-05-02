@@ -34,7 +34,12 @@ const { OS8_BIN_DIR } = require('../../config');
 // Pinned at PR 2.1 implementation time. Re-verify at PR-merge time and
 // bump in a follow-up PR with fresh checksums. Each platform-arch tuple
 // maps to a SHA-256 from the release page's `<asset>.sha256` file.
-const UV_VERSION = '0.5.5';
+// uv 0.5.5 was the original pin; 0.5.30 fixes a venv-creation regression
+// where `uv venv` could exit 0 without producing `.venv/bin/python` on
+// aarch64-linux. Repro: streamlit-30days dev-import on Linux/aarch64
+// 2026-05-01. Bumping the pin forces a re-download of the cached binary
+// (see ensureUv()'s stale-version detection).
+const UV_VERSION = '0.5.30';
 
 const UV_ASSET_NAME = {
   'darwin-arm64': 'uv-aarch64-apple-darwin.tar.gz',
@@ -45,12 +50,12 @@ const UV_ASSET_NAME = {
 };
 
 const UV_CHECKSUMS = {
-  // Verified against https://github.com/astral-sh/uv/releases/download/0.5.5/<asset>.sha256
-  'darwin-arm64': '9368ad5eb6dfb414e88b1ab70ef03a15963569a2bba5b2ad79f8cd0cdde01646',
-  'darwin-x64':   'da8f40c1effe0e5d6ac0438a72ecb7671d67dcf8e3d53ff3d4e1b17140a1b5bc',
-  'linux-arm64':  'aa3e8c6e095798c92e0b1bc7599af6313c10c0f35cd301221d230abb083cf6b0',
-  'linux-x64':    '3ef767034dec63a33d97424b0494be6afa7e61bcde36ab5aa38d690e89cac69c',
-  'win32-x64':    '4a2d709b55a2267fcf4adf35f9c38e244c23b118d0992d52a897df8aa21961d2',
+  // Verified against https://github.com/astral-sh/uv/releases/download/0.5.30/<asset>.sha256
+  'darwin-arm64': '654c3e010c9c53b024fa752d08b949e0f80f10ec4e3a1acea9437a1d127a1053',
+  'darwin-x64':   '42c4a5d3611928613342958652ab16943d05980b1ab5057bb47e4283ef7e890d',
+  'linux-arm64':  'd1ea4a2299768b2c8263db0abd8ea0de3b8052a34a51f5cf73094051456d4de2',
+  'linux-x64':    '9d82816c14c44054f0c679f2bcaecfd910c75f207e08874085cb27b482f17776',
+  'win32-x64':    '43d6b97d2e283f6509a9199fd32411d67a64d5b5dca3e6e63e45ec2faec68f73',
 };
 
 // Extracted directory name inside each tarball (asset name minus extension).
@@ -164,6 +169,7 @@ const PythonRuntimeAdapter = {
   // ── Install ─────────────────────────────────────────────────────────────────
   async install(spec, appDir, sanitizedEnv, onLog) {
     const pm = this.detectPackageManager(appDir, spec?.runtime?.package_manager);
+    const uv = await ensureUv();  // absolute path or 'uv' (PATH lookup)
     const installCmds = await this._frozenInstallCmds(pm, appDir, spec);
     this._writeEnvFile(appDir, spec?.env || []);
 
@@ -173,12 +179,51 @@ const PythonRuntimeAdapter = {
       ...(Array.isArray(spec?.postInstall) ? spec.postInstall : []),
     ];
 
+    // Diagnostic: surface install activity to the terminal in addition to the
+    // modal log stream. Without this, a developer-import that fails mid-install
+    // shows only an opaque modal error (e.g. "uv pip install streamlit exited 2:
+    // No virtual environment found") with no way to tell which prior command
+    // succeeded vs. failed silently.
+    console.log(`[python-adapter] install for ${spec.slug || '<no-slug>'} in ${appDir}`);
+    console.log(`[python-adapter]   pm=${pm}, frozen-install-cmds=${installCmds.length}, spec.install=${(spec?.install || []).length}, spec.postInstall=${(spec?.postInstall || []).length}`);
+
     for (const cmd of runList) {
       if (!Array.isArray(cmd?.argv)) {
         throw new Error('install commands must be argv arrays');
       }
-      onLog?.('stdout', `+ ${cmd.argv.join(' ')}\n`);
-      await spawnPromise(cmd.argv, { cwd: appDir, env: sanitizedEnv, onLog });
+      // Rewrite bare `uv` invocations to the OS8-managed uv binary. Manifests
+      // (and the dev-import drafter) emit the symbolic name `uv` so they
+      // remain portable. At runtime we resolve to the same binary that
+      // _frozenInstallCmds used — without this, the venv created by OS8's
+      // bundled uv (0.5.5) wouldn't be recognised by the user's system uv
+      // (could be 0.11+) and `uv pip install <pkg>` would fail with
+      // "No virtual environment found".
+      const argv = cmd.argv[0] === 'uv' ? [uv, ...cmd.argv.slice(1)] : cmd.argv;
+      onLog?.('stdout', `+ ${argv.join(' ')}\n`);
+      console.log(`[python-adapter] + ${argv.join(' ')}`);
+      try {
+        await spawnPromise(argv, { cwd: appDir, env: sanitizedEnv, onLog });
+      } catch (err) {
+        console.log(`[python-adapter] FAILED: ${argv.join(' ')}`);
+        console.log(`[python-adapter] error: ${err.message}`);
+        throw err;
+      }
+      // Post-command sanity: if this was a venv create, confirm it actually
+      // produced a `.venv/bin/python` (or Scripts/python.exe). uv venv has
+      // historically been able to exit 0 without creating the venv on
+      // certain target Pythons — catch that here rather than letting the
+      // next command fail with an opaque "No virtual environment" error.
+      // We always create the venv at `<appDir>/.venv` (the _frozenInstallCmds
+      // contract), so we can check that path directly without parsing argv.
+      if (argv.length >= 3 && argv[1] === 'venv') {
+        const pyBin = path.join(appDir, '.venv',
+          process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+        const ok = fs.existsSync(pyBin);
+        console.log(`[python-adapter]   venv check: ${pyBin} exists=${ok}`);
+        if (!ok) {
+          throw new Error(`uv venv exited 0 but ${pyBin} doesn't exist — venv creation silently failed`);
+        }
+      }
     }
   },
 
@@ -186,11 +231,17 @@ const PythonRuntimeAdapter = {
     const uv = await ensureUv();
     const pyVer = (spec?.runtime?.version || '3.12').toString();
 
+    // --relocatable makes uv generate a venv with portable shebang lines
+    // in .venv/bin/<entrypoint> scripts. Without it, pip bakes the absolute
+    // staging path into every console-script (e.g.
+    // `#!/staging/.../bin/python`), and atomic move from staging to apps
+    // breaks every entry point (`spawn streamlit ENOENT` even though
+    // `.venv/bin/streamlit` exists). uv 0.4.11+ supports the flag.
     switch (pm) {
       case 'uv': {
         // uv sync --frozen creates .venv/ AND installs from uv.lock.
         // --python forces the lockfile-declared interpreter.
-        return [{ argv: [uv, 'sync', '--frozen', '--python', pyVer] }];
+        return [{ argv: [uv, 'sync', '--frozen', '--python', pyVer, '--relocatable'] }];
       }
       case 'poetry': {
         // Poetry not auto-installed (plan §5 decision 4). Verified-channel
@@ -209,7 +260,7 @@ const PythonRuntimeAdapter = {
         try {
           hasHashes = /^\s*--hash=/m.test(fs.readFileSync(reqPath, 'utf8'));
         } catch (_) { /* file may not exist; covered by detect */ }
-        const venvCreate = [uv, 'venv', '--python', pyVer, '.venv'];
+        const venvCreate = [uv, 'venv', '--python', pyVer, '--relocatable', '.venv'];
         const installFlags = hasHashes
           ? [uv, 'pip', 'install', '--require-hashes', '-r', 'requirements.txt']
           : [uv, 'pip', 'install', '-r', 'requirements.txt'];
@@ -502,7 +553,22 @@ function sha256File(filePath) {
 async function ensureUv() {
   const exe = process.platform === 'win32' ? 'uv.exe' : 'uv';
   const target = path.join(OS8_BIN_DIR, exe);
-  if (fs.existsSync(target)) return target;
+  if (fs.existsSync(target)) {
+    // Verify the cached binary matches our pinned UV_VERSION. If a previous
+    // OS8 install dropped an older binary (e.g. 0.5.5 with the silent
+    // venv-creation bug on aarch64), nuke it and re-download. Any failure
+    // probing --version (corrupt download, ABI mismatch) also triggers a
+    // re-download.
+    try {
+      const { stdout } = await spawnPromise([target, '--version'], { timeout: 5000 });
+      const m = stdout.match(/^uv (\d+\.\d+\.\d+)/);
+      if (m && m[1] === UV_VERSION) return target;
+      console.log(`[python-adapter] cached uv ${m?.[1] || 'unknown'} != target ${UV_VERSION}; refreshing`);
+    } catch (e) {
+      console.log(`[python-adapter] cached uv at ${target} unusable (${e.message}); refreshing`);
+    }
+    try { fs.unlinkSync(target); } catch (_) { /* about to be overwritten anyway */ }
+  }
 
   // Host uv first — fast path if the user has uv installed system-wide.
   try {
