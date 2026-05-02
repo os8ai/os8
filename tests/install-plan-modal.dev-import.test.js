@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { gateEvaluation } from '../src/renderer/install-plan-modal.js';
+import { gateEvaluation, assembleSetupArgv } from '../src/renderer/install-plan-modal.js';
 
 const Database = require('better-sqlite3');
 
@@ -318,5 +318,96 @@ describe('AppReviewService._runStaticChecks — dev-import network warning', () 
       channel: 'verified', resolvedCommit: 'a'.repeat(40), hostArch: 'arm64',
     });
     expect(findings.every(f => f.category !== 'network')).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────
+// Tier 2A follow-up — argparse choices dropdown
+// ───────────────────────────────────────────────────────────────────
+//
+// `extractArgChoices` extends PR #36's "default-uncheck and warn" with
+// a guided dropdown so the user can pick a value without leaving the
+// modal. This test covers the pure helper (assembleSetupArgv) directly
+// + asserts the modal source contains the wiring (no JSDOM in this
+// project, same pattern as app-start-failure-modal-class.test.js).
+
+describe('assembleSetupArgv — pure helper', () => {
+  it('returns the candidate argv unchanged when argChoices is empty', () => {
+    const candidate = { argv: ['python', 'scripts/setup.py'], argChoices: {} };
+    expect(assembleSetupArgv(candidate, {})).toEqual(['python', 'scripts/setup.py']);
+  });
+
+  it('appends chosen flag/value pairs to the argv', () => {
+    const candidate = {
+      argv: ['python', 'scripts/download_model.py'],
+      argChoices: { '--models': ['hivision_modnet', 'all'] },
+    };
+    expect(assembleSetupArgv(candidate, { '--models': 'hivision_modnet' }))
+      .toEqual(['python', 'scripts/download_model.py', '--models', 'hivision_modnet']);
+  });
+
+  it('skips flags whose value is empty/missing (caller guarantees the row is disabled in that case)', () => {
+    const candidate = {
+      argv: ['python', 'x.py'],
+      argChoices: { '--a': ['1', '2'], '--b': ['x', 'y'] },
+    };
+    expect(assembleSetupArgv(candidate, { '--a': '1' }))
+      .toEqual(['python', 'x.py', '--a', '1']);
+    expect(assembleSetupArgv(candidate, {}))
+      .toEqual(['python', 'x.py']);
+  });
+
+  it('does not mutate the candidate.argv reference', () => {
+    const argv = ['python', 'x.py'];
+    const candidate = { argv, argChoices: { '--m': ['a'] } };
+    assembleSetupArgv(candidate, { '--m': 'a' });
+    expect(argv).toEqual(['python', 'x.py']);
+  });
+
+  it('treats a missing argChoices field as "no choices" (forward compat with older drafter output)', () => {
+    const candidate = { argv: ['python', 'x.py'] };
+    expect(assembleSetupArgv(candidate, { '--m': 'ignored' })).toEqual(['python', 'x.py']);
+  });
+});
+
+describe('install-plan-modal — argparse choices wiring (source-level)', () => {
+  // No JSDOM. Static source checks guard against the wiring being
+  // silently dropped by a future refactor.
+  const MODAL_PATH = path.join(__dirname, '..', 'src', 'renderer', 'install-plan-modal.js');
+
+  it('renders a <select data-setup-script-choice ...> per flag', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/data-setup-script-choice/);
+    expect(src).toMatch(/<select\s[^>]*data-setup-script-choice/);
+  });
+
+  it("emits the empty '— pick a value —' option so the dropdown starts unselected", () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/pick a value/);
+    expect(src).toMatch(/<option value="">/);
+  });
+
+  it("disables the candidate's checkbox while any flag is unpicked", () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    // The disabled attribute is keyed off setupScriptHasUnpickedChoices().
+    expect(src).toMatch(/setupScriptHasUnpickedChoices/);
+    expect(src).toMatch(/hasUnpicked\s*\?\s*['"]disabled['"]/);
+  });
+
+  it('binds a change handler on every [data-setup-script-choice] select', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/querySelectorAll\(['"]\[data-setup-script-choice\]['"]\)/);
+  });
+
+  it('Install click uses assembleSetupArgv (not raw s.argv) so chosen values reach postInstall', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    // The .map(s => ({ argv: ... })) site that builds postInstall additions
+    // must thread through assembleSetupArgv.
+    expect(src).toMatch(/assembleSetupArgv\(s,\s*state\.setupScriptArgChoices/);
+  });
+
+  it('startState seeds setupScriptArgChoices as an empty object (not undefined)', () => {
+    const src = fs.readFileSync(MODAL_PATH, 'utf8');
+    expect(src).toMatch(/setupScriptArgChoices:\s*\{\}/);
   });
 });

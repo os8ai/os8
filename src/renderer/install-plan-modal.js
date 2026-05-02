@@ -211,9 +211,26 @@ function renderCommands(manifest) {
 // Tier 2A: render the opt-in setup-script panel. One row per candidate
 // with a checkbox, the file path, a one-line summary, the exact command
 // that will run, and a collapsible source preview.
-function renderSetupScripts(setupScripts, checkedPaths) {
+// Tier 2A follow-up: when the drafter detects argparse `choices=[...]`
+// on a candidate script, the modal renders a <select> per flag so the
+// user can pick a value without leaving the modal. Until every flag has
+// a value, the candidate's checkbox stays disabled (the script can't
+// run with no args; ticking the box would just queue a known-failing
+// postInstall).
+function setupScriptHasUnpickedChoices(s, chosenForScript) {
+  const flags = Object.keys(s.argChoices || {});
+  if (flags.length === 0) return false;
+  for (const flag of flags) {
+    if (!chosenForScript || !chosenForScript[flag]) return true;
+  }
+  return false;
+}
+
+function renderSetupScripts(setupScripts, checkedPaths, setupScriptArgChoices = {}) {
   const rows = setupScripts.map((s, i) => {
-    const checked = checkedPaths.has(s.path);
+    const chosenForScript = setupScriptArgChoices[s.path] || {};
+    const hasUnpicked = setupScriptHasUnpickedChoices(s, chosenForScript);
+    const checked = checkedPaths.has(s.path) && !hasUnpicked;
     const summary = s.summary || `Will run: ${s.argv.join(' ')}`;
     const previewBlock = s.source ? `
       <details class="install-plan-modal__setup-script-preview">
@@ -224,7 +241,10 @@ function renderSetupScripts(setupScripts, checkedPaths) {
     // Warn when the script's argparse / shell argv requires arguments —
     // running with no args would fail (e.g. download_model.py needs
     // `--models all`). The drafter sets requiresArgs; the modal renders
-    // a warning + leaves the checkbox unchecked by default.
+    // a warning + leaves the checkbox unchecked by default. When
+    // argChoices are also present the dropdown handles the value pick;
+    // the warning still renders so the user knows the box stays
+    // disabled until they make a selection.
     const warningBlock = s.requiresArgs ? `
       <div class="install-plan-modal__setup-script-warning"
            style="color: var(--color-warning, #d97706); font-size: 12px; margin-top: 4px;">
@@ -233,19 +253,40 @@ function renderSetupScripts(setupScripts, checkedPaths) {
         no args will fail.
       </div>
     ` : '';
+    const flagEntries = Object.entries(s.argChoices || {});
+    const choicesBlock = flagEntries.length > 0 ? `
+      <div class="install-plan-modal__setup-script-choices"
+           style="margin-top: 6px; display: flex; flex-direction: column; gap: 4px;">
+        ${flagEntries.map(([flag, values]) => `
+          <label style="font-size: 12px; display: flex; align-items: center; gap: 6px;">
+            <code>${escapeHtml(flag)}</code>
+            <select data-setup-script-choice="${escapeHtml(s.path)}"
+                    data-flag="${escapeHtml(flag)}">
+              <option value="">— pick a value —</option>
+              ${values.map(v => {
+                const selected = chosenForScript[flag] === v ? 'selected' : '';
+                return `<option value="${escapeHtml(v)}" ${selected}>${escapeHtml(v)}</option>`;
+              }).join('')}
+            </select>
+          </label>
+        `).join('')}
+      </div>
+    ` : '';
     return `
       <div class="install-plan-modal__setup-script">
         <label class="install-plan-modal__setup-script-row">
           <input type="checkbox"
                  data-setup-script="${escapeHtml(s.path)}"
                  ${checked ? 'checked' : ''}
+                 ${hasUnpicked ? 'disabled' : ''}
                  aria-describedby="setup-script-cmd-${i}">
           <div class="install-plan-modal__setup-script-body">
             <div class="install-plan-modal__setup-script-path"><code>${escapeHtml(s.path)}</code></div>
             ${summary ? `<div class="install-plan-modal__setup-script-summary">${escapeHtml(summary)}</div>` : ''}
             <div id="setup-script-cmd-${i}" class="install-plan-modal__setup-script-cmd">
-              Will run: <code>${escapeHtml(s.argv.join(' '))}</code>
+              Will run: <code>${escapeHtml(assembleSetupArgv(s, chosenForScript).join(' '))}</code>
             </div>
+            ${choicesBlock}
             ${warningBlock}
             ${previewBlock}
           </div>
@@ -254,6 +295,20 @@ function renderSetupScripts(setupScripts, checkedPaths) {
     `;
   });
   return rows.join('');
+}
+
+// Pure helper — exported for direct unit tests. Merges chosen flag/value
+// pairs into the candidate's argv. Skipped flags (empty/missing values)
+// are dropped from the merge; the renderer disables the row's checkbox
+// in that case so the partial-argv state never reaches Install.
+export function assembleSetupArgv(scriptCandidate, chosenForScript) {
+  const argv = [...scriptCandidate.argv];
+  const choices = scriptCandidate.argChoices || {};
+  for (const flag of Object.keys(choices)) {
+    const value = chosenForScript && chosenForScript[flag];
+    if (value) argv.push(flag, value);
+  }
+  return argv;
 }
 
 function renderValidationErrors(validation) {
@@ -476,7 +531,7 @@ function renderEntry(state) {
               need them to download models, weights, or fixtures before first launch.
               Checked items will run after install completes.
             </p>
-            ${renderSetupScripts(ss, state.setupScriptsChecked)}
+            ${renderSetupScripts(ss, state.setupScriptsChecked, state.setupScriptArgChoices)}
           </div>
         `);
       }
@@ -654,7 +709,9 @@ function wireEvents(state) {
         const ss = state.devImportMeta?.setupScripts || [];
         const additions = ss
           .filter(s => state.setupScriptsChecked.has(s.path))
-          .map(s => ({ argv: s.argv }));
+          .map(s => ({
+            argv: assembleSetupArgv(s, state.setupScriptArgChoices?.[s.path] || {}),
+          }));
         if (additions.length > 0) {
           manifestToInstall = {
             ...state.entry.manifest,
@@ -713,6 +770,31 @@ function wireEvents(state) {
       const path = cb.dataset.setupScript;
       if (cb.checked) state.setupScriptsChecked.add(path);
       else state.setupScriptsChecked.delete(path);
+    });
+  }
+
+  // Tier 2A follow-up — argparse choices dropdowns. Update state, then
+  // patch the modal so the row's "Will run:" line + the checkbox enabled
+  // state both reflect the new selection. Clearing a value force-unticks
+  // the row (assembleSetupArgv would emit a partial argv otherwise).
+  for (const sel of root.querySelectorAll('[data-setup-script-choice]')) {
+    sel.addEventListener('change', () => {
+      const path = sel.dataset.setupScriptChoice;
+      const flag = sel.dataset.flag;
+      const value = sel.value;
+      state.setupScriptArgChoices = state.setupScriptArgChoices || {};
+      state.setupScriptArgChoices[path] = state.setupScriptArgChoices[path] || {};
+      if (value) {
+        state.setupScriptArgChoices[path][flag] = value;
+      } else {
+        delete state.setupScriptArgChoices[path][flag];
+        // Clearing a required-arg flag must also untick the row — the
+        // checkbox is about to be re-disabled by patchModal anyway, but
+        // this prevents the brief frame where the box is checked + the
+        // dropdown is empty from leaking into setupScriptsChecked.
+        state.setupScriptsChecked.delete(path);
+      }
+      patchModal(state);
     });
   }
 
@@ -821,6 +903,13 @@ function startState(entry, validation) {
     // includes setupScripts. Mutated via [data-setup-script] checkboxes;
     // injected into manifest.postInstall on Install.
     setupScriptsChecked: new Set(),
+    // Tier 2A follow-up: chosen value per (script path, --flag) pair when
+    // the drafter detected `argChoices` on a candidate. Shape:
+    //   { 'scripts/download_model.py': { '--models': 'hivision_modnet' } }
+    // The checkbox for a candidate stays disabled until every flag in
+    // its argChoices map has a non-empty value here. assembleSetupArgv
+    // merges these into the candidate's argv at Install-click time.
+    setupScriptArgChoices: {},
   };
 }
 
