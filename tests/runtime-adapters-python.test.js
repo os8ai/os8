@@ -465,6 +465,35 @@ describe('PythonRuntimeAdapter — start/stop integration', () => {
     await PyAdapter.stop(info);
   }, 15_000);
 
+  // Tier 3A follow-up: readiness-timeout errors must also carry stderr
+  // tail so the failure-modal hint matcher has something to scan. PR #34
+  // only enriched the "exited before ready" path; processes that bind
+  // and then hang (or print a warning to stderr but never serve /) used
+  // to throw a bare `readiness http timeout: ...` with no context.
+  it('http-readiness-timeout error includes the tail of stderr/stdout', async () => {
+    const dir = makeAppDir(parent, {
+      // Stand-in: print a recognisable warning, then bind a port that
+      // returns 500 forever (so readiness probes never see 2xx-4xx).
+      'hang.js': `
+        const http = require('http');
+        process.stderr.write('TIMEOUT_SENTINEL_TEXT_77 — process hung intentionally\\n');
+        http.createServer((_, res) => { res.writeHead(500); res.end('nope'); })
+            .listen(parseInt(process.env.PORT, 10), '127.0.0.1');
+      `,
+    });
+    const m = clone(BASE_MANIFEST);
+    m.framework = 'none';
+    m.start = {
+      argv: ['node', 'hang.js'],
+      port: 'detect',
+      readiness: { type: 'http', path: '/', timeout_seconds: 2 },
+    };
+    const env = { ...process.env, PORT: '40006' };
+    const info = await PyAdapter.start(m, dir, env, () => {});
+    await expect(info.ready).rejects.toThrow(/readiness http timeout[\s\S]*TIMEOUT_SENTINEL_TEXT_77/);
+    await PyAdapter.stop(info);
+  }, 15_000);
+
   // Surfacing stderr in the "exited before ready" error message — without
   // this, callers see `code=1` and have to reproduce the failure manually
   // to learn what went wrong (e.g. ModuleNotFoundError, ValueError from

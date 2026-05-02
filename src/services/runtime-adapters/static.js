@@ -52,13 +52,21 @@ const FRAMEWORK_DEFAULTS = {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-// Format the "process exited before ready" error to include a tail of the
-// process output so callers see the actual root cause (build error, etc.)
-// rather than an opaque code=N.
-function exitedBeforeReady(code, collected) {
+// Append a tail of the process output to a readiness error so callers see
+// the actual root cause (build error, etc.) rather than an opaque code=N
+// or a bare timeout. Used for both the "exited before ready" path and the
+// readiness-timeout path.
+function tailSuffix(collected) {
   const tail = (collected || '').slice(-1500).trim();
-  const suffix = tail ? `\n--- last process output ---\n${tail}` : '';
-  return new Error(`process exited before ready code=${code}${suffix}`);
+  return tail ? `\n--- last process output ---\n${tail}` : '';
+}
+
+function exitedBeforeReady(code, collected) {
+  return new Error(`process exited before ready code=${code}${tailSuffix(collected)}`);
+}
+
+function readinessTimeout(detail, collected) {
+  return new Error(`readiness ${detail}${tailSuffix(collected)}`);
 }
 
 function spawnPromise(argv, opts = {}) {
@@ -279,7 +287,7 @@ const StaticRuntimeAdapter = {
         } catch (_) { /* retry */ }
         await sleep(250);
       }
-      throw new Error(`readiness http timeout: ${url}`);
+      throw readinessTimeout(`http timeout: ${url}`, getCollected());
     }
 
     if (probe.type === 'log-regex') {
@@ -291,7 +299,7 @@ const StaticRuntimeAdapter = {
         if (re.test(getCollected())) return;
         await sleep(100);
       }
-      throw new Error(`readiness log-regex timeout: /${probe.regex}/`);
+      throw readinessTimeout(`log-regex timeout: /${probe.regex}/`, getCollected());
     }
     throw new Error(`unknown readiness type: ${probe.type}`);
   },
