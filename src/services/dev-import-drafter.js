@@ -218,6 +218,160 @@ function defaultStartArgv(framework, runtimeKind, pkg, topLevel = [], appSources
   }
 }
 
+// ─── Setup-script detection (Tier 2A) ──────────────────────────────────────────
+//
+// Some apps require a one-time setup step before first launch — e.g.
+// HivisionIDPhotos's `scripts/download_model.py` fetches ONNX weights into
+// `hivision/creator/weights/`, ComfyUI's `scripts/download_models.py`,
+// many HF Spaces clones, etc. The dev-import drafter can't know about
+// these scripts in general, but a conservative heuristic catches the
+// common cases: an explicit allowlist of filename patterns at the repo
+// root and inside `scripts/`, plus Makefile targets matching
+// download/setup/fetch.
+//
+// Output is consumed by the install-plan modal (importMeta.setupScripts),
+// which renders one checkbox per candidate. Checked items become
+// `manifest.postInstall` entries on approve. False positives are
+// mitigated by opt-in: the user reviews each candidate (with source
+// preview) before approving.
+//
+// Cap at 3 candidates to keep the modal scannable. We sort by likelihood
+// (root > scripts/ > Makefile), but the cap is a heuristic — agents that
+// genuinely need 5 setup scripts will surface the failure via Tier 3A's
+// "missing model files" hint and the user can edit the manifest there.
+
+const ROOT_PYTHON_PATTERNS = [
+  // Specific allowlist — these names are highly likely to be setup
+  // scripts in their domains. Anything more generic (e.g. `setup.py`)
+  // is risky: setup.py at root is setuptools, not a setup script.
+  'download_models.py',
+  'download_weights.py',
+  'download_ckpts.py',
+  'fetch_models.py',
+  'setup_models.py',
+  'prepare_models.py',
+];
+
+const SCRIPTS_DIR_PATTERNS = [
+  // Inside scripts/, names matching these regex match are candidates.
+  /^download_.*\.py$/i,
+  /^setup_.*\.py$/i,
+  /^fetch_.*\.py$/i,
+  /^download_model\.py$/i,
+  /^download_models\.py$/i,
+  /^download_weights\.py$/i,
+  /^prepare_data\.py$/i,
+  /^download_.*\.sh$/i,
+  /^setup_.*\.sh$/i,
+];
+
+function isLikelySetupTarget(target) {
+  return /^(download|setup|init|prepare|fetch)([_-]?\w*)?$/i.test(target)
+      || /^(install_|fetch_|get_)?models?$/i.test(target);
+}
+
+// Best-effort Makefile target parser. Captures lines that look like
+// `target:` or `target: deps` at column 0. Skips `.PHONY` lines,
+// commented lines, and indented recipe content. Doesn't handle
+// every GNU make corner case — only the common patterns we'd see
+// in research repos.
+function parseMakefileTargets(makefileText) {
+  if (!makefileText) return [];
+  const targets = [];
+  for (const line of makefileText.split('\n')) {
+    if (line.startsWith('\t') || line.startsWith(' ')) continue;
+    if (line.startsWith('#')) continue;
+    const m = line.match(/^([A-Za-z][A-Za-z0-9_-]*)\s*:(?!=)/);
+    if (m) {
+      const name = m[1];
+      if (name === '.PHONY' || name === 'PHONY') continue;
+      if (!targets.includes(name)) targets.push(name);
+    }
+  }
+  return targets;
+}
+
+// First-pass summary: grab a docstring or top-of-file comment so the
+// modal can render a one-liner without making the user expand source.
+function summariseScript(content, kind = 'python') {
+  if (!content) return '';
+  // Python docstring at top of module: `"""..."""` or `'''...'''`
+  const docstring = content.match(/^\s*(?:#[^\n]*\n\s*)*("""([^]*?)"""|'''([^]*?)''')/);
+  if (docstring) {
+    const body = (docstring[2] || docstring[3] || '').trim();
+    return body.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2).join(' ').slice(0, 200);
+  }
+  // Comment block at top of file: `# ...` (python/shell) or `// ...` (rare here)
+  const commentLines = [];
+  for (const line of content.split('\n').slice(0, 20)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#!')) continue; // shebang
+    if (trimmed.startsWith('#')) {
+      commentLines.push(trimmed.replace(/^#+\s*/, ''));
+      continue;
+    }
+    if (trimmed === '' && commentLines.length === 0) continue;
+    if (trimmed === '' && commentLines.length > 0) break;
+    if (commentLines.length > 0) break;
+    if (kind === 'python' && (trimmed.startsWith('import ') || trimmed.startsWith('from '))) break;
+  }
+  return commentLines.filter(Boolean).slice(0, 2).join(' ').slice(0, 200);
+}
+
+// Returns array of { path, kind, argv, summary, source }, capped at 3.
+// Caller fetches source files separately (e.g. inside draft()).
+function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileText }) {
+  const candidates = [];
+
+  // (1) Root-level python files matching the allowlist.
+  for (const name of ROOT_PYTHON_PATTERNS) {
+    if (topLevel.includes(name)) {
+      const src = sourceFor(name) || '';
+      candidates.push({
+        path: name,
+        kind: 'python',
+        argv: ['python', name],
+        summary: summariseScript(src, 'python'),
+        source: src.slice(0, 1000),
+      });
+    }
+  }
+
+  // (2) scripts/ subdirectory python or shell scripts.
+  for (const entry of (scriptsDirEntries || [])) {
+    if (entry.type !== 'blob') continue;
+    const matches = SCRIPTS_DIR_PATTERNS.some(re => re.test(entry.name));
+    if (!matches) continue;
+    const rel = `scripts/${entry.name}`;
+    const isShell = entry.name.endsWith('.sh');
+    const src = sourceFor(rel) || '';
+    candidates.push({
+      path: rel,
+      kind: isShell ? 'shell' : 'python',
+      argv: isShell ? ['bash', rel] : ['python', rel],
+      summary: summariseScript(src, isShell ? 'shell' : 'python'),
+      source: src.slice(0, 1000),
+    });
+  }
+
+  // (3) Makefile targets matching download/setup/init/prepare/fetch/models.
+  if (topLevel.includes('Makefile') && makefileText) {
+    const targets = parseMakefileTargets(makefileText);
+    for (const t of targets) {
+      if (!isLikelySetupTarget(t)) continue;
+      candidates.push({
+        path: `Makefile:${t}`,
+        kind: 'make',
+        argv: ['make', t],
+        summary: `Runs the \`make ${t}\` target`,
+        source: '',
+      });
+    }
+  }
+
+  return candidates.slice(0, 3);
+}
+
 function buildSlug(owner, repo) {
   return `${owner.toLowerCase()}-${repo.toLowerCase()}`
     .replace(/[^a-z0-9-]/g, '-')
@@ -243,12 +397,28 @@ async function draft(url) {
   );
   const entryNames = ['app.py', 'main.py', 'demo.py'].filter(f => topLevel.includes(f));
 
+  // Setup-script detection (Tier 2A): root-level allowlist + scripts/
+  // subdir + Makefile targets. We fetch the actual source so the modal
+  // can show a one-line summary and a "Preview source" expansion.
+  const rootSetupNames = ROOT_PYTHON_PATTERNS.filter(f => topLevel.includes(f));
+  const hasMakefile = topLevel.includes('Makefile');
+  const hasScriptsDir = topLevel.includes('scripts');
+  const scriptsDirEntries = hasScriptsDir
+    ? await Importer.listSubdir({ ...parsed, sha: refResolution.sha, dir: 'scripts' })
+    : [];
+  const scriptsCandidatePaths = scriptsDirEntries
+    .filter(e => e.type === 'blob' && SCRIPTS_DIR_PATTERNS.some(re => re.test(e.name)))
+    .map(e => `scripts/${e.name}`);
+
   const [pkgRaw, pyprojectRaw, requirementsRaw, ...rest] = await Promise.all([
     fetch('package.json'),
     fetch('pyproject.toml'),
     fetch('requirements.txt'),
     ...secondaryReqNames.map(fetch),
     ...entryNames.map(fetch),
+    ...rootSetupNames.map(fetch),
+    ...scriptsCandidatePaths.map(fetch),
+    hasMakefile ? fetch('Makefile') : Promise.resolve(null),
   ]);
 
   const requirementsFiles = {};
@@ -261,6 +431,21 @@ async function draft(url) {
     const content = rest[secondaryReqNames.length + i];
     if (content) appSources[name] = content;
   });
+  // Build a sourceFor() lookup for setup-script detection — covers both
+  // root-level and scripts/ paths fetched above.
+  const setupSources = {};
+  const setupBase = secondaryReqNames.length + entryNames.length;
+  rootSetupNames.forEach((name, i) => {
+    const content = rest[setupBase + i];
+    if (content) setupSources[name] = content;
+  });
+  scriptsCandidatePaths.forEach((relPath, i) => {
+    const content = rest[setupBase + rootSetupNames.length + i];
+    if (content) setupSources[relPath] = content;
+  });
+  const makefileText = hasMakefile
+    ? rest[setupBase + rootSetupNames.length + scriptsCandidatePaths.length]
+    : null;
 
   let pkg = null;
   try { pkg = pkgRaw ? JSON.parse(pkgRaw) : null; }
@@ -318,6 +503,15 @@ async function draft(url) {
     },
   };
 
+  // Detect setup scripts AFTER all fetches so we can pass real source
+  // through to summariseScript without another round-trip.
+  const setupScripts = detectSetupScripts({
+    topLevel,
+    scriptsDirEntries,
+    sourceFor: (p) => setupSources[p],
+    makefileText,
+  });
+
   return {
     manifest,
     upstreamResolvedCommit: refResolution.sha,
@@ -329,6 +523,9 @@ async function draft(url) {
       stars: meta.stargazers_count,
       defaultBranch: meta.default_branch,
       hasDockerfile: topLevel.includes('Dockerfile'),
+      // Tier 2A: opt-in setup script candidates — modal renders one
+      // checkbox per entry; checked items become postInstall on approve.
+      setupScripts,
     },
   };
 }
@@ -341,4 +538,8 @@ module.exports = {
   defaultStartArgv,
   defaultInstallArgv,
   buildSlug,
+  // Tier 2A
+  detectSetupScripts,
+  parseMakefileTargets,
+  summariseScript,
 };

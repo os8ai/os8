@@ -165,12 +165,38 @@ async function listTopLevel({ owner, repo, sha }) {
   return Array.isArray(j.tree) ? j.tree.map(t => t.path) : [];
 }
 
+/**
+ * List entries of a single subdirectory at a commit. Used by the drafter's
+ * setup-script detection (Tier 2A) to look for `scripts/download_*.py`,
+ * `scripts/setup_*.sh`, etc. without recursing.
+ *
+ * Returns array of `{ name, type }` (type ∈ 'blob' | 'tree'). Returns `[]`
+ * if the directory is missing rather than throwing — callers shouldn't
+ * have to special-case "no scripts/ dir".
+ */
+async function listSubdir({ owner, repo, sha, dir }) {
+  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${encodeURIComponent(dir)}?ref=${sha}`;
+  const r = await fetch(url, {
+    headers: ghHeaders(),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (r.status === 404) return [];           // dir absent — caller treats as empty
+  if (!r.ok) {
+    const rate = rateLimitMessage(r.status);
+    throw new Error(rate || `github subdir fetch ${dir}: ${r.status}`);
+  }
+  const j = await r.json();
+  if (!Array.isArray(j)) return [];
+  return j.map(e => ({ name: e.name, type: e.type === 'dir' ? 'tree' : 'blob' }));
+}
+
 module.exports = {
   parseGithubUrl,
   getRepoMeta,
   resolveRef,
   fetchRawFile,
   listTopLevel,
+  listSubdir,
   // exposed for tests
   _internal: { ghHeaders, rateLimitMessage },
 };
