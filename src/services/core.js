@@ -2,6 +2,110 @@ const fs = require('fs');
 const path = require('path');
 const { CORE_DIR, ensureDirectories } = require('../config');
 
+// vite.config.js template. Kept as a function so the migration runner can
+// call rewriteViteConfig() to update existing installs without duplicating
+// the template inline.
+//
+// The watch.ignored list keeps Vite from crawling external-app Python venvs
+// + bytecode caches. Without these, an external Gradio/Streamlit app's
+// `.venv/lib/.../package/templates/index.html` triggers HMR storms on first
+// launch (the page-reload events spam the modal and slow down the dev
+// server's discovery pass). v0.5.0 shipped without these ignores; the
+// 0.5.1-vite-watch-ignored migration backfills the file for upgraders.
+function viteConfigTemplate() {
+  return `import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import fs from 'fs';
+
+const coreDir = __dirname;
+const appsDir = path.resolve(coreDir, '../apps');
+const coreNodeModules = path.resolve(coreDir, 'node_modules');
+
+// Get list of apps dynamically
+function getAppEntries() {
+  if (!fs.existsSync(appsDir)) return {};
+
+  const entries = {};
+  const apps = fs.readdirSync(appsDir);
+  apps.forEach(appId => {
+    const appPath = path.join(appsDir, appId);
+    const indexPath = path.join(appPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      entries[appId] = indexPath;
+    }
+  });
+  return entries;
+}
+
+export default defineConfig({
+  plugins: [react()],
+  root: appsDir,
+  resolve: {
+    alias: {
+      '@os8/shared': path.resolve(coreDir, 'shared'),
+      // Point React imports to Core's node_modules
+      'react': path.resolve(coreNodeModules, 'react'),
+      'react-dom': path.resolve(coreNodeModules, 'react-dom'),
+      'react-router-dom': path.resolve(coreNodeModules, 'react-router-dom')
+    }
+  },
+  optimizeDeps: {
+    // Tell Vite where to find dependencies
+    esbuildOptions: {
+      resolveExtensions: ['.js', '.jsx', '.ts', '.tsx'],
+    }
+  },
+  server: {
+    middlewareMode: true,
+    hmr: {
+      port: 5174
+    },
+    watch: {
+      // Don't crawl Python venvs, bytecode caches, or .git inside external
+      // apps. External-app .venv/ contains shipped HTML (gradio/streamlit
+      // templates) which would otherwise trigger HMR storms on first launch.
+      ignored: [
+        '**/.venv/**',
+        '**/__pycache__/**',
+        '**/.git/**',
+        '**/node_modules/**',
+        '**/.pytest_cache/**',
+        '**/.mypy_cache/**'
+      ]
+    }
+  },
+  build: {
+    rollupOptions: {
+      input: getAppEntries()
+    }
+  },
+  css: {
+    postcss: path.resolve(coreDir, 'postcss.config.js')
+  }
+});
+`;
+}
+
+// Rewrite ~/os8/core/vite.config.js to the current template. Used by both
+// initialize() (fresh installs) and the migration (upgrades). Backs up any
+// existing file with content that differs from the new template, so users
+// who hand-edited their config don't silently lose changes.
+function rewriteViteConfig() {
+  const target = path.join(CORE_DIR, 'vite.config.js');
+  const next = viteConfigTemplate();
+  if (fs.existsSync(target)) {
+    const current = fs.readFileSync(target, 'utf8');
+    if (current === next) return { changed: false, backup: null };
+    const backup = `${target}.${Date.now()}.bak`;
+    fs.copyFileSync(target, backup);
+    fs.writeFileSync(target, next, 'utf8');
+    return { changed: true, backup };
+  }
+  fs.writeFileSync(target, next, 'utf8');
+  return { changed: true, backup: null };
+}
+
 // Core Services - manages shared React/Vite/Tailwind environment
 const CoreService = {
   // Check if Core is set up (node_modules exists)
@@ -50,67 +154,10 @@ const CoreService = {
       JSON.stringify(packageJson, null, 2)
     );
 
-    // Create vite.config.js
-    const viteConfig = `import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import path from 'path';
-import fs from 'fs';
-
-const coreDir = __dirname;
-const appsDir = path.resolve(coreDir, '../apps');
-const coreNodeModules = path.resolve(coreDir, 'node_modules');
-
-// Get list of apps dynamically
-function getAppEntries() {
-  if (!fs.existsSync(appsDir)) return {};
-
-  const entries = {};
-  const apps = fs.readdirSync(appsDir);
-  apps.forEach(appId => {
-    const appPath = path.join(appsDir, appId);
-    const indexPath = path.join(appPath, 'index.html');
-    if (fs.existsSync(indexPath)) {
-      entries[appId] = indexPath;
-    }
-  });
-  return entries;
-}
-
-export default defineConfig({
-  plugins: [react()],
-  root: appsDir,
-  resolve: {
-    alias: {
-      '@os8/shared': path.resolve(coreDir, 'shared'),
-      // Point React imports to Core's node_modules
-      'react': path.resolve(coreNodeModules, 'react'),
-      'react-dom': path.resolve(coreNodeModules, 'react-dom'),
-      'react-router-dom': path.resolve(coreNodeModules, 'react-router-dom')
-    }
-  },
-  optimizeDeps: {
-    // Tell Vite where to find dependencies
-    esbuildOptions: {
-      resolveExtensions: ['.js', '.jsx', '.ts', '.tsx'],
-    }
-  },
-  server: {
-    middlewareMode: true,
-    hmr: {
-      port: 5174
-    }
-  },
-  build: {
-    rollupOptions: {
-      input: getAppEntries()
-    }
-  },
-  css: {
-    postcss: path.resolve(coreDir, 'postcss.config.js')
-  }
-});
-`;
-    fs.writeFileSync(path.join(CORE_DIR, 'vite.config.js'), viteConfig);
+    // Create / refresh vite.config.js (extracted to rewriteViteConfig so the
+    // migration runner can update existing installs without duplicating the
+    // template).
+    rewriteViteConfig();
 
     // Create tailwind.config.js with absolute paths
     const tailwindConfig = `import path from 'path';
@@ -242,3 +289,5 @@ export {};
 };
 
 module.exports = CoreService;
+module.exports.rewriteViteConfig = rewriteViteConfig;
+module.exports.viteConfigTemplate = viteConfigTemplate;

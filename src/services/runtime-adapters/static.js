@@ -52,6 +52,15 @@ const FRAMEWORK_DEFAULTS = {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// Format the "process exited before ready" error to include a tail of the
+// process output so callers see the actual root cause (build error, etc.)
+// rather than an opaque code=N.
+function exitedBeforeReady(code, collected) {
+  const tail = (collected || '').slice(-1500).trim();
+  const suffix = tail ? `\n--- last process output ---\n${tail}` : '';
+  return new Error(`process exited before ready code=${code}${suffix}`);
+}
+
 function spawnPromise(argv, opts = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
@@ -195,6 +204,13 @@ const StaticRuntimeAdapter = {
       OS8_PORT:     os8Port,
     });
 
+    // Surface the start command in the OS8 main-process terminal for parity
+    // with install-time logging. When a start fails, this is the line that
+    // tells you what was actually spawned.
+    console.log(
+      `[static-adapter] start: ${startArgv.join(' ')} (cwd=${appDir}, port=${sanitizedEnv.PORT})`
+    );
+
     const child = spawn(startArgv[0], startArgv.slice(1), {
       cwd: appDir,
       env: sanitizedEnv,
@@ -255,7 +271,7 @@ const StaticRuntimeAdapter = {
       const url = `http://127.0.0.1:${env.PORT}${probe.path || '/'}`;
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error(`process exited before ready code=${child.exitCode}`);
+          throw exitedBeforeReady(child.exitCode, getCollected());
         }
         try {
           const r = await fetch(url, { signal: AbortSignal.timeout(1000) });
@@ -270,7 +286,7 @@ const StaticRuntimeAdapter = {
       const re = new RegExp(probe.regex);
       while (Date.now() < deadline) {
         if (child.exitCode !== null) {
-          throw new Error('process exited before ready');
+          throw exitedBeforeReady(child.exitCode, getCollected());
         }
         if (re.test(getCollected())) return;
         await sleep(100);
