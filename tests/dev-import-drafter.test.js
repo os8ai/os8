@@ -422,6 +422,95 @@ import os
     expect(s).toContain('Download ONNX matting weights');
   });
 
+  // Regression for the HivisionIDPhotos foot-gun: download_model.py uses
+  // argparse with `--models` required + `nargs='+'`, no default. The first
+  // smoke against PR #33's auto-checked default ran the script with no
+  // args and got `error: the following arguments are required: --models`,
+  // failing the whole install. pythonScriptRequiresArgs detects this so
+  // the modal can default the checkbox to unchecked.
+  it('pythonScriptRequiresArgs detects required=True', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--models', required=True, help='which models to fetch')
+parser.add_argument('--output', default='out')
+`;
+    expect(Drafter.pythonScriptRequiresArgs(src)).toBe(true);
+  });
+
+  it("pythonScriptRequiresArgs detects nargs='+' without default", () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+parser.add_argument(
+    '--models', nargs='+',
+    choices=['hivision_modnet', 'rmbg-1.4', 'all'],
+    help='Which models to download'
+)
+`;
+    expect(Drafter.pythonScriptRequiresArgs(src)).toBe(true);
+  });
+
+  it("pythonScriptRequiresArgs returns false when nargs='+' has a default", () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+parser.add_argument(
+    '--items', nargs='+', default=['a', 'b'],
+    help='items'
+)
+`;
+    expect(Drafter.pythonScriptRequiresArgs(src)).toBe(false);
+  });
+
+  it('pythonScriptRequiresArgs returns false for a no-args script', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const src = `
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--verbose', action='store_true')
+parser.add_argument('--output', default='out.json')
+`;
+    expect(Drafter.pythonScriptRequiresArgs(src)).toBe(false);
+  });
+
+  it('detectSetupScripts flags requiresArgs on python candidates that need them', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts'],
+      scriptsDirEntries: [{ name: 'download_model.py', type: 'blob' }],
+      sourceFor: () => `
+parser.add_argument('--models', nargs='+', choices=['a', 'b'], required=True)
+`,
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].requiresArgs).toBe(true);
+  });
+
+  it('detectSetupScripts marks shell scripts as requiresArgs=true (conservative)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['scripts'],
+      scriptsDirEntries: [{ name: 'setup_env.sh', type: 'blob' }],
+      sourceFor: () => '#!/bin/bash\necho hello\n',
+      makefileText: null,
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].requiresArgs).toBe(true);
+  });
+
+  it('detectSetupScripts marks make targets as requiresArgs=false (self-contained)', () => {
+    Drafter = require('../src/services/dev-import-drafter');
+    const candidates = Drafter.detectSetupScripts({
+      topLevel: ['Makefile'],
+      scriptsDirEntries: [],
+      sourceFor: () => '',
+      makefileText: 'download:\n\tcurl -O https://x.com/y\n',
+    });
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].requiresArgs).toBe(false);
+  });
+
   it('summariseScript falls back to top-of-file # comment block', () => {
     Drafter = require('../src/services/dev-import-drafter');
     const src = `#!/bin/bash

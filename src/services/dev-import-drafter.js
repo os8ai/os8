@@ -291,6 +291,36 @@ function parseMakefileTargets(makefileText) {
   return targets;
 }
 
+// Heuristic: does this Python script have an argparse argument that is
+// required and missing a default? Used to flag setup-script candidates
+// that can't be safely auto-checked in the install-plan modal.
+//
+// Triggers on:
+//   - add_argument(..., required=True, ...)
+//   - add_argument(..., nargs='+', ...) without a default= (positional or
+//     option-form — argparse treats nargs='+' / '*' without default as
+//     required when there's no default and the user doesn't pass any)
+//
+// Conservative: false-negative is fine (user gets a foot-gun on Install).
+// False-positive is also fine (user just re-checks the box explicitly).
+// Doesn't try to parse Python source; regex against `add_argument(...)`
+// call expressions is good enough for the common cases.
+function pythonScriptRequiresArgs(content) {
+  if (!content || typeof content !== 'string') return false;
+  // Match each add_argument(...) call across reasonable line spans.
+  // Capture body up to the matching ')' is awkward in regex; settle for
+  // capturing up to the next 100 chars after `add_argument(`.
+  const calls = content.match(/add_argument\([\s\S]{0,300}?\)/g) || [];
+  for (const call of calls) {
+    if (/required\s*=\s*True\b/.test(call)) return true;
+    // nargs='+' or nargs='*' — treated as required when no default is
+    // supplied AND the argument has a `--`-style name (positionals would
+    // also count, but argparse's required positionals are universal).
+    if (/nargs\s*=\s*['"]\+['"]/.test(call) && !/default\s*=/.test(call)) return true;
+  }
+  return false;
+}
+
 // First-pass summary: grab a docstring or top-of-file comment so the
 // modal can render a one-liner without making the user expand source.
 function summariseScript(content, kind = 'python') {
@@ -333,6 +363,7 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
         argv: ['python', name],
         summary: summariseScript(src, 'python'),
         source: src.slice(0, 1000),
+        requiresArgs: pythonScriptRequiresArgs(src),
       });
     }
   }
@@ -351,6 +382,10 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
       argv: isShell ? ['bash', rel] : ['python', rel],
       summary: summariseScript(src, isShell ? 'shell' : 'python'),
       source: src.slice(0, 1000),
+      // Shell scripts: we can't reliably detect required args without a
+      // real parser. Flag them as requiresArgs=true conservatively so
+      // they default unchecked and the user explicitly opts in.
+      requiresArgs: isShell ? true : pythonScriptRequiresArgs(src),
     });
   }
 
@@ -365,6 +400,7 @@ function detectSetupScripts({ topLevel, scriptsDirEntries, sourceFor, makefileTe
         argv: ['make', t],
         summary: `Runs the \`make ${t}\` target`,
         source: '',
+        requiresArgs: false,  // make targets are self-contained by construction
       });
     }
   }
@@ -542,4 +578,5 @@ module.exports = {
   detectSetupScripts,
   parseMakefileTargets,
   summariseScript,
+  pythonScriptRequiresArgs,
 };

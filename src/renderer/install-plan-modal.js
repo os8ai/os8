@@ -221,6 +221,18 @@ function renderSetupScripts(setupScripts, checkedPaths) {
         <pre><code>${escapeHtml(s.source)}</code></pre>
       </details>
     ` : '';
+    // Warn when the script's argparse / shell argv requires arguments —
+    // running with no args would fail (e.g. download_model.py needs
+    // `--models all`). The drafter sets requiresArgs; the modal renders
+    // a warning + leaves the checkbox unchecked by default.
+    const warningBlock = s.requiresArgs ? `
+      <div class="install-plan-modal__setup-script-warning"
+           style="color: var(--color-warning, #d97706); font-size: 12px; margin-top: 4px;">
+        ⚠ This script declares required arguments. Review the source preview
+        and uncheck if you don't know what values to pass — running it with
+        no args will fail.
+      </div>
+    ` : '';
     return `
       <div class="install-plan-modal__setup-script">
         <label class="install-plan-modal__setup-script-row">
@@ -234,6 +246,7 @@ function renderSetupScripts(setupScripts, checkedPaths) {
             <div id="setup-script-cmd-${i}" class="install-plan-modal__setup-script-cmd">
               Will run: <code>${escapeHtml(s.argv.join(' '))}</code>
             </div>
+            ${warningBlock}
             ${previewBlock}
           </div>
         </label>
@@ -930,8 +943,15 @@ export async function openInstallPlanModalFromManifest(manifest, opts = {}) {
   // uncheck if they want to skip it; everything below the top is left
   // unchecked because false-positive risk is non-trivial for less obvious
   // candidates.
+  //
+  // Skip pre-check when the candidate's own argparse declares required
+  // args without defaults — the drafter can't infer what values to pass,
+  // so running with no args would fail (e.g. HivisionIDPhotos's
+  // download_model.py needs `--models all`). The candidate still renders
+  // with a warning; the user reads the source preview, edits the argv if
+  // they want, and ticks the box explicitly.
   const ss = opts.importMeta?.setupScripts || [];
-  if (ss.length > 0) state.setupScriptsChecked.add(ss[0].path);
+  if (ss.length > 0 && !ss[0].requiresArgs) state.setupScriptsChecked.add(ss[0].path);
   showModal(state);
 }
 
