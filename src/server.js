@@ -316,6 +316,21 @@ function scheduleAppCatalogSync() {
       } catch (e) {
         console.warn('[AutoUpdate] pass failed:', e.message);
       }
+
+      // PR 4.3 — installed-apps heartbeat. Best-effort; no-ops without
+      // an os8.ai session cookie. The endpoint at PR 4.3 (os8dotai #16)
+      // is already deployed; this side stays idle until a session-cookie
+      // mechanism for desktop ships in a follow-up.
+      try {
+        const r = await AppCatalogService.reportInstalledApps(db, {
+          getSessionCookie: () => null, // TODO(PR 4.3 follow-up): plumb session cookie from AccountService
+        });
+        if (r.ok) {
+          console.log(`[InstalledApps] heartbeat sent: ${r.count} apps (${r.removed} removed)`);
+        }
+      } catch (e) {
+        console.warn('[InstalledApps] heartbeat failed:', e.message);
+      }
     } catch (e) {
       console.warn('[AppCatalog] Scheduled sync failed:', e.message);
     }
