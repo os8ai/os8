@@ -14,7 +14,7 @@ Phase 4 ships **six tracks** that together turn the App Store from a working v1 
 
 | PR | Work unit | Surface | Track | Spec/plan source | Smoke gate |
 |---|---|---|---|---|---|
-| 4.1 | Streaming install logs in install plan modal | OS8 | A | phase-3-plan §7.5 (Phase 4 candidate) | yes — Streamlit fixture |
+| 4.1 | Streaming install logs in install plan modal | OS8 | A | phase-3-plan §7.5 (Phase 4 candidate) | yes — Streamlit fixture | _Merged in #45._ |
 | 4.2 | Auto-update opt-in for Verified channel | OS8 | A | spec §6.9; schema fields exist | yes — worldmonitor bump |
 | 4.3 | "Update available" surface on `/apps/[slug]` | os8.ai | A | spec §6.9 (mirrors desktop banner) | — |
 | 4.4 | Per-adapter install telemetry emitter | OS8 | B | spec §8 "Future"; spec §11 monitoring | — |

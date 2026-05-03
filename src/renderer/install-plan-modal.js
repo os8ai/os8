@@ -82,11 +82,49 @@ function renderPermissions(manifest, state) {
   } else {
     parts.push(`<li><strong>OS8 capabilities requested:</strong>
       <ul style="margin-top: 4px;">
-        ${caps.map(c => `<li><span class="install-plan-modal__permission-cap">${escapeHtml(c)}</span></li>`).join('')}
+        ${renderCapabilityListItems(caps)}
       </ul>
     </li>`);
   }
   return `<ul class="install-plan-modal__permissions">${parts.join('')}</ul>`;
+}
+
+// PR 4.7: group MCP capabilities by server. A `mcp.<server>.*` wildcard
+// renders as one row with explanatory copy ("all current and future tools")
+// so the user understands the trust grant scopes to the server, not a
+// snapshot of its current toolset.
+function renderCapabilityListItems(caps) {
+  const nonMcp = [];
+  const mcpByServer = new Map();
+  for (const c of caps) {
+    const m = typeof c === 'string' ? c.match(/^mcp\.([^.]+)\.(.+)$/) : null;
+    if (!m) {
+      nonMcp.push(c);
+      continue;
+    }
+    const [, server, tool] = m;
+    if (!mcpByServer.has(server)) mcpByServer.set(server, []);
+    mcpByServer.get(server).push(tool);
+  }
+  const lines = [];
+  for (const c of nonMcp) {
+    lines.push(`<li><span class="install-plan-modal__permission-cap">${escapeHtml(c)}</span></li>`);
+  }
+  for (const [server, tools] of mcpByServer.entries()) {
+    if (tools.includes('*')) {
+      lines.push(`<li>
+        <span class="install-plan-modal__permission-cap">mcp.${escapeHtml(server)}.*</span>
+        — <strong>all current and future tools</strong> on the
+        <code>${escapeHtml(server)}</code> MCP server.
+      </li>`);
+    } else {
+      lines.push(`<li>
+        <span class="install-plan-modal__permission-cap">mcp.${escapeHtml(server)}</span>:
+        ${tools.map(t => `<code>${escapeHtml(t)}</code>`).join(', ')}
+      </li>`);
+    }
+  }
+  return lines.join('');
 }
 
 // PR 3.2: per-capability toggles for developer-import. Groups by trust axis

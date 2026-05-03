@@ -113,6 +113,35 @@ describe('scoped-api-surface — isCapabilityAllowed', () => {
   it('empty declared rejects everything', () => {
     expect(isCapabilityAllowed(['blob.readwrite'], [])).toBe(false);
   });
+
+  // PR 4.7 — narrowed wildcard semantics. The wildcard match is MCP-only:
+  // a `mcp.<server>.*` declaration grants the matching server's tools, but
+  // never grants tools on a different server, never grants non-MCP caps,
+  // and the catch-all `mcp.*` (rejected at JSON-schema validation) is also
+  // rejected at runtime as a defense-in-depth.
+  it('mcp wildcard does NOT cross servers', () => {
+    expect(isCapabilityAllowed(['mcp.gh.list_pulls'], ['mcp.tavily.*'])).toBe(false);
+  });
+  it('mcp wildcard does NOT grant non-mcp capabilities', () => {
+    expect(isCapabilityAllowed(['blob.readwrite'], ['mcp.tavily.*'])).toBe(false);
+  });
+  it('runtime: catch-all mcp.* (would-be schema bypass) does NOT grant any mcp tool', () => {
+    // mcp.* doesn't match the strict /^mcp\.<server>\.<tool>$/ shape we
+    // require for wildcards; the runtime is intentionally narrow.
+    expect(isCapabilityAllowed(['mcp.tavily.search'], ['mcp.*'])).toBe(false);
+  });
+  it('runtime: bare * does NOT grant anything', () => {
+    expect(isCapabilityAllowed(['blob.readwrite'], ['*'])).toBe(false);
+  });
+  it('runtime: non-mcp generic wildcard (e.g. blob.*) does NOT grant via wildcard', () => {
+    // Non-MCP wildcards are not part of the spec; the runtime narrowed in
+    // PR 4.7 to MCP-only. Existing manifests don't use this form.
+    expect(isCapabilityAllowed(['blob.readwrite'], ['blob.*'])).toBe(false);
+  });
+  it('mcp wildcard tool with underscores accepted', () => {
+    expect(isCapabilityAllowed(['mcp.gh.list_pulls'], ['mcp.gh.*'])).toBe(true);
+    expect(isCapabilityAllowed(['mcp.gh.review-pull'], ['mcp.gh.*'])).toBe(true);
+  });
 });
 
 describe('scoped-api-surface — middleware end-to-end', () => {

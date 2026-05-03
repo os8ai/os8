@@ -72,17 +72,29 @@ function resolveCapability(apiPath, method) {
 
 /**
  * Allow if the app's declared capabilities list contains at least one of the
- * required names (or its wildcard form, where mcp.<server>.* permits any
- * mcp.<server>.<tool>).
+ * required names (or, for MCP capabilities, a `mcp.<server>.*` wildcard
+ * declaration scoped to the matching server).
+ *
+ * Wildcard semantics (PR 4.7): `mcp.<server>.*` grants ALL current and
+ * future tools registered by `<server>`. The trust grant scopes to the
+ * server itself — if the server registers a new tool tomorrow, the app
+ * can call it without re-install. Catch-all forms `mcp.*.*`, `mcp.*`,
+ * `mcp.<server>.*.<tool>` etc. are rejected at JSON-schema validation;
+ * the runtime checker below is intentionally narrow to defend against
+ * any that slip past validation.
  */
 function isCapabilityAllowed(required, declared) {
   if (!Array.isArray(required) || required.length === 0) return false;
   if (!Array.isArray(declared)) return false;
   for (const r of required) {
     if (declared.includes(r)) return true;
-    // Wildcard match: declared `foo.bar.*` permits required `foo.bar.x`.
-    for (const d of declared) {
-      if (d.endsWith('.*') && r.startsWith(d.slice(0, -1))) return true;
+    // MCP-only wildcard match: required `mcp.<server>.<tool>` against
+    // declared `mcp.<server>.*`. Only one server per wildcard; no
+    // cross-server fanout.
+    const m = typeof r === 'string' ? r.match(/^mcp\.([^.]+)\.([^.]+)$/) : null;
+    if (m) {
+      const server = m[1];
+      if (declared.includes(`mcp.${server}.*`)) return true;
     }
   }
   return false;
