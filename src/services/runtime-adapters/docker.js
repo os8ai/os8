@@ -82,6 +82,40 @@ function imageRefFor(spec) {
   return spec?.runtime?.image;
 }
 
+/**
+ * PR 4.1 — compact `docker pull` progress lines into one human-readable
+ * line per layer per emission. The default `docker pull` output uses
+ * carriage-returns + ANSI cursor moves to overwrite a per-layer status
+ * block; once the lines are split on `\n` (after CR collapse in the log
+ * buffer) we still see things like:
+ *
+ *   "abc123def456: Downloading [=====>     ] 12.34MB/45.67MB"
+ *   "abc123def456: Pull complete"
+ *   "Status: Downloaded newer image for nginx:latest"
+ *
+ * The first form gets compacted to "abc123def456: Downloading 27% (12.3MB / 45.6MB)";
+ * the rest pass through unchanged. Returns the (possibly transformed) line.
+ */
+function compactDockerPullLine(line) {
+  if (typeof line !== 'string') return line;
+  // ^<sha 12+>: <Status> [bar] <current><unit>/<total><unit>
+  const m = line.match(
+    /^([0-9a-f]{12,}):\s*(Downloading|Extracting|Pushing|Verifying|Pulling)\s*(?:\[[^\]]*\])?\s*([\d.]+)\s*([KMGT]?B)\s*\/\s*([\d.]+)\s*([KMGT]?B)/i
+  );
+  if (!m) return line;
+  const [, sha, status, currentNum, currentUnit, totalNum, totalUnit] = m;
+  const cur = parseFloat(currentNum);
+  const tot = parseFloat(totalNum);
+  if (!isFinite(cur) || !isFinite(tot) || tot <= 0) return line;
+  // Normalize to bytes for the percentage so "100KB / 1MB" reads correctly.
+  const unitToBytes = (n, u) => {
+    const factor = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 }[u.toUpperCase()] || 1;
+    return n * factor;
+  };
+  const pct = Math.round((unitToBytes(cur, currentUnit) / unitToBytes(tot, totalUnit)) * 100);
+  return `${sha}: ${status} ${pct}% (${currentNum}${currentUnit} / ${totalNum}${totalUnit})`;
+}
+
 const DockerRuntimeAdapter = {
   kind: 'docker',
 
@@ -118,7 +152,25 @@ const DockerRuntimeAdapter = {
     const ref = imageRefFor(spec);
     if (!ref) throw new Error('docker manifest missing runtime.image');
     onLog?.('stdout', `+ docker pull ${ref}\n`);
-    await spawnPromise(['docker', 'pull', ref], { onLog, timeout: 600_000 });
+    // PR 4.1: compact docker pull progress lines (one per layer per emission)
+    // before they hit the log buffer. The wrapper preserves stream attribution
+    // and only transforms recognizable progress lines; everything else
+    // passes through unchanged.
+    const compactingOnLog = onLog
+      ? (stream, chunk) => {
+          if (stream !== 'stdout' && stream !== 'stderr') return onLog(stream, chunk);
+          const text = String(chunk);
+          // Process line-by-line so we don't mangle multi-line buffers; preserve
+          // the trailing newline (if any) so downstream splitting still works.
+          const compacted = text.split('\n').map((l, i, arr) => {
+            const isLast = i === arr.length - 1;
+            // Last element after split may be empty (text ended with \n) — pass through.
+            return isLast && l === '' ? l : compactDockerPullLine(l);
+          }).join('\n');
+          return onLog(stream, compacted);
+        }
+      : undefined;
+    await spawnPromise(['docker', 'pull', ref], { onLog: compactingOnLog, timeout: 600_000 });
   },
 
   // ── Start ───────────────────────────────────────────────────────────────────
@@ -232,6 +284,7 @@ const DockerRuntimeAdapter = {
     get spawnPromise() { return _spawnImpl; },
     set spawnPromise(fn) { _spawnImpl = fn; },
     imageRefFor,
+    compactDockerPullLine,
     _setSpawn: (fn) => { _spawnImpl = fn; },
     _resetSpawn: () => { _spawnImpl = defaultSpawnPromise; },
   },

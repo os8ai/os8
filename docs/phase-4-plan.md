@@ -18,13 +18,13 @@ Phase 4 ships **six tracks** that together turn the App Store from a working v1 
 | 4.2 | Auto-update opt-in for Verified channel | OS8 | A | spec §6.9; schema fields exist | yes — worldmonitor bump |
 | 4.3 | "Update available" surface on `/apps/[slug]` | os8.ai | A | spec §6.9 (mirrors desktop banner) | — |
 | 4.4 | Per-adapter install telemetry emitter | OS8 | B | spec §8 "Future"; spec §11 monitoring | — |
-| 4.5 | Telemetry ingest endpoint + minimal dashboard | os8.ai | B | spec §11 monitoring | — |
+| 4.5 | Telemetry ingest endpoint + minimal dashboard | os8.ai | B | spec §11 monitoring | — | _Merged in os8dotai #15._ |
 | 4.6 | `requireAppContext` strict mode flip | OS8 | C | spec §11 open #1 | yes — E2E suite |
 | 4.7 | `mcp.<server>.*` wildcard capability | OS8 | C | spec §11 open #4 | — |
 | 4.8 | Windows-2022 promoted to gating CI | OS8 + 2× catalog | D | spec §11 open #11/#12 | yes — Windows install |
 | 4.9 | `@os8/sdk-types` TypeScript npm package | OS8 + npm publish | E | spec §11 open #6 | — |
 | 4.10 | Playwright-Electron E2E install harness | OS8 | E | phase-3-plan §7.6 (Phase 4 candidate) | yes — gates 4.6 |
-| 4.11 | Migration `0.6.0-app-store-telemetry.js` | OS8 | B | foundation for 4.4 + auto-update prefs | — |
+| 4.11 | Migration `0.6.0-app-store-telemetry.js` | OS8 | B | foundation for 4.4 + auto-update prefs | — | _Merged in #44._ |
 | 4.D1 | Spec + master-plan close-out updates | docs (`/home/leo/Claude/os8/docs/`) | F | always-separate (see phase-3 §1) | — |
 | 4.D2 | `docs/auto-update.md` user reference | docs | F | new — accompanies 4.2 | — |
 | 4.D3 | `app-store-deferred-items.md` decisions log update | docs | F | always-separate | — |

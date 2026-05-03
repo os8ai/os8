@@ -8,7 +8,10 @@
  * PR 1.16+ adds: install, approve, cancel, jobUpdate (event).
  */
 
-const { ipcMain } = require('electron');
+const { ipcMain, dialog } = require('electron');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const yaml = require('js-yaml');
 const { parseManifest, validateManifest } = require('../services/manifest-validator');
 const AppCatalogService = require('../services/app-catalog');
@@ -116,6 +119,31 @@ function registerAppStoreHandlers({ db, mainWindow }) {
         server.rescheduleAppCatalogSync();
       }
       return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // PR 4.1 — write the modal's install log buffer to a user-chosen file.
+  // Defaults to ~/Downloads/<filename> via showSaveDialog; user can redirect.
+  ipcMain.handle('app-store:save-install-log', async (_e, { filename, content } = {}) => {
+    try {
+      if (typeof filename !== 'string' || typeof content !== 'string') {
+        return { ok: false, error: 'filename and content must be strings' };
+      }
+      // Strip path separators / parent traversal from the suggested name so
+      // the dialog can't pre-populate a relative path traversal.
+      const safeName = path.basename(filename) || 'os8-install.log';
+      const defaultPath = path.join(os.homedir(), 'Downloads', safeName);
+      const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+      const result = await dialog.showSaveDialog(win, {
+        title: 'Save install log',
+        defaultPath,
+        filters: [{ name: 'Log file', extensions: ['log', 'txt'] }],
+      });
+      if (result.canceled || !result.filePath) return { ok: false, cancelled: true };
+      await fs.promises.writeFile(result.filePath, content, 'utf8');
+      return { ok: true, path: result.filePath };
     } catch (err) {
       return { ok: false, error: err.message };
     }

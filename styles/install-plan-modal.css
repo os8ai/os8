@@ -163,6 +163,71 @@
     white-space: pre-wrap;
   }
 
+  /* PR 4.1 — streaming install logs */
+  .install-plan-modal__logs {
+    background: var(--color-bg-elevated);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-family: var(--font-mono, monospace);
+    font-size: 12px;
+    line-height: 1.4;
+    max-height: 280px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+
+  .install-plan-modal__log-line {
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    column-gap: 8px;
+  }
+
+  .install-plan-modal__log-line--stdout .install-plan-modal__log-text {
+    color: var(--color-text-primary);
+  }
+
+  .install-plan-modal__log-line--stderr .install-plan-modal__log-text {
+    color: var(--color-danger-text, #b00020);
+    opacity: 0.95;
+  }
+
+  .install-plan-modal__log-line--info .install-plan-modal__log-text {
+    color: var(--color-text-secondary);
+    font-style: italic;
+  }
+
+  .install-plan-modal__log-line--exit .install-plan-modal__log-text {
+    color: var(--color-text-secondary);
+    font-weight: 600;
+  }
+
+  .install-plan-modal__log-ts {
+    color: var(--color-text-secondary);
+    opacity: 0.6;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .install-plan-modal__log-truncation {
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-style: italic;
+    margin-bottom: 4px;
+  }
+
+  .install-plan-modal__log-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 6px;
+  }
+
+  .install-plan-modal__log-count {
+    color: var(--color-text-secondary);
+    font-size: 11px;
+  }
+
   .install-plan-modal__arch-incompatible {
     color: var(--color-danger-text, #991b1b);
     background: var(--color-danger-bg, #fee2e2);

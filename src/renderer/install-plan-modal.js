@@ -373,14 +373,60 @@ function renderReviewPanel(state) {
   `;
 }
 
+// PR 4.1: log panel renders the buffered adapter output as scrollable,
+// stream-classified rows. Last LOG_LINES_RENDERED_MAX kept in DOM so the
+// modal stays responsive on long installs; full state.logs buffer is
+// preserved for "Download Logs". Lines are kept as
+// `{ stream: 'stdout'|'stderr'|'info', line, ts }` objects.
+const LOG_LINES_RENDERED_MAX = 500;
+
+function formatLogTs(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/[&<>"'`=]/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;', '=': '&#61;'
+  }[c]));
+}
+
 function renderLogPanel(state) {
-  if (!state.logs || state.logs.length === 0) {
+  const lines = state.logs || [];
+  if (lines.length === 0) {
     return state.lastStatus === 'installing'
-      ? `<p>Running install…</p>`
+      ? `<p>Running install — no output yet.</p>`
       : '';
   }
-  const tail = state.logs.slice(-30).join('');
-  return `<pre class="install-plan-modal__commands" style="max-height: 200px; overflow:auto;">${escapeHtml(tail)}</pre>`;
+  const totalLines = lines.length;
+  const visibleStart = Math.max(0, totalLines - LOG_LINES_RENDERED_MAX);
+  const visible = lines.slice(visibleStart);
+  const truncationNotice = visibleStart > 0
+    ? `<div class="install-plan-modal__log-truncation">… ${visibleStart} earlier line${visibleStart === 1 ? '' : 's'} hidden (Download Logs to see full output)</div>`
+    : '';
+  const showDownload = totalLines > 0;
+  return `
+    ${truncationNotice}
+    <div class="install-plan-modal__logs"
+         data-auto-scroll="${state.logsAutoScroll === false ? 'false' : 'true'}">
+      ${visible.map(l => `
+        <div class="install-plan-modal__log-line install-plan-modal__log-line--${escapeAttr(l.stream || 'info')}">
+          <span class="install-plan-modal__log-ts">${escapeHtml(formatLogTs(l.ts))}</span>
+          <span class="install-plan-modal__log-text">${escapeHtml(l.line || '')}</span>
+        </div>
+      `).join('')}
+    </div>
+    ${showDownload ? `
+      <div class="install-plan-modal__log-actions">
+        <button type="button" data-action="download-logs">Download logs</button>
+        <span class="install-plan-modal__log-count">${totalLines} line${totalLines === 1 ? '' : 's'}</span>
+      </div>
+    ` : ''}
+  `;
 }
 
 function gateEvaluation(manifest, state, hostArch) {
@@ -835,6 +881,41 @@ function wireEvents(state) {
     });
   }
 
+  // PR 4.1 — auto-scroll the log panel only while the user is at-or-near
+  // the bottom. Scrolling up pauses auto-scroll; scrolling back to bottom
+  // resumes it. State persists across renders via state.logsAutoScroll.
+  const logsEl = root.querySelector('.install-plan-modal__logs');
+  if (logsEl) {
+    if (state.logsAutoScroll !== false) {
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+    logsEl.addEventListener('scroll', () => {
+      const distanceFromBottom = logsEl.scrollHeight - logsEl.scrollTop - logsEl.clientHeight;
+      state.logsAutoScroll = distanceFromBottom < 16;
+    });
+  }
+
+  // PR 4.1 — Download Logs button.
+  const dlBtn = root.querySelector('[data-action="download-logs"]');
+  if (dlBtn) {
+    dlBtn.addEventListener('click', async () => {
+      const slug = state.entry?.slug || state.entry?.manifest?.slug || 'install';
+      const ts = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `os8-install-${slug}-${ts}.log`;
+      const lines = (state.logs || []).map(l => {
+        const stamp = l.ts ? new Date(l.ts).toISOString() : '';
+        const stream = l.stream ? `[${l.stream}]` : '';
+        return `${stamp} ${stream} ${l.line || ''}`.trim();
+      });
+      const content = lines.join('\n') + '\n';
+      try {
+        await window.os8.appStore.saveInstallLog?.(filename, content);
+      } catch (e) {
+        console.warn('[install-plan] saveInstallLog failed:', e);
+      }
+    });
+  }
+
   // PR 3.10 hotfix: click-on-overlay no longer dismisses. The install-plan
   // modal drives a state machine (review job in flight, secrets entered,
   // ack ticked, etc.) — a stray click on the dimmed backdrop should not
@@ -871,8 +952,27 @@ function applyJobUpdate(state, payload) {
       state.error = payload.message || 'install failed';
     }
   } else if (payload.kind === 'log') {
+    // PR 4.1 — single-message announcements (e.g. "running install in /tmp/...")
+    // are kept as 'info' stream rows so they render alongside adapter output.
     state.logs = state.logs || [];
-    state.logs.push(payload.message || (payload.chunk ?? ''));
+    const line = String(payload.message ?? payload.chunk ?? '').replace(/\r?\n+$/, '');
+    if (line) {
+      state.logs.push({ stream: payload.stream || 'info', line, ts: Date.now() });
+    }
+  } else if (payload.kind === 'log-batch') {
+    // PR 4.1 — buffered relay from app-installer.js makeLogBuffer.
+    state.logs = state.logs || [];
+    if (Array.isArray(payload.logs)) {
+      for (const l of payload.logs) {
+        if (l && (l.line || l.line === '')) {
+          state.logs.push({
+            stream: l.stream || 'stdout',
+            line: l.line,
+            ts: l.ts || Date.now(),
+          });
+        }
+      }
+    }
   } else if (payload.kind === 'failed') {
     state.error = payload.message || 'install failed';
   }
