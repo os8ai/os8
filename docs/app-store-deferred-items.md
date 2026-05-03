@@ -62,12 +62,12 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** First incident requiring forensic capability-call history, OR introduction of any capability with material data-access scope.
 
 ### 6. Stricter `X-OS8-App-Context` header enforcement
-- **Status:** Deferred
-- **Source:** phase-1-plan.md §10 Q1; spec §6.3.2
-- **Gap:** Middleware ships in permissive mode (header optional). Spec implies `401/403` on missing header.
-- **Why:** Wanted baseline stability before tightening; flip is one constant change.
-- **Trigger:** No new external apps for ~2 weeks of stable operation, then flip and watch for regressions.
-- **Note:** This is an internal trust-boundary header, not a user-facing capability gate — flipping it strict does **not** conflict with advisory gating.
+- **Status:** Done — Phase 4 PR 4.6 (#53).
+- **Resolution:** Strict mode flipped with origin-based allowlist
+  (bare-localhost = trusted) + in-process token escape hatch +
+  `OS8_REQUIRE_APP_CONTEXT_PERMISSIVE=1` rollback env var. The internal
+  trust-boundary tightening did not touch the advisory-gating posture
+  for scan findings (still per spec §6.5).
 
 ### 7. Keychain encryption for app secrets
 - **Status:** Deferred *(low priority)*
@@ -81,18 +81,20 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 ## Install / Update / Uninstall lifecycle
 
 ### 8. Streaming install logs in modal
-- **Status:** Deferred
-- **Source:** phase-3-plan.md §7.5
-- **Gap:** Install modal shows "Installing…" with no detail through 30-min Streamlit/ML cold installs or multi-GB Docker pulls. User can't tell if the process is hung.
-- **Why:** UX polish; core flow works without it.
-- **Trigger:** Highest user-visible win in this list. Promote into Phase 4 unless something more pressing displaces it.
+- **Status:** Done — Phase 4 PR 4.1 (#45).
+- **Resolution:** Buffered SSE relay (200ms cadence) with stream-classified
+  rows, auto-scroll, Download Logs button. Docker pull progress
+  compaction. Adapter `onLog` already plumbed in PR 1.11; PR 4.1 added
+  the buffer + renderer + IPC for log file save.
 
 ### 9. Playwright E2E install harness
-- **Status:** Deferred
-- **Source:** phase-3-plan.md §7.6
-- **Gap:** Every adapter validated via manual smoke checklist (the Phase 3.5 pattern). No automated end-to-end regression catch.
-- **Why:** Phase 3.5 validates all adapters manually first; automation comes after the pattern is proven.
-- **Trigger:** After Phase 3.5 completes for all four adapters and the codified pattern is stable.
+- **Status:** Done — Phase 4 PR 4.10 (#47).
+- **Resolution:** Scaffold landed: bootOs8 helper + shell-boot spec +
+  scoped-API origin-probe spec (with `@strict` env-gated assertions
+  for the post-4.6 path). Linux + macOS in CI; Windows joins after
+  PR 4.8's matrix promotion stabilizes. Install-end-to-end /
+  dev-import / native-app specs are scaffolded with `.skip()` for
+  follow-up flesh-out; documented in `tests/e2e/playwright/README.md`.
 
 ### 10. Three-way merge UI for updates with user edits
 - **Status:** Deferred *(verify first — Phase 1 squash may have included partial work)*
@@ -180,11 +182,14 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** Any 429 in browser DevTools, or a rate-limit-reduction email from GitHub org owner.
 
 ### 18. Per-adapter install success/fail telemetry
-- **Status:** Deferred
-- **Source:** spec §9
-- **Gap:** No event emission to know which runtime is breaking installs in the wild. Bug fixes prioritized by anecdote.
-- **Why:** Core flow works without it.
-- **Trigger:** Any time we want data-driven adapter prioritization. Cheap to add.
+- **Status:** Done — Phase 4 PR 4.5 (os8dotai #15) + PR 4.4 (#49).
+- **Resolution:** Opt-in (default OFF; first-install consent moment),
+  allowlist-sanitized, double-hashed clientId. Desktop emits
+  install_started/succeeded/failed/cancelled/overridden +
+  update_succeeded/update_failed. Server stores raw events 30d, daily
+  rollup kept indefinitely. Curator dashboard at
+  `/internal/telemetry/install` with per-adapter / fingerprint-cluster
+  / per-app counter views.
 
 ### 19. Slack/webhook alerts for catalog sync failures
 - **Status:** Deferred
@@ -198,11 +203,13 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 ## Capability surface
 
 ### 20. MCP wildcard capability syntax (`mcp.<server>.*`)
-- **Status:** Deferred
-- **Source:** phase-3-plan.md §3.2; spec §7 Q4
-- **Gap:** v1 requires `mcp.<server>.<tool>` per individual tool. Wildcard form needs its own UI.
-- **Why:** Fixed-list works for current MCP scope.
-- **Trigger:** Curator request, or a manifest with >5 MCP tools from one server.
+- **Status:** Done — Phase 4 PR 4.7 (#46).
+- **Resolution:** JSON schema accepts `mcp.<server>.<tool>` and
+  `mcp.<server>.*`; rejects `mcp.*.*` / `mcp.*` / `mcp.<server>.*.<tool>`.
+  Runtime checker narrowed to MCP-only wildcards. Modal renders
+  wildcard grants with explicit "all current and future tools" copy.
+  LLM review prompt updated to flag wildcard scope vs manifest's
+  stated purpose.
 
 ---
 
@@ -336,4 +343,20 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 
 When something here gets either built or definitively dropped, move it down here with a one-line note + the PR or decision that closed it. Keeps the active list above clean while preserving history.
 
-*(empty — populated as items close)*
+### Phase 4 (closed 2026-05-03)
+
+- **#6 Stricter `X-OS8-App-Context`** → built in PR 4.6 (`os8ai/os8#53`).
+  Strict origin allowlist + in-process token + permissive escape hatch.
+- **#8 Streaming install logs** → built in PR 4.1 (`os8ai/os8#45`).
+  Buffered SSE relay, color-coded rows, Download Logs.
+- **#9 Playwright E2E install harness** → scaffolded in PR 4.10
+  (`os8ai/os8#47`). Install-flow + dev-import specs scaffolded with
+  `.skip()` for follow-up.
+- **#18 Per-adapter install telemetry** → built in PR 4.5
+  (`os8ai/os8dotai#15`) + PR 4.4 (`os8ai/os8#49`). Opt-in default OFF,
+  allowlist-sanitized, double-hashed clientId, curator dashboard.
+- **#20 MCP wildcard capability** → built in PR 4.7 (`os8ai/os8#46`).
+  `mcp.<server>.*` accepted; `mcp.*.*` / `mcp.*` rejected.
+
+The above items remain on the active list above with `Status: Done`
+pointers; this section is the chronological close-out index.
