@@ -156,6 +156,58 @@ describe('DockerRuntimeAdapter — start argv shape', () => {
     }
   });
 
+  it('strips host-OS env keys (PATH/HOME/USER/...) before passing -e flags', async () => {
+    // Regression: linkding 1.45.0 smoke (2026-05-03) — host PATH leaked into
+    // the container via `-e PATH=...`, clobbering the image's PATH so
+    // `supervisord` / `uwsgi` / `python` could not be found inside.
+    const env = {
+      OS8_APP_ID: 'a4',
+      PORT: '40789',
+      // Host-only keys that buildSanitizedEnv inherits for native adapters.
+      PATH: '/host/bin:/usr/bin',
+      HOME: '/home/leo',
+      USER: 'leo',
+      LANG: 'en_US.UTF-8',
+      TZ:   'America/Los_Angeles',
+      TMPDIR: '/tmp',
+      LC_ALL: 'C',
+      LC_CTYPE: 'UTF-8',
+      // Manifest / OS8-injected keys MUST still pass through.
+      OS8_BASE_URL: 'http://localhost:8888',
+      OS8_API_BASE: 'http://fixture.localhost:8888/_os8/api',
+      WEBUI_AUTH: 'false',
+    };
+    await Promise.race([
+      DockerAdapter.start(BASE_MANIFEST, '/ignored', env, () => {}),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('timeout')), 3000)),
+    ]).catch(() => null);
+    const runCall = calls.find(c => c[1] === 'run');
+    const eFlags = [];
+    for (let i = 0; i < runCall.length - 1; i++) {
+      if (runCall[i] === '-e') eFlags.push(runCall[i + 1]);
+    }
+    const keys = new Set(eFlags.map(s => s.split('=', 1)[0]));
+    // Host-only keys MUST NOT be passed to the container.
+    expect(keys.has('PATH')).toBe(false);
+    expect(keys.has('HOME')).toBe(false);
+    expect(keys.has('USER')).toBe(false);
+    expect(keys.has('LANG')).toBe(false);
+    expect(keys.has('TZ')).toBe(false);
+    expect(keys.has('TMPDIR')).toBe(false);
+    expect(keys.has('LC_ALL')).toBe(false);
+    expect(keys.has('LC_CTYPE')).toBe(false);
+    // OS8 + manifest keys MUST still pass through.
+    expect(keys.has('OS8_APP_ID')).toBe(true);
+    expect(keys.has('OS8_APP_DIR')).toBe(true);
+    expect(keys.has('OS8_BLOB_DIR')).toBe(true);
+    expect(keys.has('OS8_BASE_URL')).toBe(true);
+    expect(keys.has('OS8_API_BASE')).toBe(true);
+    expect(keys.has('PORT')).toBe(true);
+    expect(keys.has('WEBUI_AUTH')).toBe(true);
+    // PORT inside the container = internal_port (not the host PORT).
+    expect(eFlags).toContain('PORT=8080');
+  });
+
   it('--gpus all is appended when manifest.runtime.gpu_passthrough', async () => {
     const m = clone(BASE_MANIFEST);
     m.runtime.gpu_passthrough = true;

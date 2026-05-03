@@ -24,6 +24,21 @@ const { spawn } = require('node:child_process');
 const path = require('path');
 
 const { APPS_DIR, BLOB_DIR } = require('../../config');
+const { POSIX_WHITELIST, WINDOWS_WHITELIST } = require('../sanitized-env');
+
+// Host env keys that buildSanitizedEnv() inherits for native (node/python)
+// adapters but MUST NOT cross into a container — the container has its own
+// PATH/HOME/USER/etc. baked into the image. Inheriting host PATH (e.g.
+// `/home/leo/.nvm/versions/node/...`) clobbers the image's PATH and the
+// container can't find its own `supervisord`/`uwsgi`/`python` etc.
+//
+// Repro: linkding 1.45.0 smoke (2026-05-03) — container exited with
+// `supervisord: command not found` because host PATH was passed through.
+//
+// We use the union of both whitelists so a Linux-built container that
+// happens to receive a Windows host's env (or vice versa under WSL) also
+// gets stripped cleanly.
+const HOST_ONLY_KEYS = new Set([...POSIX_WHITELIST, ...WINDOWS_WHITELIST]);
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -136,14 +151,16 @@ const DockerRuntimeAdapter = {
     ];
     if (spec.runtime.gpu_passthrough) args.push('--gpus', 'all');
 
-    // Container env: PORT inside = internal_port; OS8_APP_DIR/OS8_BLOB_DIR
-    // get rewritten to the bind targets (host paths don't exist in-container).
-    const containerEnv = {
-      ...sanitizedEnv,
-      PORT: String(spec.runtime.internal_port),
-      OS8_APP_DIR: '/app',
-      OS8_BLOB_DIR: '/data',
-    };
+    // Container env: strip the host-OS whitelist (PATH/HOME/USER/...) that
+    // buildSanitizedEnv inherits for native adapters; the container has
+    // its own. Then layer on PORT (= internal_port) and rewrite
+    // OS8_APP_DIR/OS8_BLOB_DIR to the bind targets (host paths don't
+    // exist in-container).
+    const containerEnv = { ...sanitizedEnv };
+    for (const k of HOST_ONLY_KEYS) delete containerEnv[k];
+    containerEnv.PORT = String(spec.runtime.internal_port);
+    containerEnv.OS8_APP_DIR = '/app';
+    containerEnv.OS8_BLOB_DIR = '/data';
     for (const [k, v] of Object.entries(containerEnv)) {
       args.push('-e', `${k}=${v}`);
     }
