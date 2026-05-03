@@ -433,6 +433,31 @@ function escapeAttr(s) {
   }[c]));
 }
 
+// PR 4.4 — first-install consent moment. Surfaces the telemetry opt-in
+// once, on the very first install. Defaults to checked (the user can
+// uncheck before approving). After the first install, `consent_shown`
+// is flipped and this block hides forever; the permanent toggle in
+// Settings → App Store is the only place to change it later.
+function renderFirstInstallConsent(state) {
+  if (!state.firstInstallConsent) return '';
+  const checked = state.firstInstallConsentAccepted !== false;
+  return `
+    <div class="install-plan-modal__consent">
+      <label>
+        <input type="checkbox"
+               data-action="consent-toggle"
+               ${checked ? 'checked' : ''} />
+        <strong>Help OS8 by sending anonymous install telemetry</strong>
+      </label>
+      <p class="install-plan-modal__consent-hint">
+        We send adapter / framework / channel / a failure-line fingerprint
+        — never raw logs, paths, secrets, hostnames, or your username.
+        You can change this any time in Settings → App Store.
+      </p>
+    </div>
+  `;
+}
+
 function renderLogPanel(state) {
   const lines = state.logs || [];
   if (lines.length === 0) {
@@ -692,6 +717,8 @@ function renderEntry(state) {
 
       ${state.devImportMode ? renderDevImportRiskAck(state) : ''}
 
+      ${renderFirstInstallConsent(state)}
+
       <div class="install-plan-modal__footer">
         <span style="margin-right: auto; color: var(--color-text-secondary); font-size: 12px;">
           ${gate.ok === true ? '' : escapeHtml(gate.reason || '')}
@@ -772,6 +799,21 @@ function wireEvents(state) {
       state.secondConfirmed = true;
       patchModal(state);
       return;
+    }
+
+    // PR 4.4 — write the first-install consent decision before kicking
+    // the install (or approving an existing job). Only flips on the
+    // very first install ever; subsequent clicks no-op since
+    // consent_shown is true.
+    if (state.firstInstallConsent && window.os8?.settings?.set) {
+      try {
+        await window.os8.settings.set(
+          'app_store.telemetry.opt_in',
+          state.firstInstallConsentAccepted ? 'true' : 'false',
+        );
+        await window.os8.settings.set('app_store.telemetry.consent_shown', 'true');
+      } catch (_) { /* never block install on consent persistence */ }
+      state.firstInstallConsent = false; // hide block on patchModal
     }
 
     if (state.lastStatus === 'awaiting_approval') {
@@ -919,6 +961,14 @@ function wireEvents(state) {
     });
   }
 
+  // PR 4.4 — telemetry consent checkbox (first install only).
+  const consentCb = root.querySelector('[data-action="consent-toggle"]');
+  if (consentCb) {
+    consentCb.addEventListener('change', () => {
+      state.firstInstallConsentAccepted = consentCb.checked;
+    });
+  }
+
   // PR 4.1 — auto-scroll the log panel only while the user is at-or-near
   // the bottom. Scrolling up pauses auto-scroll; scrolling back to bottom
   // resumes it. State persists across renders via state.logsAutoScroll.
@@ -1048,7 +1098,25 @@ function startState(entry, validation) {
     // its argChoices map has a non-empty value here. assembleSetupArgv
     // merges these into the candidate's argv at Install-click time.
     setupScriptArgChoices: {},
+    // PR 4.4 — first-install consent moment. Both null until
+    // initialised by openInstallPlanModal*; consent_shown setting
+    // controls whether the block renders.
+    firstInstallConsent: false,
+    firstInstallConsentAccepted: true,
   };
+}
+
+// PR 4.4 — read app_store.telemetry.consent_shown once per modal open.
+// Returns true on first ever install (never seen before); state is
+// flipped to 'true' when the user clicks Install.
+async function maybeShowFirstInstallConsent(state) {
+  try {
+    if (!window.os8?.settings?.get) return;
+    const seen = await window.os8.settings.get('app_store.telemetry.consent_shown');
+    if (seen === 'true' || seen === true) return;
+    state.firstInstallConsent = true;
+    state.firstInstallConsentAccepted = true;
+  } catch (_) { /* settings unavailable — skip prompt */ }
 }
 
 function fetchInitialReviewIfNeeded(state) {
@@ -1072,6 +1140,7 @@ export async function openInstallPlanModalBySlug(slug, channel = 'verified', opt
   }
   const state = startState(result.entry, result.validation);
   if (opts.jobId) state.jobId = opts.jobId;
+  await maybeShowFirstInstallConsent(state);
   showModal(state);
 
   if (state.jobId) {
@@ -1126,6 +1195,7 @@ export async function openInstallPlanModalFromYaml(yamlText, opts = {}) {
     manifest: result.manifest,
   };
   const state = startState(entry, result.validation);
+  await maybeShowFirstInstallConsent(state);
   showModal(state);
 }
 
@@ -1179,6 +1249,7 @@ export async function openInstallPlanModalFromManifest(manifest, opts = {}) {
   // they want, and ticks the box explicitly.
   const ss = opts.importMeta?.setupScripts || [];
   if (ss.length > 0 && !ss[0].requiresArgs) state.setupScriptsChecked.add(ss[0].path);
+  await maybeShowFirstInstallConsent(state);
   showModal(state);
 }
 

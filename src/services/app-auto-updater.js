@@ -32,6 +32,12 @@ function getCatalog() {
   return AppCatalogService;
 }
 
+let AppTelemetry = null;
+function getTelemetry() {
+  if (!AppTelemetry) AppTelemetry = require('./app-telemetry');
+  return AppTelemetry;
+}
+
 /**
  * Find every Verified-channel external app eligible for auto-update.
  * "Eligible" = active app, opted-in, update flagged, no user edits.
@@ -41,7 +47,7 @@ function getCatalog() {
 function listEligible(db) {
   return db.prepare(`
     SELECT id, external_slug, channel, upstream_resolved_commit,
-           update_to_commit, user_branch
+           update_to_commit, user_branch, manifest_yaml
       FROM apps
      WHERE app_type = 'external'
        AND status = 'active'
@@ -87,10 +93,21 @@ async function processAutoUpdates(db, callbacks = {}) {
       if (result?.kind === 'updated') {
         updated += 1;
         onUpdated?.(app, targetCommit);
+        // PR 4.4 telemetry — adapter/framework not on the apps row
+        // directly; we read them from manifest_yaml when present.
+        try {
+          const yaml = require('js-yaml');
+          const manifest = app.manifest_yaml ? yaml.load(app.manifest_yaml) : null;
+          getTelemetry().enqueue(db, {
+            kind: 'update_succeeded',
+            adapter: manifest?.runtime?.kind || null,
+            framework: manifest?.framework || null,
+            channel: app.channel,
+            slug: app.external_slug,
+            commit: targetCommit,
+          });
+        } catch (_) { /* telemetry is best-effort */ }
       } else if (result?.kind === 'conflict') {
-        // user_branch was null going in, so a real conflict is rare
-        // (e.g. dirty working tree). Surface to user via the manual
-        // update path; don't mark as failed.
         skipped += 1;
         onSkipped?.(app, `merge conflict requires manual resolution`);
       } else {
@@ -100,6 +117,16 @@ async function processAutoUpdates(db, callbacks = {}) {
     } catch (err) {
       failed += 1;
       onFailed?.(app, err);
+      try {
+        getTelemetry().enqueue(db, {
+          kind: 'update_failed',
+          channel: app.channel,
+          slug: app.external_slug,
+          commit: targetCommit,
+          failurePhase: 'update',
+          failureFingerprint: getTelemetry().fingerprintFailure(err.message),
+        });
+      } catch (_) { /* telemetry is best-effort */ }
     }
   }
 

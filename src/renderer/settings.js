@@ -332,16 +332,20 @@ async function loadAppStoreSettings() {
     const community = await window.os8.settings.get('app_store.channel.community.enabled');
     const devImport = await window.os8.settings.get('app_store.channel.developer-import.enabled');
     const idleMs    = await window.os8.settings.get('app_store.idle_timeout_ms');
+    // PR 4.4 — telemetry opt-in (default OFF; first-install consent flips).
+    const telemetryOptIn = await window.os8.settings.get('app_store.telemetry.opt_in');
 
     const $verified  = document.getElementById('appStoreChannelVerified');
     const $community = document.getElementById('appStoreChannelCommunity');
     const $devImport = document.getElementById('appStoreChannelDevImport');
     const $idle      = document.getElementById('appStoreIdleTimeout');
+    const $telOptIn  = document.getElementById('appStoreTelemetryOptIn');
 
     if ($verified)  $verified.checked  = readBoolSetting(verified,  true);
     if ($community) $community.checked = readBoolSetting(community, false);
     if ($devImport) $devImport.checked = readBoolSetting(devImport, true);
     if ($idle && idleMs != null) $idle.value = String(idleMs);
+    if ($telOptIn) $telOptIn.checked = readBoolSetting(telemetryOptIn, false);
   } catch (err) {
     console.error('Failed to load App Store settings:', err);
   }
@@ -363,6 +367,16 @@ async function saveAppStoreSettings() {
     await window.os8.settings.set('app_store.channel.community.enabled',        String(community));
     await window.os8.settings.set('app_store.channel.developer-import.enabled', String(devImport));
     await window.os8.settings.set('app_store.idle_timeout_ms',                  String(idleMs));
+
+    // PR 4.4 — telemetry opt-in. Saved here so the user can re-enable
+    // after declining at first-install consent.
+    const $telOptIn = document.getElementById('appStoreTelemetryOptIn');
+    if ($telOptIn) {
+      await window.os8.settings.set('app_store.telemetry.opt_in', String(!!$telOptIn.checked));
+      // Mark consent as shown so the install-plan modal doesn't re-prompt
+      // the user who has already made an explicit choice in Settings.
+      await window.os8.settings.set('app_store.telemetry.consent_shown', 'true');
+    }
 
     // Re-evaluate the daily catalog scheduler.
     if (window.os8.appStore?.rescheduleSyncs) {
@@ -1222,6 +1236,30 @@ export function initSettingsListeners() {
   const appStoreSaveBtn = document.getElementById('appStoreSaveBtn');
   if (appStoreSaveBtn) {
     appStoreSaveBtn.addEventListener('click', saveAppStoreSettings);
+  }
+
+  // PR 4.4 — Reset anonymous telemetry client ID. Generates a fresh UUID
+  // so future events can't be cross-referenced with past ones.
+  const appStoreTelResetBtn = document.getElementById('appStoreTelemetryReset');
+  if (appStoreTelResetBtn) {
+    appStoreTelResetBtn.addEventListener('click', async () => {
+      try {
+        const r = await window.os8.appStore?.resetTelemetryClientId?.();
+        const status = document.getElementById('appStoreTelemetryResetStatus');
+        if (r?.ok) {
+          if (status) {
+            status.textContent = `Client ID reset (now ${String(r.clientId).slice(0, 8)}…).`;
+            status.hidden = false;
+            setTimeout(() => { status.hidden = true; }, 4000);
+          }
+        } else if (status) {
+          status.textContent = `Reset failed: ${r?.error || 'unknown'}`;
+          status.hidden = false;
+        }
+      } catch (e) {
+        console.error('Reset telemetry client ID failed:', e);
+      }
+    });
   }
 
   // Tunnel URL handler
