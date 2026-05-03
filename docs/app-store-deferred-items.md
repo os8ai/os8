@@ -122,6 +122,13 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Why:** Happy path works; error UX is incremental.
 - **Trigger:** First curator-PR that fails CI and the author can't tell why.
 
+### 32. Catalog freshness — no user-driven "Sync Now"
+- **Status:** Deferred
+- **Source:** Phase 3.5.5 — linkding manifest update (`os8ai/os8-catalog-community#9` adding `LD_SUPERUSER_*` secrets) was invisible to a freshly-restarted desktop because the local `app_catalog` table only refreshes daily at 4am local OR on community-channel toggle in Settings. Restarting OS8 doesn't trigger a sync; `AppCatalogService.get()` returns the cached `manifest_yaml` without re-checking `manifest_sha` upstream.
+- **Gap:** Newly-updated catalog manifests can be invisible to a desktop user for up to 24h with no obvious recovery path. The cache-invalidation logic from PR #41 only fires from a sync, not from a per-install fetch. There's no UI button to force a sync.
+- **Why:** Daily cadence was sufficient before realistic-fixture iteration. Surfaced sharply only when authoring + iterating manifests in real time.
+- **Trigger:** Recurring user reports of "I just installed and the install plan looks stale", OR before opening the catalog to a wider author pool. Cheap fix candidates: (a) add a "Sync now" button to the catalog browser that calls the existing `app-store:sync-channel-now` IPC, (b) sync the relevant channel when the user clicks an install button, (c) compare `manifest_sha` against upstream in `get()` when the local row is older than N minutes.
+
 ---
 
 ## Catalog & moderation
@@ -139,6 +146,20 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Gap:** Soft-delete (`App.deletedAt`) works server-side, but no user-facing notification or force-uninstall when curator yanks an app. Malicious/compromised apps remain installed silently.
 - **Why:** Preventive review is v1 priority; reactive revocation deferred until needed.
 - **Trigger:** First app revoked from a catalog. Should be in place before that happens, ideally.
+
+### 33. v2 schema `$schema` declaration drift across consumers
+- **Status:** Deferred *(small cleanup, ship anytime)*
+- **Source:** Phase 3.5.5 — linkding sync to os8.ai's storefront DB failed with `schema_invalid: no schema with key or ref "http://json-schema.org/draft-07/schema#"`. Patched in os8dotai PR #14 by aligning the local copy's `$schema` to draft 2020-12. Canonical (`os8ai/os8-catalog/schema/appspec-v2.json`), community (`os8ai/os8-catalog-community/schema/appspec-v2.json`), and desktop (`os8ai/os8/src/data/appspec-v2.json`) still declare draft-07.
+- **Gap:** v1 schema declares `https://json-schema.org/draft/2020-12/schema`; v2 declares `http://json-schema.org/draft-07/schema#`. The desktop and the catalog CIs use plain `Ajv` (default = draft-07) so the mismatch is invisible to them; os8dotai uses `Ajv` from `ajv/dist/2020` and tripped on it. The v2 schema doesn't actually use any draft-07-only constructs.
+- **Why:** Three repos to update + schema-match CI to satisfy. Worked-around in os8dotai; no other consumer hits it today.
+- **Trigger:** Any new consumer compiling v2 with a strict-draft AJV; or any time the v2 schema needs editing for an unrelated reason (bundle the alignment with that PR).
+
+### 34. ISR fallback 500s for slugs not in `generateStaticParams`
+- **Status:** Deferred *(documented upstream limitation)*
+- **Source:** Phase 3.5.5 — linkding's `/apps/linkding` returned 500 for ~30 minutes after sync completed, until an empty commit forced a Vercel rebuild. Existing comment in `os8dotai/src/app/apps/[slug]/page.tsx:13-22` describes the bug: Next.js's ISR fallback for slugs absent from `generateStaticParams`'s build-time output crashes upstream of user code on Vercel. The current mitigation pre-renders every known slug at build time.
+- **Gap:** Newly-synced apps remain 500 on `os8.ai/apps/<slug>` until a Vercel redeploy regenerates the static-params list. No automatic redeploy is wired; we pushed an empty commit by hand.
+- **Why:** Root cause is upstream (Next.js or Vercel runtime). Workaround is in place; the pain point is the manual nudge.
+- **Trigger:** Catalog churn that makes the manual nudge annoying, OR Vercel ships a fix and we can drop the pre-render-everything workaround. Cheap candidates: (a) trigger a Vercel deploy hook from the catalog-sync route after a successful add, (b) catch the not-found case in the page handler and render a "syncing, refresh in a moment" placeholder + ISR-revalidate.
 
 ### 16. Install-count display on community cards
 - **Status:** Deferred
@@ -207,6 +228,13 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Gap:** Full clone only. Monorepo installs are slow.
 - **Why:** Performance optimization; v1 catalog has no monorepos.
 - **Trigger:** First catalog manifest pointing at a path within a known monorepo.
+
+### 35. Docker adapter: container-internal volumes not bind-mounted
+- **Status:** Deferred
+- **Source:** Phase 3.5.5 — `runtime-adapters/docker.js` bind-mounts `~/os8/apps/<id>` → `/app` and `~/os8/blob/<id>` → `/data` only. Linkding writes its SQLite DB + bookmark archives to `/etc/linkding/data` inside the container; that path is ephemeral. After `docker rm` (uninstall, or any container recreation) the user's bookmarks are gone.
+- **Gap:** Manifests have no way to declare additional bind mounts for container-internal paths the app actually persists to. Every docker app silently has this footgun unless its image happens to write only to `/app` or `/data` (rare).
+- **Why:** Adds a new manifest field (`runtime.volumes` or similar), schema change across catalogs, adapter wiring. Out of scope for the Phase 3.5.5 adapter validation.
+- **Trigger:** First user data-loss complaint, OR before any docker app graduates from community to verified. Likely shape: `runtime.volumes: [{ container_path: "/etc/linkding/data", persist: true }]` → adapter mounts under `~/os8/blob/<id>/<container_path_basename>`.
 
 ---
 
