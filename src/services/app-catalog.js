@@ -79,6 +79,48 @@ function safeJson(text, fallback) {
 
 function nowIso() { return new Date().toISOString(); }
 
+// Shared upsert SQL — used by sync() (bulk path) and get() (lazy-fetch
+// single-row path). One INSERT … ON CONFLICT keeps both write paths
+// consistent: same column set, same conflict resolution
+// (manifest_yaml uses COALESCE so we never overwrite a populated YAML
+// with a NULL from a listing-only response).
+const UPSERT_SQL = `
+  INSERT INTO app_catalog (
+    id, slug, name, description, publisher, channel, category, icon_url,
+    screenshots, manifest_yaml, manifest_sha, catalog_commit_sha,
+    upstream_declared_ref, upstream_resolved_commit, license, runtime_kind,
+    framework, architectures, risk_level, install_count, rating,
+    synced_at, deleted_at
+  ) VALUES (
+    @id, @slug, @name, @description, @publisher, @channel, @category, @icon_url,
+    @screenshots, @manifest_yaml, @manifest_sha, @catalog_commit_sha,
+    @upstream_declared_ref, @upstream_resolved_commit, @license, @runtime_kind,
+    @framework, @architectures, @risk_level, @install_count, @rating,
+    @synced_at, @deleted_at
+  )
+  ON CONFLICT(slug) DO UPDATE SET
+    name = excluded.name,
+    description = excluded.description,
+    publisher = excluded.publisher,
+    category = excluded.category,
+    icon_url = excluded.icon_url,
+    screenshots = excluded.screenshots,
+    manifest_yaml = COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml),
+    manifest_sha = excluded.manifest_sha,
+    catalog_commit_sha = excluded.catalog_commit_sha,
+    upstream_declared_ref = excluded.upstream_declared_ref,
+    upstream_resolved_commit = excluded.upstream_resolved_commit,
+    license = excluded.license,
+    runtime_kind = excluded.runtime_kind,
+    framework = excluded.framework,
+    architectures = excluded.architectures,
+    risk_level = excluded.risk_level,
+    install_count = excluded.install_count,
+    rating = excluded.rating,
+    synced_at = excluded.synced_at,
+    deleted_at = NULL
+`;
+
 // Pull listing fields from a remote AppListing object (PR 0.9 contract).
 function listingToColumns(listing) {
   return {
@@ -187,42 +229,7 @@ const AppCatalogService = {
     let unchanged = 0;
     const alarms = [];
 
-    const upsert = db.prepare(`
-      INSERT INTO app_catalog (
-        id, slug, name, description, publisher, channel, category, icon_url,
-        screenshots, manifest_yaml, manifest_sha, catalog_commit_sha,
-        upstream_declared_ref, upstream_resolved_commit, license, runtime_kind,
-        framework, architectures, risk_level, install_count, rating,
-        synced_at, deleted_at
-      ) VALUES (
-        @id, @slug, @name, @description, @publisher, @channel, @category, @icon_url,
-        @screenshots, @manifest_yaml, @manifest_sha, @catalog_commit_sha,
-        @upstream_declared_ref, @upstream_resolved_commit, @license, @runtime_kind,
-        @framework, @architectures, @risk_level, @install_count, @rating,
-        @synced_at, @deleted_at
-      )
-      ON CONFLICT(slug) DO UPDATE SET
-        name = excluded.name,
-        description = excluded.description,
-        publisher = excluded.publisher,
-        category = excluded.category,
-        icon_url = excluded.icon_url,
-        screenshots = excluded.screenshots,
-        manifest_yaml = COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml),
-        manifest_sha = excluded.manifest_sha,
-        catalog_commit_sha = excluded.catalog_commit_sha,
-        upstream_declared_ref = excluded.upstream_declared_ref,
-        upstream_resolved_commit = excluded.upstream_resolved_commit,
-        license = excluded.license,
-        runtime_kind = excluded.runtime_kind,
-        framework = excluded.framework,
-        architectures = excluded.architectures,
-        risk_level = excluded.risk_level,
-        install_count = excluded.install_count,
-        rating = excluded.rating,
-        synced_at = excluded.synced_at,
-        deleted_at = NULL
-    `);
+    const upsert = db.prepare(UPSERT_SQL);
 
     const tx = db.transaction((listings) => {
       for (const listing of listings) {
@@ -328,15 +335,64 @@ const AppCatalogService = {
   },
 
   /**
-   * Single-row lookup by slug. If the row exists but `manifest_yaml` is NULL
-   * (sync-with-no-detail case), this lazily fetches the manifest from os8.ai
-   * and writes it back so subsequent calls hit the cache.
+   * Single-row lookup by slug. Two lazy-fetch behaviors layered on top of
+   * the local cache:
+   *
+   *   1. Row missing entirely → fetch from os8.ai, INSERT, return. This makes
+   *      deeplink installs (`os8://install/<channel>/<slug>`) work without
+   *      the user manually triggering a sync first. The local catalog is a
+   *      write-through cache for browse/update-detection — it should not be
+   *      the source of truth for "does this app exist". Fetching on miss +
+   *      writing back keeps the cache populated for subsequent reads
+   *      (including detectUpdates()).
+   *
+   *   2. Row exists but manifest_yaml is NULL (listing-only sync) → fetch
+   *      the detail endpoint, write back the YAML, return.
+   *
+   * In both branches a remote 404 / network failure returns null (case 1)
+   * or a yaml-less entry (case 2) — same semantics as before, just no
+   * longer requires a prior sync to discover the slug.
    */
   async get(db, slug, { channel = 'verified', apiBase = DEFAULT_API_BASE } = {}) {
-    const row = db.prepare(
+    const selectStmt = db.prepare(
       `SELECT * FROM app_catalog WHERE slug = ? AND channel = ? AND deleted_at IS NULL`
-    ).get(slug, channel);
-    if (!row) return null;
+    );
+    const row = selectStmt.get(slug, channel);
+
+    if (!row) {
+      // Don't lazy-fetch if a soft-deleted row exists — soft-delete records
+      // a sync-time observation that upstream removed the app, and silently
+      // re-inserting on a single-row fetch would erase that signal.
+      const tombstone = db.prepare(
+        `SELECT 1 FROM app_catalog WHERE slug = ? AND channel = ? AND deleted_at IS NOT NULL`
+      ).get(slug, channel);
+      if (tombstone) return null;
+
+      // Lazy-fetch on row-missing. If os8.ai has the slug, insert it locally
+      // and return. If 404 / network failure, return null (legitimately
+      // not in catalog).
+      let fetched;
+      try {
+        fetched = await AppCatalogService.fetchManifest(slug, channel, { apiBase });
+      } catch (_) {
+        return null;
+      }
+      if (!fetched || !fetched.slug) return null;
+      try {
+        const cols = listingToColumns({ ...fetched, channel });
+        db.prepare(UPSERT_SQL).run(cols);
+      } catch (_) {
+        // Insert failure (constraint, etc.) — fall through to the in-memory
+        // entry built from the fetched payload so the install can still
+        // proceed; the next sync will repair the row.
+        return rowToEntry({
+          ...listingToColumns({ ...fetched, channel }),
+          rating: null,
+        });
+      }
+      const newRow = selectStmt.get(slug, channel);
+      return rowToEntry(newRow);
+    }
 
     if (!row.manifest_yaml) {
       try {
