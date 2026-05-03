@@ -81,9 +81,25 @@ function nowIso() { return new Date().toISOString(); }
 
 // Shared upsert SQL — used by sync() (bulk path) and get() (lazy-fetch
 // single-row path). One INSERT … ON CONFLICT keeps both write paths
-// consistent: same column set, same conflict resolution
-// (manifest_yaml uses COALESCE so we never overwrite a populated YAML
-// with a NULL from a listing-only response).
+// consistent: same column set, same conflict resolution.
+//
+// manifest_yaml semantics (the subtle part):
+//   - When the new manifest_sha MATCHES the existing row's, the manifest
+//     content hasn't changed; preserve any previously-populated YAML
+//     (the listing endpoint omits manifest_yaml to keep responses small,
+//     so an excluded.manifest_yaml of NULL on a same-sha sync should not
+//     wipe a populated cached YAML).
+//   - When the new manifest_sha DIFFERS, the manifest content has changed
+//     upstream; accept the new (possibly NULL) value. NULL here is a
+//     deliberate signal that the cached YAML is stale and the next get()
+//     should lazy-fetch fresh from the detail endpoint.
+//
+// Without this CASE, a `COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml)`
+// preserved stale YAML across content changes — cache went silently
+// out-of-sync with the catalog. Repro that surfaced this: hivisionidphotos
+// shipped a postInstall update (huggingface_hub<1 pin); local catalogs
+// kept the old manifest_yaml indefinitely; new installs ran the old
+// postInstall and broke at runtime.
 const UPSERT_SQL = `
   INSERT INTO app_catalog (
     id, slug, name, description, publisher, channel, category, icon_url,
@@ -105,7 +121,11 @@ const UPSERT_SQL = `
     category = excluded.category,
     icon_url = excluded.icon_url,
     screenshots = excluded.screenshots,
-    manifest_yaml = COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml),
+    manifest_yaml = CASE
+      WHEN excluded.manifest_sha = app_catalog.manifest_sha
+        THEN COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml)
+      ELSE excluded.manifest_yaml
+    END,
     manifest_sha = excluded.manifest_sha,
     catalog_commit_sha = excluded.catalog_commit_sha,
     upstream_declared_ref = excluded.upstream_declared_ref,

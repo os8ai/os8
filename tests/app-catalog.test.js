@@ -198,6 +198,66 @@ describe('AppCatalogService.sync', () => {
     expect(row).toEqual({ name: 'World Monitor v2', manifest_sha: 'sha-2' });
   });
 
+  it('invalidates cached manifest_yaml when manifest_sha changes (stale-cache fix)', async () => {
+    // Repro: hivisionidphotos shipped a postInstall update; local catalogs
+    // kept the OLD manifest_yaml indefinitely because the upsert's
+    // COALESCE(excluded.manifest_yaml, app_catalog.manifest_yaml)
+    // preserved the cached YAML even after the sha changed. New installs
+    // ran the old postInstall and broke at runtime.
+    //
+    // Fix: when sha differs, accept the new (possibly NULL) yaml so the
+    // next get() lazy-fetches fresh from the detail endpoint.
+
+    // Sync 1: row gets inserted with NULL manifest_yaml (listing-only).
+    restoreFetch = mockFetchOnce(async () => new Response(
+      JSON.stringify({ apps: [makeListing()] }), { status: 200 }));
+    await AppCatalogService.sync(db);
+
+    // Simulate get()'s lazy-fetch having populated the YAML cache.
+    db.prepare(`UPDATE app_catalog SET manifest_yaml = ? WHERE slug='worldmonitor'`)
+      .run('slug: worldmonitor\nname: World Monitor\n# OLD postInstall here\n');
+
+    // Sanity: cache is populated.
+    const cached = db.prepare(`SELECT manifest_yaml FROM app_catalog WHERE slug='worldmonitor'`).get();
+    expect(cached.manifest_yaml).toContain('OLD postInstall');
+
+    // Sync 2: same listing but new manifest_sha (upstream shipped new manifest).
+    restoreFetch && restoreFetch();
+    restoreFetch = mockFetchOnce(async () => new Response(
+      JSON.stringify({ apps: [makeListing({ manifestSha: 'sha-2' })] }), { status: 200 }));
+    await AppCatalogService.sync(db);
+
+    // After the fix: cache invalidated. Without the fix, manifest_yaml
+    // would still contain the OLD postInstall string.
+    const after = db.prepare(`SELECT manifest_yaml, manifest_sha FROM app_catalog WHERE slug='worldmonitor'`).get();
+    expect(after.manifest_sha).toBe('sha-2');
+    expect(after.manifest_yaml).toBeNull();
+  });
+
+  it('preserves cached manifest_yaml when manifest_sha is unchanged (listing-only re-sync)', async () => {
+    // The COALESCE optimization the fix preserves: if a listing-only
+    // re-sync arrives with the same sha, don't clobber the YAML the
+    // detail endpoint previously hydrated. This is the common case
+    // (every 4am cron) and the optimization saves a per-app
+    // detail-endpoint round-trip on the next get().
+
+    restoreFetch = mockFetchOnce(async () => new Response(
+      JSON.stringify({ apps: [makeListing()] }), { status: 200 }));
+    await AppCatalogService.sync(db);
+
+    db.prepare(`UPDATE app_catalog SET manifest_yaml = ? WHERE slug='worldmonitor'`)
+      .run('cached-yaml-content');
+
+    // Re-sync with SAME sha — listing endpoint always returns null yaml.
+    restoreFetch && restoreFetch();
+    restoreFetch = mockFetchOnce(async () => new Response(
+      JSON.stringify({ apps: [makeListing()] }), { status: 200 }));
+    await AppCatalogService.sync(db);
+
+    const after = db.prepare(`SELECT manifest_yaml FROM app_catalog WHERE slug='worldmonitor'`).get();
+    expect(after.manifest_yaml).toBe('cached-yaml-content');
+  });
+
   it('soft-deletes rows missing from a later sync', async () => {
     restoreFetch = mockFetchOnce(async () => new Response(
       JSON.stringify({ apps: [makeListing()] }), { status: 200 }));
