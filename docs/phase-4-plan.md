@@ -21,7 +21,7 @@ Phase 4 ships **six tracks** that together turn the App Store from a working v1 
 | 4.5 | Telemetry ingest endpoint + minimal dashboard | os8.ai | B | spec §11 monitoring | — | _Merged in os8dotai #15._ |
 | 4.6 | `requireAppContext` strict mode flip | OS8 | C | spec §11 open #1 | yes — E2E suite |
 | 4.7 | `mcp.<server>.*` wildcard capability | OS8 | C | spec §11 open #4 | — | _Merged in #46._ |
-| 4.8 | Windows-2022 promoted to gating CI | OS8 + 2× catalog | D | spec §11 open #11/#12 | yes — Windows install |
+| 4.8 | Windows-2022 promoted to gating CI | OS8 + 2× catalog | D | spec §11 open #11/#12 | yes — Windows install | _Catalog repos merged in os8-catalog#13 + os8-catalog-community#10; desktop pending in this branch._ |
 | 4.9 | `@os8/sdk-types` TypeScript npm package | OS8 + npm publish | E | spec §11 open #6 | — |
 | 4.10 | Playwright-Electron E2E install harness | OS8 | E | phase-3-plan §7.6 (Phase 4 candidate) | yes — gates 4.6 | _Merged in #47._ |
 | 4.11 | Migration `0.6.0-app-store-telemetry.js` | OS8 | B | foundation for 4.4 + auto-update prefs | — | _Merged in #44._ |

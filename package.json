@@ -94,6 +94,8 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
+      "publisherName": "OS8",
+      "artifactName": "OS8-Setup-${version}-${arch}.${ext}",
       "protocols": [
         {
           "name": "OS8",
@@ -102,6 +104,14 @@
           ]
         }
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "include": "build/windows/installer.nsh"
     },
     "linux": {
       "target": [
