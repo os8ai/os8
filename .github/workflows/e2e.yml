@@ -1,0 +1,60 @@
+name: E2E (Playwright + Electron)
+
+# Phase 4 PR 4.10 — gates `requireAppContext` strict-mode flip in PR 4.6.
+# Linux + macOS only initially per phase-4-plan §10 #6; Windows joins
+# the matrix once PR 4.8 lands and the existing hosts-file / DNS / NSIS
+# surface is validated there.
+#
+# Runs after the unit-test job passes so we don't burn 5+ minutes per OS
+# launching Electron when a 30-second vitest catches the regression.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules for Electron
+        run: node tools/rebuild-native.js
+
+      - name: Install Playwright browsers (chromium runtime + electron host)
+        # Electron uses bundled Chromium; Playwright still needs its host
+        # support files for tracing/HTML reporter to work.
+        run: npx playwright install --with-deps chromium
+
+      - name: Run E2E suite (Linux uses xvfb)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e
+
+      - name: Run E2E suite (macOS native window server)
+        if: runner.os == 'macOS'
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.os }}
+          path: playwright-report/
+          retention-days: 7
