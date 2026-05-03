@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "npm rebuild better-sqlite3 --loglevel=error && vitest",
     "test:e2e": "playwright test --config=tests/e2e/playwright/playwright.config.ts",
+    "check:sdk-drift": "node tools/check-sdk-drift.js",
     "posttest": "node tools/rebuild-native.js",
     "postinstall": "node tools/rebuild-native.js",
     "verify:package-assets": "node tools/verify-package-assets.js",
