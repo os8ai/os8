@@ -398,6 +398,10 @@ contextBridge.exposeInMainWorld('os8', {
     syncChannelNow: (channel) =>
       ipcRenderer.invoke('app-store:sync-channel-now', channel),
 
+    // PR 4.1 — write the install log buffer to a user-chosen file.
+    saveInstallLog: (filename, content) =>
+      ipcRenderer.invoke('app-store:save-install-log', { filename, content }),
+
     onJobUpdate: (callback) => {
       const listener = (_e, payload) => callback(payload);
       ipcRenderer.on('app-store:job-update', listener);

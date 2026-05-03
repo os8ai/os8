@@ -24,6 +24,7 @@ const { APPS_DIR, APPS_STAGING_DIR } = require('../config');
 const InstallJobs = require('./app-install-jobs');
 const AppCatalogService = require('./app-catalog');
 const InstallEvents = require('./install-events');
+const { makeLogBuffer } = require('./install-log-buffer');
 
 const dnsLookup = promisify(dns.lookup);
 
@@ -436,8 +437,20 @@ const AppInstaller = {
     manifest._localSlug = localSlug;
 
     publish(jobId, { kind: 'log', message: `running install in ${job.staging_dir}` });
-    await adapter.install(manifest, job.staging_dir, env, (stream, chunk) =>
-      publish(jobId, { kind: 'log', stream, message: String(chunk).slice(0, 8000) }));
+
+    // PR 4.1: buffered SSE relay so a fast `npm install` (1000+ stdout
+    // events/sec) doesn't flood IPC. Lines are split on `\r?\n`,
+    // `\r`-progress-bar updates collapse to one line, and a 200ms cadence
+    // batches into one event per window.
+    const logBuffer = makeLogBuffer({
+      onFlush: ({ logs }) => publish(jobId, { kind: 'log-batch', logs }),
+    });
+    try {
+      await adapter.install(manifest, job.staging_dir, env, (stream, chunk) =>
+        logBuffer.push(stream, chunk));
+    } finally {
+      logBuffer.flushNow();
+    }
 
     // Diagnostic: list top-level staging entries post-install. If a runtime
     // adapter is supposed to produce a .venv / node_modules / build output
