@@ -20,7 +20,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Pinned per phase-4-plan §1. Windows joins once 4.8 stabilizes
+        # the Playwright-Electron path (xvfb-equivalent on Windows is
+        # native-window-server; no extra runner setup required).
+        os: [ubuntu-22.04, macos-14]
     timeout-minutes: 20
 
     steps:
