@@ -144,7 +144,39 @@
         "filesystem": { "const": "app-private" },
         "os8_capabilities": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string",
+            "anyOf": [
+              {
+                "enum": [
+                  "blob.readwrite",
+                  "blob.readonly",
+                  "db.readwrite",
+                  "db.readonly",
+                  "telegram.send",
+                  "imagegen",
+                  "speak",
+                  "youtube",
+                  "x",
+                  "transcribe",
+                  "voicemessage",
+                  "google.calendar.readonly",
+                  "google.calendar.readwrite",
+                  "google.drive.readonly",
+                  "google.gmail.readonly",
+                  "agent-jobs"
+                ]
+              },
+              {
+                "pattern": "^mcp\\.[a-z][a-z0-9-]*\\.[a-z][a-z0-9_-]+$",
+                "description": "Specific MCP tool: mcp.<server>.<tool>"
+              },
+              {
+                "pattern": "^mcp\\.[a-z][a-z0-9-]*\\.\\*$",
+                "description": "All current and future tools on a single MCP server: mcp.<server>.*"
+              }
+            ]
+          }
         },
         "secrets": {
           "type": "array",

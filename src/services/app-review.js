@@ -30,7 +30,7 @@ You will receive: (a) the manifest (YAML); (b) a directory listing; (c) the cont
 
 Review criteria:
 1. Manifest honesty — does start.argv plausibly run a dev server matching the declared framework? Is upstream commit pinned?
-2. Capability over-declaration — declared os8_capabilities cross-referenced against window.os8.* call sites and fetch('/api/...') calls. Flag declared-but-unused (low-severity) and used-but-undeclared (high-severity).
+2. Capability over-declaration — declared os8_capabilities cross-referenced against window.os8.* call sites and fetch('/api/...') calls. Flag declared-but-unused (low-severity) and used-but-undeclared (high-severity). Capabilities of the form "mcp.<server>.*" grant access to ALL current AND future tools registered by that MCP server — treat them as an implicit trust grant to the server itself, comment on whether the server is well-known, and note any disconnect between the declared scope and the manifest's stated purpose.
 3. Network behavior — outbound endpoints in source matched against permissions.network.outbound. Flag domains not mentioned in manifest description or README.
 4. Filesystem access — fs reads/writes outside the app's own directory or declared blob/db scopes. Reading /etc, ~/.ssh, ~/.aws is high-severity.
 5. Secret handling — declared secrets cross-referenced against where they're used. Sending an API key via outbound HTTP to a third-party domain not mentioned in the prompt: flag.

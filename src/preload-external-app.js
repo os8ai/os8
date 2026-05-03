@@ -62,17 +62,26 @@ const { contextBridge, ipcRenderer } = require('electron');
 /**
  * Build the SDK surface from a manifest's declared capabilities.
  *
- * Capability check supports wildcards (mcp.tavily.* permits any
- * mcp.tavily.<tool>), matching scopedApiMiddleware's allow rule.
+ * Capability check supports MCP wildcards (PR 4.7): a declared
+ * `mcp.<server>.*` permits any `mcp.<server>.<tool>` request — and any
+ * tool the server registers in the future. Mirrors scopedApiMiddleware's
+ * `isCapabilityAllowed` so the SDK and the server agree on what's
+ * granted.
  *
  * Exported for unit tests via `module.exports.buildSdk` — Electron's
  * preload module wrapper still resolves require/exports.
  */
 function buildSdk(capabilities) {
   const apiBase = '/_os8/api';
-  const has = (cap) => capabilities.some(c =>
-    c === cap || (c.endsWith('.*') && cap.startsWith(c.slice(0, -1)))
-  );
+  const has = (cap) => {
+    if (capabilities.includes(cap)) return true;
+    const m = typeof cap === 'string' ? cap.match(/^mcp\.([^.]+)\.([^.]+)$/) : null;
+    if (m) {
+      const server = m[1];
+      if (capabilities.includes(`mcp.${server}.*`)) return true;
+    }
+    return false;
+  };
 
   async function rejectIfNotOk(res) {
     if (!res.ok) {

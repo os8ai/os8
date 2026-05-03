@@ -194,3 +194,53 @@ describe('validateManifest — schema errors', () => {
     expect(r.errors.some(e => e.kind === 'schema')).toBe(true);
   });
 });
+
+// PR 4.7 — os8_capabilities accepts a known enum, mcp.<server>.<tool>,
+// and mcp.<server>.* — but rejects pathological wildcards that would
+// grant cross-server or all-capabilities trust.
+describe('validateManifest — os8_capabilities (PR 4.7 wildcards)', () => {
+  function withCaps(caps) {
+    const m = parseManifest(WORLDMONITOR_YAML);
+    m.permissions.os8_capabilities = caps;
+    return m;
+  }
+
+  it('accepts known enum capability', () => {
+    const r = validateManifest(withCaps(['blob.readwrite', 'imagegen']));
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(false);
+  });
+
+  it('accepts specific MCP tool: mcp.<server>.<tool>', () => {
+    const r = validateManifest(withCaps(['mcp.tavily.search', 'mcp.gh.list_pulls']));
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(false);
+  });
+
+  it('accepts MCP wildcard: mcp.<server>.*', () => {
+    const r = validateManifest(withCaps(['mcp.gh.*']));
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(false);
+  });
+
+  it('rejects mcp.*.* (would grant every server)', () => {
+    const r = validateManifest(withCaps(['mcp.*.*']));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(true);
+  });
+
+  it('rejects bare mcp.* (would grant every server)', () => {
+    const r = validateManifest(withCaps(['mcp.*']));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(true);
+  });
+
+  it('rejects mcp.<server>.*.<tool> (nested wildcard)', () => {
+    const r = validateManifest(withCaps(['mcp.gh.*.review_pull']));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(true);
+  });
+
+  it('rejects unknown plain capability not in the enum', () => {
+    const r = validateManifest(withCaps(['rm-rf-slash']));
+    expect(r.ok).toBe(false);
+    expect(r.errors.some(e => e.path?.includes('os8_capabilities'))).toBe(true);
+  });
+});
