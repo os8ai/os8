@@ -16,7 +16,7 @@ Phase 4 ships **six tracks** that together turn the App Store from a working v1 
 |---|---|---|---|---|---|
 | 4.1 | Streaming install logs in install plan modal | OS8 | A | phase-3-plan §7.5 (Phase 4 candidate) | yes — Streamlit fixture | _Merged in #45._ |
 | 4.2 | Auto-update opt-in for Verified channel | OS8 | A | spec §6.9; schema fields exist | yes — worldmonitor bump | _Merged in #48._ |
-| 4.3 | "Update available" surface on `/apps/[slug]` | os8.ai | A | spec §6.9 (mirrors desktop banner) | — |
+| 4.3 | "Update available" surface on `/apps/[slug]` | os8.ai | A | spec §6.9 (mirrors desktop banner) | — | _Merged in os8dotai #16 (web) + #N (desktop heartbeat — pending session-cookie plumbing follow-up)._ |
 | 4.4 | Per-adapter install telemetry emitter | OS8 | B | spec §8 "Future"; spec §11 monitoring | — | _Merged in #49._ |
 | 4.5 | Telemetry ingest endpoint + minimal dashboard | os8.ai | B | spec §11 monitoring | — | _Merged in os8dotai #15._ |
 | 4.6 | `requireAppContext` strict mode flip | OS8 | C | spec §11 open #1 | yes — E2E suite |

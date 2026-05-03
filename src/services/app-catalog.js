@@ -707,6 +707,63 @@ const AppCatalogService = {
     }
     return { removed: result.changes };
   },
+
+  /**
+   * PR 4.3 — heartbeat installed external apps to os8.ai so the public
+   * detail page can show "Update available" badges to the signed-in
+   * user. Best-effort: 10s timeout; never throws to the scheduler.
+   *
+   * Authentication: posts a session cookie when one is present in
+   * AccountService's stored bag (set by the os8.ai sign-in flow). When
+   * no session exists (anonymous OS8 instance), the heartbeat no-ops
+   * before the network call so we don't waste a request on a guaranteed
+   * 401. A long-lived os8.ai session-token mechanism for desktop is a
+   * follow-up; the endpoint is in place either way (PR 4.3 os8dotai #16).
+   *
+   * Endpoint: ${OS8_API_BASE_URL || 'https://os8.ai'}/api/account/installed-apps
+   */
+  async reportInstalledApps(db, { fetchImpl = fetch, getSessionCookie = null } = {}) {
+    const cookie = typeof getSessionCookie === 'function' ? getSessionCookie() : null;
+    if (!cookie) {
+      return { ok: false, reason: 'no os8.ai session — heartbeat skipped' };
+    }
+
+    // Quote `commit` — SQLite parses it as a reserved word in the SELECT
+    // alias position. Using a quoted identifier keeps the JSON shape
+    // (`{ slug, commit, channel }`) the os8.ai endpoint expects.
+    const apps = db.prepare(`
+      SELECT external_slug AS slug,
+             upstream_resolved_commit AS "commit",
+             channel
+        FROM apps
+       WHERE app_type = 'external'
+         AND status = 'active'
+         AND external_slug IS NOT NULL
+         AND upstream_resolved_commit IS NOT NULL
+    `).all();
+
+    const base = process.env.OS8_API_BASE_URL || 'https://os8.ai';
+    const url = `${base}/api/account/installed-apps`;
+    try {
+      const res = await fetchImpl(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': cookie,
+        },
+        body: JSON.stringify({ apps }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) {
+        return { ok: false, status: res.status };
+      }
+      const body = await res.json().catch(() => ({}));
+      return { ok: true, count: body?.count ?? apps.length, removed: body?.removed ?? 0 };
+    } catch (err) {
+      // Network error / timeout / abort. Best-effort; next tick retries.
+      return { ok: false, reason: err.message };
+    }
+  },
 };
 
 module.exports = AppCatalogService;
