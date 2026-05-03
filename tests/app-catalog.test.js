@@ -416,6 +416,7 @@ describe('AppCatalogService.get', () => {
   let prevHome;
   let MIGRATION;
   let AppCatalogService;
+  let restoreFetch;
 
   beforeEach(async () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'os8-catalog-'));
@@ -431,6 +432,7 @@ describe('AppCatalogService.get', () => {
   });
 
   afterEach(() => {
+    if (restoreFetch) { restoreFetch(); restoreFetch = null; }
     db.close();
     if (prevHome === undefined) delete process.env.OS8_HOME;
     else process.env.OS8_HOME = prevHome;
@@ -456,8 +458,69 @@ describe('AppCatalogService.get', () => {
     `).run(WORLDMONITOR_YAML);
   }
 
-  it('returns null for a missing slug', async () => {
+  it('returns null for a missing slug when remote also has no row (404)', async () => {
+    // After the lazy-fetch fix, get() falls through to os8.ai when the
+    // local row is missing. A genuine missing slug must surface as null
+    // only after the remote also returns 404 / errors.
+    restoreFetch = mockFetchOnce(async () => new Response('', { status: 404 }));
     const e = await AppCatalogService.get(db, 'nonexistent');
+    expect(e).toBeNull();
+  });
+
+  it('lazy-inserts when row missing locally but exists on os8.ai (deeplink path)', async () => {
+    // The deeplink install flow: user clicks Install on os8.ai for a slug
+    // their local catalog hasn't synced. get() must fetch + insert + return
+    // the entry so renderPlan succeeds without a manual sync.
+    const remoteApp = {
+      slug: 'lazy-fetched-app',
+      name: 'Lazy Fetched',
+      description: 'Came in via deeplink',
+      publisher: 'someone',
+      channel: 'community',
+      category: 'utilities',
+      iconUrl: 'https://example.com/icon.png',
+      screenshots: [],
+      manifestYaml: 'slug: lazy-fetched-app\nname: Lazy Fetched\n',
+      manifestSha: 'lazy-msha-1',
+      catalogCommitSha: 'lazy-csha-1',
+      upstreamDeclaredRef: 'v1.0.0',
+      upstreamResolvedCommit: 'b'.repeat(40),
+      license: 'MIT',
+      runtimeKind: 'node',
+      framework: 'vite',
+      architectures: ['arm64', 'x86_64'],
+      riskLevel: 'low',
+      installCount: 0,
+    };
+    restoreFetch = mockFetchOnce(async () => new Response(
+      JSON.stringify({ app: remoteApp }), { status: 200 }
+    ));
+
+    // Local catalog is empty for this slug.
+    const before = db.prepare(`SELECT COUNT(*) AS n FROM app_catalog WHERE slug='lazy-fetched-app'`).get();
+    expect(before.n).toBe(0);
+
+    const entry = await AppCatalogService.get(db, 'lazy-fetched-app', { channel: 'community' });
+    expect(entry).not.toBeNull();
+    expect(entry.slug).toBe('lazy-fetched-app');
+    expect(entry.publisher).toBe('someone');
+    expect(entry.upstreamResolvedCommit).toBe('b'.repeat(40));
+    expect(entry.manifestYaml).toContain('slug: lazy-fetched-app');
+    expect(entry.manifest?.slug).toBe('lazy-fetched-app');
+
+    // Row now lives in the local cache for subsequent reads + detectUpdates().
+    const after = db.prepare(`SELECT slug, channel, manifest_sha FROM app_catalog WHERE slug='lazy-fetched-app'`).get();
+    expect(after).toBeDefined();
+    expect(after.channel).toBe('community');
+    expect(after.manifest_sha).toBe('lazy-msha-1');
+  });
+
+  it('returns null when row missing locally AND remote network errors (offline / DNS)', async () => {
+    // Distinct from the 404 case: if os8.ai is unreachable, we still
+    // surface "not in catalog" rather than throwing — same UX as the
+    // pre-lazy-fetch behavior on a row miss.
+    restoreFetch = mockFetchOnce(async () => { throw new Error('ENOTFOUND'); });
+    const e = await AppCatalogService.get(db, 'unreachable-app');
     expect(e).toBeNull();
   });
 
