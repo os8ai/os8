@@ -310,6 +310,26 @@ async function init() {
     });
   }
 
+  // PR 4.2 — Auto-update toast notifier. Subscribes once at boot and
+  // shows a small bottom-right toast when an auto-update applies or
+  // fails. The toast surfaces the change so the user isn't surprised by
+  // a freshly-updated app on next open.
+  if (window.os8.appStore?.onAutoUpdateEvent) {
+    const { showAutoUpdateToast } = await import('./toast.js');
+    window.os8.appStore.onAutoUpdateEvent(async (event) => {
+      try {
+        showAutoUpdateToast(event);
+        if (event.kind === 'applied') {
+          // Refresh the home grid so the updated app's icon (which may
+          // have new metadata after the SHA bump) re-renders.
+          await loadApps();
+        }
+      } catch (e) {
+        console.warn('[auto-update toast] handler error:', e?.message);
+      }
+    });
+  }
+
   // Initialize view mode (applies saved mode and attaches listeners)
   initViewMode();
 

@@ -402,6 +402,24 @@ contextBridge.exposeInMainWorld('os8', {
     saveInstallLog: (filename, content) =>
       ipcRenderer.invoke('app-store:save-install-log', { filename, content }),
 
+    // PR 4.2 — uninstall an external app (per-app settings flyout).
+    uninstall: (appId, opts = {}) =>
+      ipcRenderer.invoke('app-store:uninstall', appId, opts),
+
+    // PR 4.2 — auto-update toast subscription. Renderers wire a single
+    // callback that fires for both apply + fail events; payload.kind
+    // distinguishes them.
+    onAutoUpdateEvent: (callback) => {
+      const onApplied = (_e, payload) => callback({ kind: 'applied', ...payload });
+      const onFailed  = (_e, payload) => callback({ kind: 'failed',  ...payload });
+      ipcRenderer.on('app-store:auto-update-applied', onApplied);
+      ipcRenderer.on('app-store:auto-update-failed',  onFailed);
+      return () => {
+        ipcRenderer.removeListener('app-store:auto-update-applied', onApplied);
+        ipcRenderer.removeListener('app-store:auto-update-failed',  onFailed);
+      };
+    },
+
     onJobUpdate: (callback) => {
       const listener = (_e, payload) => callback(payload);
       ipcRenderer.on('app-store:job-update', listener);

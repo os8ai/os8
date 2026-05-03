@@ -124,6 +124,21 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
+  // PR 4.2 — Uninstall an external app from the per-app settings flyout.
+  // Tiered: AppService.uninstall preserves blob/db by default; with
+  // { deleteData: true } everything goes (irreversible).
+  ipcMain.handle('app-store:uninstall', async (_e, appId, opts = {}) => {
+    try {
+      const { AppService } = require('../services/app');
+      const r = await AppService.uninstall(db, appId, {
+        deleteData: opts?.deleteData === true,
+      });
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // PR 4.1 — write the modal's install log buffer to a user-chosen file.
   // Defaults to ~/Downloads/<filename> via showSaveDialog; user can redirect.
   ipcMain.handle('app-store:save-install-log', async (_e, { filename, content } = {}) => {
