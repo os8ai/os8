@@ -339,6 +339,16 @@ app.whenReady().then(async () => {
     throw err;
   }
 
+  // PR 4.6 — mirror the in-process call token from settings into env so
+  // require-app-context middleware can read it without a db handle. The
+  // 0.6.0 migration seeds a per-instance token at first run; we keep
+  // it stable across restarts so server-internal callers' headers stay
+  // valid.
+  try {
+    const token = SettingsService.get(db, '_internal_call_token');
+    if (token) process.env.OS8_INTERNAL_CALL_TOKEN = token;
+  } catch (_) { /* settings table may be transitioning during migration; tolerate */ }
+
   // PR 1.29: clean up orphaned staging dirs from interrupted installs.
   // Cheap (only walks ~/os8/apps_staging/) and idempotent.
   try {
