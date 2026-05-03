@@ -545,3 +545,161 @@
       font-size: var(--text-lg);
     }
 
+/* ==========================================================================
+   PR 4.2 — App settings flyout (right-click → Settings) + auto-update toast
+   ========================================================================== */
+
+    .app-settings-flyout {
+      z-index: 9999;
+    }
+
+    .app-settings-flyout__panel {
+      width: 340px;
+      background: var(--color-bg-elevated);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      padding: 16px 18px;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.25);
+      font-size: 13px;
+    }
+
+    .app-settings-flyout__panel header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .app-settings-flyout__channel {
+      color: var(--color-text-secondary);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+    }
+
+    .app-settings-flyout__panel header .close {
+      margin-left: auto;
+      background: transparent;
+      border: none;
+      color: var(--color-text-secondary);
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 4px;
+    }
+
+    .app-settings-flyout__section {
+      margin-bottom: 18px;
+    }
+
+    .app-settings-flyout__section h3 {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--color-text-secondary);
+      margin: 0 0 8px 0;
+    }
+
+    .app-settings-flyout__toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      cursor: pointer;
+    }
+
+    .app-settings-flyout__toggle input[disabled] + span {
+      color: var(--color-text-secondary);
+    }
+
+    .app-settings-flyout__hint {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 4px 0 0 24px;
+    }
+
+    .app-settings-flyout__section--danger .action-button--danger {
+      color: var(--color-danger-text, #b00020);
+      border: 1px solid currentColor;
+      background: transparent;
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+    }
+
+    /* Bottom-right toast container — fixed position, stack new on top. */
+    .os8-toast-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column-reverse;
+      gap: 8px;
+      z-index: 10000;
+      pointer-events: none;
+    }
+
+    .os8-toast {
+      pointer-events: auto;
+      min-width: 280px;
+      max-width: 380px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      background: var(--color-bg-elevated);
+      border: 1px solid var(--color-border);
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      font-size: 13px;
+      animation: os8-toast-in 160ms ease-out;
+    }
+
+    .os8-toast--leaving {
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 200ms, transform 200ms;
+    }
+
+    .os8-toast--success { border-left: 3px solid var(--color-success-text, #22c55e); }
+    .os8-toast--warning { border-left: 3px solid #d97706; }
+    .os8-toast--error   { border-left: 3px solid var(--color-danger-text, #b00020); }
+    .os8-toast--info    { border-left: 3px solid var(--color-text-secondary); }
+
+    .os8-toast__body { flex: 1; min-width: 0; }
+    .os8-toast__title { display: block; }
+    .os8-toast__message {
+      color: var(--color-text-secondary);
+      font-size: 12px;
+      margin-top: 2px;
+      word-wrap: break-word;
+    }
+
+    .os8-toast__action {
+      background: transparent;
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      padding: 4px 10px;
+      cursor: pointer;
+      color: var(--color-text-primary);
+    }
+
+    .os8-toast__close {
+      background: transparent;
+      border: none;
+      color: var(--color-text-secondary);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+
+    @keyframes os8-toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+

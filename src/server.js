@@ -273,12 +273,71 @@ function scheduleAppCatalogSync() {
           console.log(`[AppCatalog/community] +${c.added} updated:${c.updated} -${c.removed}`);
         }
       }
+
+      // PR 4.2 — auto-update opt-in for Verified channel. After every sync
+      // pass, walk the apps table for opted-in rows whose update_available
+      // was just flipped on, and apply the fast-forward update via
+      // AppCatalogService.update. Skipped for user-edited apps (the manual
+      // banner path stays the only way to update those).
+      try {
+        const AppAutoUpdater = require('./services/app-auto-updater');
+        const notifyOnApply = SettingsService.get(db, 'app_store.auto_update.notify_on_apply');
+        const notifyEnabled = notifyOnApply !== 'false' && notifyOnApply !== false;
+
+        const r = await AppAutoUpdater.processAutoUpdates(db, {
+          onUpdated: (app, sha) => {
+            console.log(`[AutoUpdate] ${app.external_slug} → ${sha.slice(0, 7)}`);
+            if (notifyEnabled) {
+              broadcastToRenderers({
+                channel: 'app-store:auto-update-applied',
+                payload: { appId: app.id, slug: app.external_slug, newCommit: sha },
+              });
+            }
+          },
+          onSkipped: (app, reason) => {
+            console.log(`[AutoUpdate] ${app.external_slug} skipped: ${reason}`);
+          },
+          onFailed: (app, err) => {
+            console.warn(`[AutoUpdate] ${app.external_slug} failed: ${err.message}`);
+            if (notifyEnabled) {
+              broadcastToRenderers({
+                channel: 'app-store:auto-update-failed',
+                payload: { appId: app.id, slug: app.external_slug, error: err.message },
+              });
+            }
+          },
+        });
+        if (r.attempted > 0) {
+          console.log(
+            `[AutoUpdate] attempted:${r.attempted} updated:${r.updated} ` +
+            `skipped:${r.skipped} failed:${r.failed}`
+          );
+        }
+      } catch (e) {
+        console.warn('[AutoUpdate] pass failed:', e.message);
+      }
     } catch (e) {
       console.warn('[AppCatalog] Scheduled sync failed:', e.message);
     }
     scheduleAppCatalogSync();
   }, msUntilSync);
   appCatalogSyncTimer.unref?.();
+}
+
+// PR 4.2 — broadcast a custom event to every BrowserWindow renderer.
+// Used by the auto-update scheduler to notify the user via toast.
+// Safe-guarded: tests / headless contexts that didn't load Electron see
+// the require throw; we swallow so the scheduler keeps working.
+function broadcastToRenderers({ channel, payload }) {
+  try {
+    const { BrowserWindow } = require('electron');
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        try { win.webContents.send(channel, payload); }
+        catch (_) { /* renderer in transition — ignore */ }
+      }
+    }
+  } catch (_) { /* electron not loaded (test env) — no-op */ }
 }
 
 // PR 3.5 — exposed for IPC `app-store:reschedule-syncs`. Cancels the

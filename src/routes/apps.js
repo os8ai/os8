@@ -262,6 +262,28 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // PATCH /api/apps/:id/auto-update — Toggle Verified-channel auto-update.
+  // PR 4.2. Body: { enabled: boolean }. Returns the updated app row.
+  // Refuses for community / dev-import apps via AppService.setAutoUpdate.
+  router.patch('/:id/auto-update', (req, res) => {
+    try {
+      const { enabled } = req.body || {};
+      if (typeof enabled !== 'boolean') {
+        return res.status(400).json({ error: 'body.enabled must be a boolean' });
+      }
+      const app = AppService.getById(db, req.params.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const updated = AppService.setAutoUpdate(db, req.params.id, enabled);
+      res.json({ success: true, autoUpdate: !!updated.auto_update, app: updated });
+    } catch (err) {
+      console.error('[Apps API] auto-update toggle:', err.message);
+      // Spec violations (channel restriction) come back as 400; other
+      // failures stay 500.
+      const status = /Verified-channel|external/.test(err.message) ? 400 : 500;
+      res.status(status).json({ error: err.message });
+    }
+  });
+
   // POST /api/apps/:id/build — Dispatch headless builder for existing app (no approval gate)
   // Used for fix-iteration builds and plan step execution
   router.post('/:id/build', (req, res) => {

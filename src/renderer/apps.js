@@ -11,6 +11,7 @@ import {
   getServerPort
 } from './state.js';
 import { showContextMenu } from './tasks.js';
+import { openAppSettingsFlyout } from './app-settings-flyout.js';
 
 /**
  * Render an app icon as HTML (image or text with auto-shrink).
@@ -134,6 +135,31 @@ export function renderApps() {
           icon: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
           action: () => callbacks.openEditAppModal(app)
         });
+
+        // PR 4.2 — Settings flyout: per-app Auto-Update toggle (Verified
+        // channel only) + uninstall. Surfaced for external apps so users
+        // who installed from the catalog can opt into hands-free updates.
+        if (app.app_type === 'external') {
+          menuItems.push({
+            label: 'Settings…',
+            icon: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+            action: () => openAppSettingsFlyout(app, icon, {
+              onError: (msg) => console.warn('[app-settings]', msg),
+              onUninstall: async (a) => {
+                if (!window.confirm(`Uninstall "${a.name}"?\n\nApp source removes; per-app data preserved unless you choose otherwise on the next prompt.`)) return;
+                const deleteData = window.confirm('Also delete blob storage + per-app database?\n\nClick OK to delete everything (irreversible) or Cancel to preserve data for re-install.');
+                try {
+                  await window.os8.appStore?.uninstall?.(a.id, { deleteData });
+                  setApps(getApps().filter(x => x.id !== a.id));
+                  renderApps();
+                } catch (e) {
+                  alert(`Uninstall failed: ${e.message}`);
+                }
+              },
+            }),
+          });
+        }
+
         menuItems.push({ divider: true });
         menuItems.push({
           label: 'Archive',

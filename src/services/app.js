@@ -191,6 +191,33 @@ const AppService = {
     return this.getById(db, id);
   },
 
+  // PR 4.2 — auto-update opt-in for Verified-channel external apps.
+  // The schema column lands in migration 0.5.0; this is a thin convenience
+  // around the toggle so callers don't have to spell out the column name
+  // (and so we can later add validation / channel checks centrally).
+  setAutoUpdate(db, appId, enabled) {
+    const app = this.getById(db, appId);
+    if (!app) throw new Error(`app ${appId} not found`);
+    if (app.app_type !== 'external') {
+      throw new Error('auto-update only applies to external apps');
+    }
+    if (enabled && app.channel !== 'verified') {
+      // Spec §6.9 — auto-update is Verified-channel only. Refuse to enable
+      // on community/dev-import apps so a misconfigured UI can't slip past.
+      throw new Error('auto-update is Verified-channel only');
+    }
+    const value = enabled ? 1 : 0;
+    db.prepare(
+      `UPDATE apps SET auto_update = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(value, appId);
+    return this.getById(db, appId);
+  },
+
+  getAutoUpdate(db, appId) {
+    const row = db.prepare('SELECT auto_update FROM apps WHERE id = ?').get(appId);
+    return row?.auto_update === 1;
+  },
+
   // PR 1.24 — uninstall an external app.
   //
   // Tiered: by default the source tree is removed but blob storage,
