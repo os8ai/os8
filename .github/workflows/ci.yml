@@ -31,3 +31,7 @@ jobs:
 
       - name: Run tests
         run: npm test
+
+      - name: Check SDK type drift (PR 4.9)
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run check:sdk-drift

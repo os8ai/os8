@@ -125,14 +125,27 @@ in a sidebar (PR 1.25).
 
 ## Type definitions
 
-\`os8-sdk.d.ts\` is shipped alongside this file. Reference it from your
-TypeScript code:
+This app folder ships \`os8-sdk.d.ts\` for offline / in-folder use:
 
 \`\`\`ts
 /// <reference path="./os8-sdk.d.ts" />
 \`\`\`
 
-(The file lives at the app root so editors find it without an npm install.)
+If you're editing this app from an external IDE on another machine
+(rather than in OS8's Dev Mode terminal), prefer the published npm
+package — same types, npm-managed:
+
+\`\`\`bash
+npm install -D @os8/sdk-types
+\`\`\`
+
+Then add to \`tsconfig.json\`:
+
+\`\`\`json
+{ "compilerOptions": { "types": ["@os8/sdk-types"] } }
+\`\`\`
+
+Both surfaces stay in sync via a drift-check CI in os8ai/os8.
 `;
 }
 
