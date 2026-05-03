@@ -1170,6 +1170,35 @@
               <button id="appStoreSaveBtn" class="primary-button">Save</button>
               <span id="appStoreSaveStatus" class="setting-description" style="font-size: 12px; color: var(--color-success-text, #65a30d);" hidden></span>
             </div>
+
+            <!-- PR 4.4 — anonymous install telemetry. Default OFF; surfaced
+                 to the user at first-install consent. Permanent toggle here
+                 + Reset Client ID for the privacy-conscious user. -->
+            <hr style="margin: 24px 0; border: none; border-top: 1px solid var(--color-border, rgba(255,255,255,0.1));" />
+            <div class="setting-row">
+              <div style="flex: 1;">
+                <label class="setting-label" for="appStoreTelemetryOptIn">
+                  <input type="checkbox" id="appStoreTelemetryOptIn" />
+                  Send anonymous install telemetry
+                </label>
+                <p class="setting-description">
+                  Helps us see which adapters fail and why. We send adapter,
+                  framework, channel, success/fail, and a failure-line
+                  fingerprint — <strong>never</strong> raw logs, paths,
+                  secrets, hostnames, or your username.
+                </p>
+              </div>
+            </div>
+            <div class="setting-row">
+              <div style="flex: 1;">
+                <button id="appStoreTelemetryReset" class="secondary-button">Reset anonymous client ID</button>
+                <p class="setting-description">
+                  Generate a fresh ID; severs the link between past and
+                  future events.
+                </p>
+                <span id="appStoreTelemetryResetStatus" class="setting-description" style="font-size: 12px; color: var(--color-success-text, #65a30d);" hidden></span>
+              </div>
+            </div>
           </div>
           <!-- Privacy Section -->
           <div class="settings-section" id="section-privacy">

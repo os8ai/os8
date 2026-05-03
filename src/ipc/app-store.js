@@ -124,6 +124,18 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
+  // PR 4.4 — Reset the anonymous telemetry client ID. Generates a fresh
+  // UUID, severing the link between past and future events.
+  ipcMain.handle('app-store:reset-telemetry-client-id', () => {
+    try {
+      const AppTelemetry = require('../services/app-telemetry');
+      const id = AppTelemetry.rotateClientId();
+      return { ok: true, clientId: id };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // PR 4.2 — Uninstall an external app from the per-app settings flyout.
   // Tiered: AppService.uninstall preserves blob/db by default; with
   // { deleteData: true } everything goes (irreversible).

@@ -406,6 +406,10 @@ contextBridge.exposeInMainWorld('os8', {
     uninstall: (appId, opts = {}) =>
       ipcRenderer.invoke('app-store:uninstall', appId, opts),
 
+    // PR 4.4 — rotate the anonymous telemetry client ID.
+    resetTelemetryClientId: () =>
+      ipcRenderer.invoke('app-store:reset-telemetry-client-id'),
+
     // PR 4.2 — auto-update toast subscription. Renderers wire a single
     // callback that fires for both apply + fail events; payload.kind
     // distinguishes them.

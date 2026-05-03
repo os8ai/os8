@@ -228,6 +228,29 @@
     font-size: 11px;
   }
 
+  /* PR 4.4 — first-install telemetry consent block */
+  .install-plan-modal__consent {
+    background: var(--color-bg-elevated);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-top: 12px;
+  }
+
+  .install-plan-modal__consent label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+  }
+
+  .install-plan-modal__consent-hint {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+    margin: 6px 0 0 24px;
+  }
+
   .install-plan-modal__arch-incompatible {
     color: var(--color-danger-text, #991b1b);
     background: var(--color-danger-bg, #fee2e2);

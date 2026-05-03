@@ -25,6 +25,26 @@ const InstallJobs = require('./app-install-jobs');
 const AppCatalogService = require('./app-catalog');
 const InstallEvents = require('./install-events');
 const { makeLogBuffer } = require('./install-log-buffer');
+const AppTelemetry = require('./app-telemetry');
+
+// PR 4.4: extract a stable framework hint from the manifest. Used by
+// telemetry so the os8.ai dashboard can break failures down by framework.
+function _resolveFramework(manifest) {
+  return manifest?.framework || null;
+}
+function _resolveAdapterKind(manifest) {
+  return manifest?.runtime?.kind || null;
+}
+function _readLastStderrLine(logPath) {
+  if (!logPath) return null;
+  try {
+    const content = fs.readFileSync(logPath, 'utf8');
+    const lines = content.trim().split('\n').filter(l => l.startsWith('[stderr] '));
+    return lines.length ? lines[lines.length - 1].slice(9) : null;
+  } catch {
+    return null;
+  }
+}
 
 const dnsLookup = promisify(dns.lookup);
 
@@ -356,9 +376,55 @@ const AppInstaller = {
     });
     publish(jobId, { kind: 'status', status: 'installing', job: transitioned });
 
+    // PR 4.4 — emit install_started telemetry. Adapter/framework/channel
+    // are read from the manifest YAML on the job row; failures to parse
+    // leave fields null (the sanitizer drops nulls anyway).
+    const startTs = Date.now();
+    try {
+      const yaml = require('js-yaml');
+      const entry = await AppCatalogService.get(db, current.external_slug, { channel: current.channel });
+      const manifest = entry?.manifest || (current.staging_dir ? null : null);
+      AppTelemetry.enqueue(db, {
+        kind: 'install_started',
+        adapter: _resolveAdapterKind(manifest),
+        framework: _resolveFramework(manifest),
+        channel: current.channel,
+        slug: current.external_slug,
+        commit: current.upstream_resolved_commit,
+      });
+    } catch (_) { /* telemetry failures never disrupt the install */ }
+
     setImmediate(() => AppInstaller._runApprove(db, jobId, secrets, { getOS8Port })
+      .then(() => {
+        // install_succeeded is emitted from _runApprove when the row is
+        // activated (kind:'status', status:'installed'). Doing it there
+        // avoids duplicates if approve() is wrapped by a retry helper.
+      })
       .catch(async err => {
         publish(jobId, { kind: 'failed', message: err.message });
+
+        // PR 4.4 — install_failed telemetry. Read the last stderr line
+        // from the job's log file, fingerprint it (never the raw line),
+        // and emit. Phase + duration come from the surface state.
+        try {
+          const failed = InstallJobs.get(db, jobId);
+          const yaml = require('js-yaml');
+          const entry = await AppCatalogService.get(db, current.external_slug, { channel: current.channel });
+          const manifest = entry?.manifest;
+          const lastErr = _readLastStderrLine(failed?.log_path) || err.message;
+          AppTelemetry.enqueue(db, {
+            kind: 'install_failed',
+            adapter: _resolveAdapterKind(manifest),
+            framework: _resolveFramework(manifest),
+            channel: current.channel,
+            slug: current.external_slug,
+            commit: current.upstream_resolved_commit,
+            failurePhase: err.failurePhase || 'install',
+            failureFingerprint: AppTelemetry.fingerprintFailure(lastErr),
+            durationMs: Date.now() - startTs,
+          });
+        } catch (_) { /* telemetry failures never disrupt rollback */ }
+
         await AppInstaller._rollbackInstall(db, jobId, err.message);
       })
     );
@@ -501,6 +567,23 @@ const AppInstaller = {
       patches: { app_id: app.id },
     });
     publish(jobId, { kind: 'status', status: 'installed', appId: app.id });
+
+    // PR 4.4 — install_succeeded telemetry. Duration is measured from
+    // when the user clicked Install (created_at on the install job),
+    // not the approve click; the dashboard shows total wall-clock cost.
+    try {
+      const job = InstallJobs.get(db, jobId);
+      const startMs = job?.created_at ? new Date(job.created_at).getTime() : Date.now();
+      AppTelemetry.enqueue(db, {
+        kind: 'install_succeeded',
+        adapter: _resolveAdapterKind(manifest),
+        framework: _resolveFramework(manifest),
+        channel: entry.channel,
+        slug: entry.slug || manifest.slug,
+        commit: entry.upstreamResolvedCommit,
+        durationMs: Date.now() - startMs,
+      });
+    } catch (_) { /* never block install on telemetry */ }
 
     // 10. Fire-and-forget track-install. Anonymous, rate-limited per IP/day
     //     server-side. No await — the install finishes the moment the row
