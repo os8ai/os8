@@ -667,6 +667,47 @@ See phase-1-plan.md for the implementation contract.
 
 Developer Import (PR 3.1): paste a GitHub URL in OS8 → fetch repo metadata → auto-generate draft AppSpec from `package.json` (Node), `pyproject.toml` (Python), or `Dockerfile` (Docker fallback). Heuristics: detect framework from `dependencies` + script names (`vite` → Vite; `next` → Next; `streamlit` → Streamlit). Prompt user to fill in declared `permissions.os8_capabilities` and required secrets. High-friction install plan UI (PR 3.2): Developer Import gets a "developer mode" badge, all permissions force-opt-in (must individually toggle each), extra warnings ("This app has not been reviewed by OS8 curators"); per the channel-tiered policy in PR 1.11, Developer Import always passes `--ignore-scripts` with no opt-in. `os8ai/os8-catalog-community` repo (PR 3.3): same schema, lighter CI (no curator approval; spam/malware filter only); apps land with `channel='community'`. os8.ai community tab (PR 3.4): `/apps?channel=community` filter; clearly marked. Per-channel enable/disable in OS8 settings (PR 3.5). Supply-chain analyzer (PR 3.6): `osv-scanner` for Node + Python; `safety` for Python; flags known-malicious packages by name; integrates into `AppReviewService` static analysis as a high-severity finding. Outcome: anyone can publish; trust tiers visibly differentiated.
 
+### Phase 3.5 — Realistic adapter smoke fixtures (≤120 words)
+
+After Phase 3 shipped, smoke-testing each adapter against a real
+third-party app surfaced regressions every "trivial fixture" missed.
+Phase 3.5 adds one fully-realistic fixture per adapter: worldmonitor
+(Node/Vite, PR 3.5.1), CyberChef (static, PR 3.5.2), streamlit-30days
+(Python/Streamlit, PR 3.5.3), HivisionIDPhotos (Python/Gradio, PR
+3.5.4), linkding (Docker, PR 3.5.5). Each fixture's first install
+catches a per-adapter cascade of small bugs — codified in the rule
+"smoke real apps, not fixtures" (`feedback_smoke_test_real_apps`
+memory). Phase 3.5 closed before Phase 4 began.
+
+### Phase 4 — Maturation + observability (≤200 words)
+
+Phase 4 takes the App Store from "works for the users we have" to
+"tells us what's happening and gracefully handles updates, scale, and
+Windows." 14 PRs across five repos (introduces a fifth — `os8ai/os8-sdk-types`
+for the published TypeScript package). Six tracks:
+
+- **A — Lifecycle maturation.** PR 4.1 streaming install logs;
+  PR 4.2 auto-update opt-in for Verified channel; PR 4.3 "Update
+  available" badge on `/apps/[slug]`.
+- **B — Observability.** PR 4.5 telemetry ingest + curator
+  dashboard at `/internal/telemetry/install`; PR 4.4 desktop emitter
+  (opt-in, allowlist-sanitized, fingerprints not raw lines).
+- **C — Trust boundary.** PR 4.7 `mcp.<server>.*` wildcard syntax;
+  PR 4.6 `requireAppContext` strict mode flip with origin allowlist.
+- **D — Cross-platform.** PR 4.8 promotes `windows-2022` to gating CI
+  across all four repos.
+- **E — DevX.** PR 4.9 `@os8/sdk-types` npm package + drift-check;
+  PR 4.10 Playwright-Electron E2E harness scaffold (gates 4.6).
+- **Foundation.** PR 4.11 migration `0.6.0` adds the telemetry queue
+  and seeds settings defaults.
+
+Plus three doc PRs (4.D1 spec close-out, 4.D2 user-facing
+auto-update doc, 4.D3 deferred-items decisions log). Phase 4 is the
+first post-v1 phase; full plan in `phase-4-plan.md`. Outcome: data on
+what's failing in the wild, hands-free Verified updates, hardened
+trust boundary, cross-platform footing, friendlier external-IDE
+workflow.
+
 ---
 
 ## 7. Open Implementation Details — resolution pass

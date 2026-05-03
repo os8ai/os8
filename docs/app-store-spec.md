@@ -420,6 +420,75 @@ model CatalogState {
 model User {
   // …existing fields
   pendingInstalls PendingInstall[]
+  installedApps   InstalledApp[]   // PR 4.3
+}
+
+// PR 4.3 — desktop heartbeat reports installed apps so the public
+// detail page can show "Update available" badges to the signed-in user.
+model InstalledApp {
+  id                     String   @id @default(cuid())
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appSlug                String
+  upstreamResolvedCommit String   // 40-char SHA
+  channel                String   // verified | community | developer-import
+  installedAt            DateTime @default(now())
+  lastReportedAt         DateTime @updatedAt
+
+  @@unique([userId, appSlug])
+  @@index([userId])
+}
+
+// PR 4.5 — anonymous install telemetry. Raw events with 30-day retention;
+// daily rollup kept indefinitely. clientId is double-hashed (random UUID
+// on desktop + HMAC-SHA256 with TELEMETRY_HASH_SALT server-side).
+model InstallEvent {
+  id                 String   @id @default(cuid())
+  clientId           String   // server-rehashed; never plaintext
+  kind               String   // install_started | install_succeeded | install_failed | install_cancelled | install_overridden | update_succeeded | update_failed
+  adapter            String?  // node | python | static | docker
+  framework          String?  // vite | nextjs | streamlit | gradio | hugo | jekyll | none
+  channel            String?  // verified | community | developer-import
+  slug               String?
+  commit             String?  // 40-char SHA
+  failurePhase       String?  // install | postInstall | preStart | start
+  failureFingerprint String?  // 8-32 hex prefix
+  durationMs         Int?
+  os                 String?  // darwin | linux | win32
+  arch               String?
+  overrideReason     String?
+  ts                 DateTime @default(now())
+
+  @@index([ts])
+  @@index([adapter, framework, channel, kind, ts])
+  @@index([slug, ts])
+  @@index([failureFingerprint])
+}
+
+// Daily rollup populated by /api/internal/telemetry/rollup at 01:05 UTC.
+// `framework` is non-nullable (with "none" placeholder) because Postgres
+// treats NULL as distinct in unique indexes — would let the rollup
+// write duplicates for (day, adapter, channel, kind) when framework
+// is missing.
+model InstallEventDaily {
+  id        String   @id @default(cuid())
+  day       DateTime @db.Date
+  adapter   String
+  framework String   // "none" placeholder when source event had no framework
+  channel   String
+  kind      String
+  count     Int
+
+  @@unique([day, adapter, framework, channel, kind])
+  @@index([day])
+}
+
+model App {
+  // …existing fields, plus per-app counters added by PR 4.5:
+  // installSuccessCount Int @default(0)
+  // installFailCount Int @default(0)
+  // installOverriddenCount Int @default(0)
+  // lastInstallEventAt DateTime?
 }
 ```
 
@@ -889,7 +958,9 @@ app.use(ReverseProxyService.middleware()); // <slug>.localhost:8888/* (other pat
 // then existing /:identifier catch-all (native apps on bare localhost:8888)
 ```
 
-External apps' direct calls to `/api/*` on the OS8 main origin (`localhost:8888/api/...`) are blocked by browser CORS — different origin, no CORS headers on those routes. Same-origin attempts on the subdomain are caught by the scoped middleware above. Native apps and the OS8 shell continue to call `/api/*` on the bare `localhost:8888` origin without the `X-OS8-App-Id` header — for v1 this is acceptable because native apps and the shell are trusted code; tighten later if a native app surface needs per-app scoping.
+External apps' direct calls to `/api/*` on the OS8 main origin (`localhost:8888/api/...`) are blocked by browser CORS — different origin, no CORS headers on those routes. Same-origin attempts on the subdomain are caught by the scoped middleware above.
+
+**Phase 4 PR 4.6 (`os8ai/os8#53`).** The "trust the bare-origin caller" gap was tightened. Native apps and the OS8 shell still call `/api/*` on the bare `localhost:8888` origin without the header, but the `requireAppContext` middleware now enforces an explicit **origin allowlist** (only `localhost` / `127.0.0.1` on the OS8 port) instead of the v1 "no header → trust" rule. Server-internal callers (catalog scheduler, periodic health-checks) authenticate via `X-OS8-Internal-Token` matching the per-instance `_internal_call_token` (seeded by migration 0.6.0; mirrored to `process.env.OS8_INTERNAL_CALL_TOKEN` at startup). Rollback escape hatch: set `OS8_REQUIRE_APP_CONTEXT_PERMISSIVE=1` in the launch env to revert to v1 behavior.
 
 The scoped surface adds zero friction for app authors **when they use the SDK** (§6.3.3) — the SDK calls relative URLs and the browser sends them to the same origin.
 
@@ -903,6 +974,7 @@ Capabilities to surface (v1):
 - `x` → `<slug>.localhost:8888/_os8/api/x/*`
 - `google.calendar.readonly` / `google.drive.readonly` / `google.gmail.readonly` → scoped Google routes
 - `mcp.<server>.<tool>` → `<slug>.localhost:8888/_os8/api/mcp/<server>/<tool>`
+- `mcp.<server>.*` (PR 4.7) → grants ALL current AND future tools registered by `<server>`. The trust grant scopes to the server itself; if the MCP server registers a new tool tomorrow, the app can call it without re-install. JSON-schema validation rejects `mcp.*.*`, bare `mcp.*`, and `mcp.<server>.*.<tool>` (catch-all forms that would broaden trust beyond a single named server). The runtime checker is intentionally narrow to MCP-only wildcards as defense-in-depth.
 
 #### 6.3.3 `window.os8` SDK (BrowserView preload)
 
@@ -1146,6 +1218,33 @@ When os8.ai publishes a new resolved commit:
    - If `user_branch` exists: three-way merge `user/main` onto `<targetCommit>`. Clean → prompt accept. Conflict → surface in app's source sidebar with `git status` summary; user resolves manually.
 6. Verified-channel apps with `auto_update = 1` (default OFF): only auto-applies if `user_branch` is null. With user edits, never auto-updates.
 
+**Phase 4 close-out (PR 4.2 = `os8ai/os8#48`).** The auto-update path
+ships with two operational decisions:
+
+- **Smart restart policy.** The auto-updater itself doesn't restart
+  processes. After `AppCatalogService.update` bumps the apps row, the
+  existing app-process supervisor detect-and-restarts on next launch
+  *only when start-relevant files changed* (`package.json`, lockfile,
+  the binary referenced by `start.argv`). Pure source edits flow
+  through Vite HMR without a restart. Fallback if the heuristic
+  misfires: "always restart with notification" — supervisor-layer
+  change, not auto-updater.
+- **User-facing toast.** On apply, OS8 shows a bottom-right toast
+  ("`<slug>` updated · now on `<sha7>`") so the change isn't silent.
+  Failures show a warning toast with the error message.
+  `app_store.auto_update.notify_on_apply` setting (seeded by migration
+  0.6.0) controls the toast; default ON.
+
+**Web-side complement (PR 4.3 = `os8ai/os8dotai#16` + desktop
+`os8ai/os8#51`).** Signed-in users browsing `/apps/<slug>` see an
+"Update available" badge when their installed SHA lags the catalog SHA.
+Driven by a daily desktop heartbeat to `POST /api/account/installed-apps`
+that reports the user's installed external apps. Heartbeat is best-
+effort; opt-out via the same path as telemetry. Schema:
+`InstalledApp` model with `(user_id, app_slug)` unique; omit-implies-
+uninstall semantics so a desktop uninstall reflects on the next
+heartbeat.
+
 ### 6.10 Uninstall flow
 
 Right-click on icon → "Uninstall…".
@@ -1283,7 +1382,16 @@ Per-app Settings → Secrets pane allows post-install editing. Defer keychain en
 - `surface: desktop-stream` for native GUIs via noVNC.
 - Soft kill on resource limit excess.
 - Sparse-checkout for large repos.
-- Telemetry on install success/fail.
+- ~~Telemetry on install success/fail.~~ **Done in Phase 4 PR 4.4 +
+  4.5.** Opt-in (default OFF; first-install consent moment). Sends
+  `kind / adapter / framework / channel / slug / commit /
+  failurePhase / failureFingerprint / durationMs / os / arch /
+  overrideReason`. Allowlist-sanitized (every other key dropped).
+  Failure fingerprint = SHA-256 of stripped error line, never the raw
+  line. Anonymous client ID is a random UUID; user can rotate via
+  Settings. Server re-hashes with HMAC + secret salt before storage.
+  Curator dashboard at `/internal/telemetry/install` (auth-gated to
+  `OS8_CURATORS` allowlist).
 
 ---
 
@@ -1342,17 +1450,44 @@ Resolved-since-v1:
 
 Genuinely open:
 
-1. **Native-app/`requireAppContext` rollout cadence.** v1 leaves native React apps and the OS8 shell trusted (no `X-OS8-App-Id` requirement on `/api/*` for them). When a native app starts wanting per-app scoping (e.g. for multi-tenant features), tighten enforcement. Track as a follow-up.
+1. ~~**Native-app/`requireAppContext` rollout cadence.**~~ **Done in
+   Phase 4 PR 4.6 (`os8ai/os8#53`).** Strict origin allowlist + in-process
+   token escape hatch + permissive rollback env. v1 trust-by-default
+   gap closed.
 2. **`/apps` page caching.** Spec says ISR (60s); confirm on first deploy that this matches sync cadence acceptably.
 3. **Idle timeout default value.** 30 min suggested; surface as Settings slider (5 min – 4h, plus "never").
-4. **Capability granularity for `mcp.*`.** `mcp.<server>.<tool>` is fine-grained but verbose. Consider supporting wildcards: `mcp.<server>.*` after first deploy if curators want it.
+4. ~~**Capability granularity for `mcp.*`.**~~ **Done in Phase 4 PR 4.7
+   (`os8ai/os8#46`).** `mcp.<server>.*` accepted; `mcp.*.*` / `mcp.*` /
+   nested wildcards rejected at JSON schema. Wildcard semantics:
+   "all current AND future tools registered by the server".
 5. **Lockfile recognition for `bun.lockb`.** Bun's binary lockfile needs a different verification path from text lockfiles. Confirm CI behavior in PR 0.4.
-6. **`window.os8` SDK in TypeScript.** Ship type definitions (`@types/os8` or similar) in the auto-generated CLAUDE.md or as an installable npm package; pick one for v1.
+6. ~~**`window.os8` SDK in TypeScript.**~~ **Done in Phase 4 PR 4.9
+   (`os8ai/os8#50`).** Both surfaces ship: in-folder `os8-sdk.d.ts`
+   per PR 1.21 + `@os8/sdk-types` npm package at `os8ai/os8-sdk-types`.
+   Drift-check CI guards alignment between preload + .d.ts.
 7. **Asset CDN migration.** Catalog assets via raw GitHub URLs may bump rate limits; if so, migrate to Vercel Blob in v2.
 8. **`requireAppContext` on which APIs exactly.** Inventory all `/api/*` routes and decide which require app context for external-app callers. Some are obvious (`/api/connections/*` for OAuth tokens); others (`/api/system/*`) need a call.
 9. **`runtime.package_manager: auto` resolution conflicts.** Multiple lockfiles in the same repo (rare but real). Define precedence: `pnpm-lock.yaml > yarn.lock > bun.lockb > package-lock.json`.
 10. **Auto-update merge UX for non-trivial conflicts.** Spec says surface in app sidebar; spec out the actual UI in PR 1.25.
-11. **Cross-platform smoke matrix.** Decide which OSes block release. Recommend: macOS (primary dev), Linux (primary user). Windows is best-effort in v1.
+11. ~~**Cross-platform smoke matrix.**~~ **Done in Phase 4 PR 4.8
+    (`os8ai/os8#52` + catalog repos).** `windows-2022` promoted to gating
+    across all four repos (os8 desktop + 2× catalog + os8dotai). Manual
+    Windows install smoke (G4) pending Leo's pass.
+12. ~~**(Combined with #11)**~~ Cross-platform: closed in PR 4.8.
+
+**Phase 4 added open items (Phase 5 candidates):**
+
+- **os8.ai session token for desktop heartbeat.** PR 4.3 ships the
+  installed-apps heartbeat method (`AppCatalogService.reportInstalledApps`)
+  and the os8.ai endpoint (`POST /api/account/installed-apps`), but the
+  middle is gated on `getSessionCookie()` returning a real cookie.
+  AccountService caches profile data only — no token storage. A future
+  PR plumbs the session cookie from sign-in into AccountService so the
+  heartbeat goes live. Until then: badges only show for users who
+  manually self-report (no path).
+- **Telemetry hash salt rotation cadence.** Annual default per
+  `os8dotai/SECURITY.md` (added in PR 4.5). Revisit if signal of
+  compromise.
 
 ---
 
