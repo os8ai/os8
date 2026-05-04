@@ -40,3 +40,13 @@ jobs:
       - name: Check SDK type drift (PR 4.9)
         if: matrix.os == 'ubuntu-latest'
         run: npm run check:sdk-drift
+
+      # Phase 5 PR 5.2 — also cross-reference the published @os8/sdk-types
+      # package on npm. continue-on-error: true initially so a desktop PR
+      # doesn't have to wait on a fresh npm publish; the warning gets noisy
+      # as drift accumulates. Flip to hard-fail 30 days after the v1.0.0
+      # publish has been stable.
+      - name: Check SDK type drift vs published npm package (PR 5.2)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: npm run check:sdk-drift -- --include-published

@@ -83,6 +83,14 @@
     "tree-kill": "^1.2.2",
     "ws": "^8.19.0"
   },
+  "peerDependencies": {
+    "@os8/sdk-types": ">=1.0.0 <2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@os8/sdk-types": {
+      "optional": true
+    }
+  },
   "build": {
     "appId": "com.os8.app",
     "productName": "OS8",
