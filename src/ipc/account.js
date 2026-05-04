@@ -27,6 +27,19 @@ function registerAccountHandlers({ db, mainWindow }) {
     AccountService.signOut(db);
     return { success: true };
   });
+
+  // Phase 5 PR 5.1 — share-installed-apps opt-out toggle. The renderer's
+  // account section surfaces this next to the sign-in state; default ON
+  // when signed in, OFF clears the cached session cookie so the next
+  // heartbeat short-circuits.
+  ipcMain.handle('account:get-share-installed-apps', () => {
+    return AccountService.getShareInstalledApps(db);
+  });
+
+  ipcMain.handle('account:set-share-installed-apps', (_e, enabled) => {
+    AccountService.setShareInstalledApps(db, !!enabled);
+    return { success: true, enabled: !!enabled };
+  });
 }
 
 module.exports = registerAccountHandlers;

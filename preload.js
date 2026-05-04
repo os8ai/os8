@@ -313,6 +313,9 @@ contextBridge.exposeInMainWorld('os8', {
     onSignedIn: (cb) => {
       ipcRenderer.on('account:signed-in', (e, data) => cb(data));
     },
+    // Phase 5 PR 5.1 — share-installed-apps opt-out toggle.
+    getShareInstalledApps: () => ipcRenderer.invoke('account:get-share-installed-apps'),
+    setShareInstalledApps: (enabled) => ipcRenderer.invoke('account:set-share-installed-apps', enabled),
   },
 
   // Data Storage (memory tables)

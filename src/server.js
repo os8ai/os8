@@ -317,13 +317,15 @@ function scheduleAppCatalogSync() {
         console.warn('[AutoUpdate] pass failed:', e.message);
       }
 
-      // PR 4.3 — installed-apps heartbeat. Best-effort; no-ops without
-      // an os8.ai session cookie. The endpoint at PR 4.3 (os8dotai #16)
-      // is already deployed; this side stays idle until a session-cookie
-      // mechanism for desktop ships in a follow-up.
+      // PR 4.3 — installed-apps heartbeat. Best-effort.
+      // Phase 5 PR 5.1: now reads the cached os8.ai session cookie from
+      // AccountService. Returns null when the user is signed out OR has
+      // toggled "Share installed apps" off; reportInstalledApps then
+      // short-circuits without a network call.
       try {
+        const AccountService = require('./services/account');
         const r = await AppCatalogService.reportInstalledApps(db, {
-          getSessionCookie: () => null, // TODO(PR 4.3 follow-up): plumb session cookie from AccountService
+          getSessionCookie: () => AccountService.getSessionCookie(db),
         });
         if (r.ok) {
           console.log(`[InstalledApps] heartbeat sent: ${r.count} apps (${r.removed} removed)`);
