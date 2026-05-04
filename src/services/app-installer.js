@@ -283,7 +283,13 @@ const AppInstaller = {
     }
 
     // 1. Resolve manifest from local catalog.
-    const entry = await AppCatalogService.get(db, job.external_slug, { channel: job.channel });
+    // Phase 5 PR 5.6 — lazy-refresh when the cached row is older than 5
+    // minutes. Symmetric with app-store:render-plan; a defense-in-depth
+    // catch for the brief window between render-plan and install start.
+    const entry = await AppCatalogService.get(db, job.external_slug, {
+      channel: job.channel,
+      refreshIfOlderThan: 5 * 60_000,
+    });
     if (!entry) {
       throw new Error(`app '${job.external_slug}' not in local catalog (run sync first)`);
     }
