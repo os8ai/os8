@@ -6,26 +6,25 @@
 
 > **Important framing.** Phase 4 (`docs/phase-4-plan.md`) was the first post-v1 phase — *maturation + observability*. It shipped 14 PRs across five repos (telemetry, auto-update, MCP wildcards, strict middleware, Windows CI, the npm SDK, the Playwright harness). Phase 4 deliberately deferred three follow-ups so the parent PRs could merge without growing further: (1) the os8.ai session cookie that lights up the desktop heartbeat, (2) the actual NPM publish of `@os8/sdk-types`, (3) flipping `OS8_4_6_STRICT=1` in the E2E workflow + fleshing out the harness specs. Those follow-ups are part of the Phase 5 first wave — Phase 4's instrumentation is on but dim until they land.
 >
-> Phase 5's theme: **lifecycle completeness + telemetry-driven sharpening**. Phase 4 wired the dashboard but no soak time has elapsed (telemetry shipped 2026-05-03; this plan is written 2026-05-03), so Phase 5 scope is derived from (a) the three Phase 4 follow-ups above, (b) deferred-items entries with fired triggers (#34, #35), and (c) deferred-items entries that close visible lifecycle gaps the spec already promised but never wired (#10 three-way merge UI, #11 community auto-update, #12 reinstall-from-orphan, #32 sync-now). Each promotion is justified in §1 against a spec section, deferred-items entry, or Phase 4 follow-up.
+> Phase 5's theme: **lifecycle completeness + telemetry-driven sharpening**. Phase 4 wired the dashboard but no soak time has elapsed (telemetry shipped 2026-05-03; this plan is written 2026-05-03), so Phase 5 scope is derived from (a) the three Phase 4 follow-ups above, (b) deferred-items entries with fired triggers (#34, #35), and (c) deferred-items entries that close visible lifecycle gaps the spec already promised but never wired (#10 three-way merge UI, #12 reinstall-from-orphan, #32 sync-now). Each promotion is justified in §1 against a spec section, deferred-items entry, or Phase 4 follow-up. (Deferred-items #11 community auto-update was initially scoped, then cut at planning time — see PR 5.7 stub for rationale.)
 
 ---
 
 ## 1. Scope, ordering, inheritance
 
-Phase 5 ships **six tracks** that together turn Phase 4's instrumented v1.1 into a complete-lifecycle v1.2. The first track ("Phase 4 close-out") finishes work Phase 4 left dark. The remaining tracks promote five deferred-items entries with fired or about-to-fire triggers.
+Phase 5 ships **five tracks** that together turn Phase 4's instrumented v1.1 into a complete-lifecycle v1.2. The first track ("Phase 4 close-out") finishes work Phase 4 left dark. The remaining tracks promote five deferred-items entries with fired or about-to-fire triggers.
 
 | PR | Work unit | Surface | Track | Spec / deferred-items source | Smoke gate |
 |---|---|---|---|---|---|
 | 5.1 | Desktop session cookie → installed-apps heartbeat goes live | OS8 + os8.ai (light) | A — Phase 4 close-out | spec §11 "Phase 4 added open items" #1; phase-4-plan §7 #14 (gated follow-up) | yes — heartbeat smoke |
 | 5.2 | `@os8/sdk-types@1.0.0` published to npm + drift CI tightened | os8 + os8-sdk-types repo | A — Phase 4 close-out | spec §11 #6 (Phase 4 close-out: "needs `NPM_TOKEN` + `git tag v1.0.0 && git push --tags`") | — |
 | 5.3 | `OS8_4_6_STRICT=1` env flip in E2E workflow + flesh out install / dev-import / native-app specs | OS8 | A — Phase 4 close-out | phase-4-plan §10 (Phase 4 deferred to follow-ups: "set `OS8_4_6_STRICT=1`") | yes — E2E suite green w/ strict env |
-| 5.4 | Three-way merge UI for updates with user edits | OS8 | B — Lifecycle completeness | deferred-items.md #10; spec §6.9 sketches the UI but no surface exists | yes — manual merge smoke |
+| 5.4 | Three-way merge UI for updates with user edits (manual-edit + "Resolve with Claude" button) | OS8 | B — Lifecycle completeness | deferred-items.md #10; spec §6.9 sketches the UI but no surface exists | yes — manual merge smoke |
 | 5.5 | Reinstall-from-orphan restore UI | OS8 | B — Lifecycle completeness | deferred-items.md #12; spec §6.10 promises it ("Reinstall detects orphan data … and prompts to restore") but the install path doesn't check | yes — uninstall→reinstall smoke |
 | 5.6 | Catalog "Sync Now" button + per-install lazy refresh | OS8 | B — Lifecycle completeness | deferred-items.md #32 (Phase 3.5.5 incident triggered); IPC `app-store:sync-channel-now` already exists | — |
-| 5.7 | Community-channel auto-update opt-in | OS8 | C — Auto-update extension | deferred-items.md #11; spec §6.9 explicitly limits auto-update to Verified — Phase 5 widens once #5.4's merge UI lands so conflicts have a recovery path | — |
-| 5.8 | Docker adapter `runtime.volumes` (catalogs + adapter wiring) | OS8 + 2× catalog | D — Docker hardening | deferred-items.md #35 (linkding incident triggered); phase-3.5.5 retro identified the gap | yes — linkding persistence smoke |
+| 5.8 | Docker adapter `runtime.volumes` (catalogs + adapter wiring) + first-boot migration toast | OS8 + 2× catalog | D — Docker hardening | deferred-items.md #35 (linkding incident triggered); phase-3.5.5 retro identified the gap | yes — linkding persistence smoke |
 | 5.9 | os8.ai catalog-sync triggers Vercel deploy hook | os8.ai | E — Web-side polish | deferred-items.md #34 (Phase 3.5.5 manual-nudge pain triggered) | — |
-| 5.10 | Migration `0.7.0-app-store-lifecycle.js` | OS8 | F — Foundation | foundation for 5.4 (`update_status` already exists per PR 1.25 but `update_conflict_files` JSON column is new) + 5.5 (orphan-restore preference) + 5.8 (manifest schema validator update) | — |
+| 5.10 | Migration `0.7.0-app-store-lifecycle.js` | OS8 | F — Foundation | foundation for 5.4 (`update_conflict_files` JSON column) + 5.5 (orphan-restore preference) + 5.1 (`account.session_cookie`) | — |
 | 5.D1 | Spec + master-plan close-out updates | docs | G | always-separate (see phase-3-plan §1) | — |
 | 5.D2 | `docs/runtime-volumes.md` + `docs/sync-now.md` user references | docs | G | new — accompany 5.8 + 5.6 | — |
 | 5.D3 | `app-store-deferred-items.md` decisions log update | docs | G | always-separate | — |
@@ -48,11 +47,8 @@ Track B (Lifecycle completeness — partially sequential):
   5.5 (reinstall-from-orphan UI)   ── 5.10 (orphan-restore preference key); independent of 5.4
   5.6 (Sync Now + lazy refresh)    ── independent
 
-Track C (Auto-update extension):
-  5.7 (community auto-update)     ── 5.4 (conflict UI is the recovery path; gating on no-user-edits is symmetric to verified)
-
 Track D (Docker hardening):
-  5.8 (runtime.volumes)           ── 5.10 (schema bump); also touches both catalog repos
+  5.8 (runtime.volumes + first-boot toast) ── 5.10 (schema bump); also touches both catalog repos
 
 Track E (Web-side polish):
   5.9 (Vercel deploy hook)        ── independent
@@ -61,7 +57,9 @@ Track G (docs — always separate from code):
   5.D1, 5.D2, 5.D3 — file once each track lands and decisions are settled
 ```
 
-**Critical path within Phase 5** (longest chain): `5.10 → 5.4 → 5.7`. Roughly 3 PR-merges deep on the gating axis. Tracks A, D, E can run in parallel with the critical path.
+**Critical path within Phase 5** (longest chain): `5.10 → {5.4, 5.5, 5.8}`. 2 PR-merges deep — flatter than Phase 4's 3-deep critical path. Tracks A, E run in parallel with the critical path.
+
+(Track C — community-channel auto-update widening — was scoped initially but **cut from Phase 5** to give PR 5.4's manual-edit conflict UI soak time on Verified-only first. See §7.6 for the decision.)
 
 ### Test matrix
 
@@ -117,9 +115,9 @@ Verified against the working tree of `/home/leo/Claude/os8/` at audit time (`mai
 | Catalog "Sync Now" IPC channel exists | ✓ — `src/ipc/app-store.js:181-191` implements `app-store:sync-channel-now`. Reality: no UI button calls it; only the post-channel-toggle scheduler in `src/renderer/settings.js` invokes it. | **PR 5.6** adds a Sync-Now button to the catalog browser + an opportunistic per-install lazy refresh in `AppCatalogService.get` (refresh manifest_yaml against upstream when local row is older than N minutes). |
 | Docker adapter bind-mounts only `OS8_APP_DIR` and `OS8_BLOB_DIR` | ✓ — verified at `src/services/runtime-adapters/docker.js`. Manifests have no way to declare additional persistent paths (linkding incident: `/etc/linkding/data` was ephemeral). | **PR 5.8** adds `runtime.volumes: [{ container_path, persist?: boolean }]` to appspec-v2, validated by both catalog repos and the local validator. Adapter mounts each entry under `${BLOB_DIR}/_volumes/${basename}`. |
 | Vercel ISR fallback regenerates on demand | ✗ — newly-synced catalog slugs return 500 until a deploy regenerates the static-params list. `os8dotai/src/app/apps/[slug]/page.tsx:13-22` documents the workaround (pre-render every known slug at build time). | **PR 5.9** wires the catalog-sync route to call `process.env.VERCEL_DEPLOY_HOOK_URL` after a successful add (skipped on cron-only ticks where no manifest changed). The pre-render-everything workaround stays in tree as defense-in-depth. |
-| Auto-update path supports community channel | ✗ — `app-auto-updater.js:listEligible` filters `channel = 'verified'` (`src/services/app-auto-updater.js:55`). | **PR 5.7** widens the filter to `channel IN ('verified', 'community')` — gated on a per-channel settings key seeded by PR 5.10. Spec §6.9 ("Verified channel only") gets updated in PR 5.D1. |
-| Per-app settings flyout supports a per-channel auto-update toggle | ✓ — flyout at `src/renderer/app-settings-flyout.js` reads `app.auto_update`. The PATCH endpoint `/api/apps/:id/auto-update` accepts the value regardless of channel. The flyout's hint text is currently Verified-specific. | **PR 5.7** updates the hint text + (optionally) gates the toggle on `app_store.auto_update.community_enabled` setting being true. |
-| Migration runner accepts `0.7.0-…js` | ✓ — `src/services/migrator.js` runs any `<x.y.z>-<slug>.js` whose version > stored value. `package.json` is `0.6.0` (post-PR 4.11). | **PR 5.10** ships `0.7.0-app-store-lifecycle.js`: adds `apps.update_conflict_files TEXT` (JSON), seeds `app_store.orphan_restore.prompt = 'true'` and `app_store.auto_update.community_enabled = 'false'`, optionally seeds an empty `_internal_call_token` if the 0.6.0 migration's seed was skipped (defensive — verified at `src/migrations/0.6.0-app-store-telemetry.js`). |
+| Auto-update path supports community channel | ✗ — `app-auto-updater.js:listEligible` filters `channel = 'verified'` (`src/services/app-auto-updater.js:55`). | Originally PR 5.7 was scoped to widen the filter; **5.7 is cut from Phase 5** to give PR 5.4 soak time. The Verified-only filter stays. Phase 6 candidate (deferred-items #36). |
+| Per-app settings flyout supports a per-channel auto-update toggle | ✓ — flyout at `src/renderer/app-settings-flyout.js` reads `app.auto_update`. The PATCH endpoint `/api/apps/:id/auto-update` accepts the value regardless of channel. The flyout's hint text is currently Verified-specific. | Originally PR 5.7 was scoped to extend this; **5.7 is cut from Phase 5** so the flyout's Verified-only hint stays as-is. |
+| Migration runner accepts `0.7.0-…js` | ✓ — `src/services/migrator.js` runs any `<x.y.z>-<slug>.js` whose version > stored value. `package.json` is `0.6.0` (post-PR 4.11). | **PR 5.10** ships `0.7.0-app-store-lifecycle.js`: adds `apps.update_conflict_files TEXT` (JSON), `account.session_cookie TEXT`, `account.share_installed_apps INT`, seeds `app_store.orphan_restore.prompt = 'true'`, optionally seeds `_internal_call_token` if the 0.6.0 migration's seed was skipped (defensive — verified at `src/migrations/0.6.0-app-store-telemetry.js`). |
 
 **Net assessment.** Phase 5 is lower-risk than Phase 4 in three ways: (a) no trust-boundary changes (the strict middleware flip is already live); (b) no new repo-creation work; (c) the lifecycle gaps are visible and well-bounded — each promotion has a narrow file-set + a clear acceptance check.
 
@@ -128,7 +126,7 @@ The two genuinely tricky PRs are:
 - **PR 5.4 (three-way merge UI)** — git-style conflict resolution UI is one of the harder UI surfaces to get right. Fortunately we don't need to re-implement diff rendering: VS Code's `<<<<<<<` markers in conflicted files are perfectly readable, and the user's existing dev-mode setup (chokidar + AI agent) handles editing. The UI's job is *surface* (which files conflict, how to mark resolved, when to commit) — the resolution is the user's.
 - **PR 5.8 (Docker `runtime.volumes`)** — schema change touching three repos in lockstep. Phase 4 PR 4.7's MCP wildcard precedent is the template (also a three-repo schema change). Audit at write time: the catalog repos' `validate.yml` workflows pull `appspec-v2.json` from the local copy, so the validator update needs to land in all three places before any manifest can declare the new field.
 
-The remaining PRs (5.1, 5.2, 5.3, 5.5, 5.6, 5.7, 5.9, 5.10) are each ≤300 LOC of focused work against well-defined seams.
+The remaining PRs (5.1, 5.2, 5.3, 5.5, 5.6, 5.9, 5.10) are each ≤300 LOC of focused work against well-defined seams.
 
 ---
 
@@ -164,27 +162,23 @@ Phase 5:
     5.3 (E2E strict env + spec flesh-out)  ── independent
 
   Track B (Lifecycle completeness):
-    5.4 (three-way merge UI)        ── 5.10 (update_conflict_files column)
-    5.5 (reinstall-from-orphan UI)   ── 5.10 (orphan-restore setting); independent of 5.4
-    5.6 (Sync Now + lazy refresh)    ── independent
-
-  Track C (Auto-update extension):
-    5.7 (community auto-update)     ── 5.4 (conflict path needs a recovery surface);
-                                       5.10 (community_enabled setting)
+    5.4 (three-way merge UI + Resolve-with-Claude button) ── 5.10 (update_conflict_files column)
+    5.5 (reinstall-from-orphan UI)                        ── 5.10 (orphan-restore setting); independent of 5.4
+    5.6 (Sync Now + lazy refresh)                         ── independent
 
   Track D (Docker hardening):
-    5.8 (runtime.volumes)           ── 5.10 (schema bump); 2× catalog repos in lockstep
+    5.8 (runtime.volumes + first-boot toast) ── 5.10 (schema bump); 2× catalog repos in lockstep
 
   Track E (Web-side polish):
     5.9 (Vercel deploy hook)        ── independent
 
   Track G (docs):
-    5.D1 — files after Tracks A–E close
+    5.D1 — files after Tracks A, B, D, E close
     5.D2 — files alongside 5.6 + 5.8
     5.D3 — files when each track's items close
 ```
 
-**Critical path within Phase 5** (longest chain): `5.10 → 5.4 → 5.7`. Tracks A, D, E run in parallel with the critical path.
+**Critical path within Phase 5** (longest chain): `5.10 → {5.4, 5.5, 5.8}`. 2 PR-merges deep — flatter than Phase 4's 3-deep critical path. Tracks A, E run in parallel with the critical path.
 
 ---
 
@@ -616,19 +610,50 @@ async function renderMergeConflictBanner(app) {
         <button class="action-button action-button--primary" data-action="mark-resolved">
           I've resolved all conflicts — commit
         </button>
+        <button class="action-button" data-action="resolve-with-claude">
+          Resolve with Claude
+        </button>
         <button class="action-button" data-action="abort-merge">
           Abort the update
         </button>
       </div>
       <p class="merge-conflict-banner__hint">
-        Open each conflicted file (or ask Claude Code to). Look for <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code>
-        markers; remove them, keep the version you want, and save. Then click
-        "I've resolved all conflicts."
+        Open each conflicted file (or click <strong>Resolve with Claude</strong> to
+        copy a ready-to-paste prompt for your AI agent). Look for
+        <code>&lt;&lt;&lt;&lt;&lt;&lt;&lt;</code> markers; remove them, keep the
+        version you want, and save. Then click "I've resolved all conflicts."
       </p>
     </div>
   `;
 }
 ```
+
+### "Resolve with Claude" button — contract
+
+The button is OS8-flavored — small affordance that bridges to the user's existing AI agent (Claude Code in the OS8 terminal, or any external editor). It does NOT invoke an LLM directly from the renderer; it copies a structured prompt to the clipboard for the user to paste into their agent. ~30 LOC total.
+
+```js
+// src/renderer/merge-conflict-banner.js — addition
+async function onResolveWithClaudeClick(state) {
+  const lines = [
+    `I'm hitting a git merge conflict in this OS8 app. The auto-updater tried to merge upstream commit \`${state.targetCommit}\` onto my edits but ${state.files.length} file(s) need resolution:`,
+    '',
+    ...state.files.map(f => `- \`${f.path}\` (${conflictStatusLabel(f.status)})`),
+    '',
+    'For each file, please:',
+    '1. Read the file and find the `<<<<<<<` / `=======` / `>>>>>>>` conflict markers.',
+    '2. Decide which side to keep (or merge both intents).',
+    '3. Remove all conflict markers.',
+    '4. Save.',
+    '',
+    'When you\'re done, click "I\'ve resolved all conflicts" in the OS8 banner.',
+  ];
+  await navigator.clipboard.writeText(lines.join('\n'));
+  showToast('Resolution prompt copied to clipboard — paste into Claude Code');
+}
+```
+
+This avoids the LLM-from-the-renderer security surface (no API keys, no egress from the BrowserView), aligns with OS8's AI-first UX, and gives non-git-fluent users a fast path to delegate. Users without an AI agent in the loop just ignore the button and use the manual-edit flow.
 
 ### Telemetry hook
 
@@ -661,7 +686,7 @@ This lets the curator dashboard surface "what % of auto-updates conflict" — fe
 
 ### Smoke gate
 
-**G3: Manual conflict resolution smoke required before PR 5.7 merges.** Use worldmonitor as the test app:
+**G3: Manual conflict resolution smoke required before PR 5.D1 close-out.** Use worldmonitor as the test app:
 
 1. Install worldmonitor, enable Auto-Update.
 2. Edit a file in `~/os8/apps/<id>/` (e.g. add a comment to `src/App.tsx`); commit auto-fires via the chokidar watcher.
@@ -694,12 +719,12 @@ This lets the curator dashboard surface "what % of auto-updates conflict" — fe
 
 ### Depends on
 
-PR 1.25 (`AppCatalogService.update` 3-way merge backend), PR 4.2 (auto-updater + toast subscriber), PR 5.10 (`update_conflict_files` column). **Required by PR 5.7 (community auto-update needs the conflict UI as the recovery path).**
+PR 1.25 (`AppCatalogService.update` 3-way merge backend), PR 4.2 (auto-updater + toast subscriber), PR 5.10 (`update_conflict_files` column). PR 5.7 (community auto-update) was scoped to depend on this but **was cut from Phase 5** (see PR 5.7 stub above).
 
 ### Open sub-questions
 
-1. **Should the banner offer "Use upstream version" / "Use my version" per file?** Most users won't be deep enough in git to know what those mean. **Recommendation:** ship the manual-edit flow first; add per-file "ours/theirs" buttons in a polish PR if smoke surfaces friction.
-2. **Should we wire Claude Code into the resolution flow?** A "Have Claude resolve this" button could trigger a code-action with the agent in the user's existing dev-mode session. **Recommendation:** ship without; promote if the manual-resolve workflow proves painful in real use. The conflict markers are perfectly readable to LLMs already.
+1. **Should the banner offer "Use upstream version" / "Use my version" per file?** Most users won't be deep enough in git to know what those mean. **Recommendation:** ship the manual-edit flow first + the "Resolve with Claude" button for AI-agent users; add per-file "ours/theirs" buttons in a polish PR if smoke surfaces friction (e.g. users without an AI agent in the loop freezing on conflict markers).
+2. **Should the "Resolve with Claude" prompt include the actual file contents?** Could pre-fill the prompt with the conflicted regions inline so the user pastes a self-contained brief. **Recommendation:** ship with paths-only first; clipboard payload stays small + the user's agent has filesystem access already. Promote to inline content if smoke shows users can't get their agent to find the files.
 
 ---
 
@@ -983,125 +1008,22 @@ PR 3.5 (sync-channel-now IPC handler exists). Independent of every other Phase 5
 
 ---
 
-## PR 5.7 — Community-channel auto-update opt-in
+## PR 5.7 — Community-channel auto-update opt-in *(CUT from Phase 5)*
 
-**Goal.** Spec §6.9: *"Verified-channel apps with `auto_update = 1` (default OFF) … only auto-applies if `user_branch` is null."* Phase 4 PR 4.2 implemented this for Verified only. Deferred-items #11 asks whether Community-channel apps should also support auto-update — the answer was deferred until #10 (three-way merge UI) shipped, because conflicts are more likely on community apps (lighter curation = more upstream churn). With PR 5.4 landing, conflicts have a recovery path. PR 5.7 widens the auto-updater's filter to `verified` + `community`, gated by a new opt-in setting.
+**Status.** Initially scoped (deferred-items.md #11), **cut from Phase 5** during planning at Leo's direction. Defer to Phase 6 to give PR 5.4's manual-edit conflict UI soak time on Verified-only first.
 
-### Files
+**Why cut.** Widening auto-update to a higher-churn channel at the same release that ships the conflict-resolution UI compounds risk. If 5.4 reveals friction in real-world conflict resolution, we'd rather catch it on Verified (lower volume, curator-vetted manifests) before exposing the wider Community surface to the same path.
 
-- **Modify:** `/home/leo/Claude/os8/src/services/app-auto-updater.js:listEligible` — change the WHERE clause from `channel = 'verified'` to `channel IN ('verified', 'community')`, AND only when the per-channel setting is enabled.
-- **Modify:** `/home/leo/Claude/os8/src/renderer/app-settings-flyout.js` — extend the auto-update toggle's hint text + interactivity. For Verified: same as today. For Community: enabled when `app_store.auto_update.community_enabled = true`, disabled with explanatory hint otherwise. For Developer Import: still disabled.
-- **Modify:** `/home/leo/Claude/os8/src/renderer/settings.js` — add a new toggle in the App Store settings section: "Allow auto-update for Community-channel apps." Defaults OFF (seeded by PR 5.10). Hint: "Community apps update less predictably than Verified. We recommend keeping this off unless you actively trust a community app's curator."
-- **Modify:** `/home/leo/Claude/os8/index.html` — settings + flyout DOM additions.
+**To resurrect (Phase 6 candidate):** the original spec is in this PR's git history. Trigger condition: PR 5.4 has shipped + ≥1 release of soak time has passed without recurring "merge conflict UX is broken" reports. Implementation cost was estimated at ~150 LOC (filter widening in `app-auto-updater.js:listEligible`, settings toggle, per-app flyout hint logic).
 
-### Setting + filter contract
-
-```js
-// src/services/app-auto-updater.js — modified listEligible
-function listEligible(db) {
-  const SettingsService = require('./settings');
-  const communityEnabled = SettingsService.get(db, 'app_store.auto_update.community_enabled') === 'true';
-
-  return db.prepare(`
-    SELECT id, external_slug, channel, upstream_resolved_commit,
-           update_to_commit, user_branch, manifest_yaml
-      FROM apps
-     WHERE app_type = 'external'
-       AND status = 'active'
-       AND auto_update = 1
-       AND update_available = 1
-       AND update_to_commit IS NOT NULL
-       AND (user_branch IS NULL OR user_branch = '')
-       AND channel IN ('verified', ${communityEnabled ? "'community'" : "'__never__'"})
-  `).all();
-}
-```
-
-(The `__never__` placeholder is a small parameterized-SQL quirk: SQLite doesn't have `IF` in WHERE clauses, so we conditionally include `'community'` in the IN list. The comment explains.)
-
-### Flyout hint logic
-
-```js
-// src/renderer/app-settings-flyout.js — modified hint section
-function getAutoUpdateHint(channel, communityEnabled) {
-  if (channel === 'verified') {
-    return {
-      enabled: true,
-      hint: 'OS8 will auto-apply Verified-channel updates when no local edits exist.',
-    };
-  }
-  if (channel === 'community' && communityEnabled) {
-    return {
-      enabled: true,
-      hint: 'OS8 will auto-apply Community-channel updates when no local edits exist. Community apps update less predictably than Verified — review the source if you\'re unsure.',
-    };
-  }
-  if (channel === 'community' && !communityEnabled) {
-    return {
-      enabled: false,
-      hint: 'Community auto-update is disabled. Enable it in Settings → App Store.',
-    };
-  }
-  return {
-    enabled: false,
-    hint: 'Auto-update is only available for Verified and Community-channel apps.',
-  };
-}
-```
-
-### Telemetry
-
-PR 5.7 doesn't add new telemetry kinds — auto-update events from PR 4.2 / 4.4 already include the `channel` field, so the dashboard cleanly distinguishes Verified vs Community success rates.
-
-### Tests
-
-`tests/app-auto-updater.community.test.js`:
-
-| Scenario | Assertion |
-|---|---|
-| Community app with `auto_update=1`, community_enabled=false | not eligible |
-| Same, community_enabled=true | eligible |
-| Same, but user_branch set | not eligible (gate inherited from PR 4.2) |
-| Mixed Verified + Community batch, community_enabled=true | both processed |
-| Developer-Import app with `auto_update=1` somehow | not eligible (channel filter) |
-
-`tests/app-settings-flyout.community-hint.test.js` (manual smoke):
-- Open flyout for Verified app: hint = "Verified… auto-apply".
-- Open flyout for Community app, setting OFF: hint = "Community auto-update is disabled. Enable…".
-- Open flyout for Community app, setting ON: hint = "Community… less predictably".
-- Toggle setting ON in Settings → reopen flyout → toggle is now interactive.
-
-### Smoke gate
-
-No new gate. PR 5.4's G3 (manual conflict resolution) already validates the conflict-recovery path that gates this PR.
-
-### Acceptance criteria
-
-- New "Allow auto-update for Community-channel apps" toggle in Settings → App Store, default OFF.
-- Per-app flyout enables the auto-update toggle for Community apps when the setting is ON.
-- `processAutoUpdates` includes Community apps when the setting is ON.
-- Auto-update conflicts on Community apps fire the merge-conflict banner from PR 5.4.
-
-### Cross-platform notes
-
-None — settings + filter logic are platform-agnostic.
-
-### Spec deviations
-
-- **Community auto-update is new.** Spec §6.9 explicitly limits to Verified ("Verified-channel apps with `auto_update = 1`"). PR 5.D1 updates §6.9 to reflect the wider scope + the new setting.
-
-### Depends on
-
-PR 4.2 (auto-updater + flyout), PR 5.4 (conflict UI as the recovery path), PR 5.10 (`community_enabled` setting). Independent of PRs 5.1, 5.2, 5.3, 5.5, 5.6, 5.8, 5.9.
-
-### Open sub-questions
-
-1. **Should the setting default ON for users who already have a Community app installed?** Current default OFF means Community auto-update is opt-in, which is the safer posture. **Recommendation:** keep default OFF; surface the setting in PR 5.D1's user-facing docs.
-2. **Should we also auto-update Developer-Import apps?** **Recommendation:** no — Dev-Import is by definition unreviewed; auto-applying changes there is unsafe. Document in PR 5.D1.
+**What this means for the rest of Phase 5:**
+- PR 5.4's conflict UI is still load-bearing — auto-update on Verified can still hit conflicts.
+- PR 5.10 (migration 0.7.0) drops the `app_store.auto_update.community_enabled` setting seed.
+- Spec §6.9 stays as-is ("Verified channel only" remains accurate).
 
 ---
 
-## PR 5.8 — Docker adapter `runtime.volumes` (catalogs + adapter wiring)
+## PR 5.8 — Docker adapter `runtime.volumes` + first-boot migration toast
 
 **Goal.** Deferred-items #35. The Phase 3.5.5 linkding incident: linkding writes its SQLite DB + bookmark archives to `/etc/linkding/data` inside the container, but the docker adapter only bind-mounts `~/os8/apps/<id>` → `/app` and `~/os8/blob/<id>` → `/data`. After `docker rm`, the user's bookmarks are gone. PR 5.8 adds a `runtime.volumes` field to appspec-v2 letting manifests declare additional persistent paths; the adapter mounts each entry under `${BLOB_DIR}/_volumes/${basename}`.
 
@@ -1177,9 +1099,27 @@ function buildVolumeArgs(spec, blobDir) {
 }
 ```
 
-### Migration consideration
+### Migration consideration — first-boot toast + manual script
 
-For apps installed BEFORE PR 5.8 lands, the new volumes won't have hostside dirs; first-restart after upgrade creates them empty. For linkding specifically (only known affected app at audit time), users will lose their existing `/etc/linkding/data` content unless they manually copy from the still-running container before the upgrade. **PR 5.D2's user-facing docs must call this out clearly.** Future schema-bump migrations could add a "first-restart-after-upgrade" hook to back up the container's existing volume content; out of scope for v1.
+For apps installed BEFORE PR 5.8 lands, the new volumes won't have hostside dirs; first-restart after upgrade creates them empty. For linkding specifically (only known affected app at audit time), users will lose their existing `/etc/linkding/data` content unless they manually copy from the still-running container before the upgrade.
+
+**PR 5.8 ships two mitigations** (auto-backup hook is over-engineering for a single fixture today; revisit when a second affected app surfaces):
+
+1. **One-time first-boot toast** (~30 LOC). On first boot after the 0.7.0 migration, scan installed apps for ones with `app_type='external' AND runtime_kind='docker' AND manifest_yaml LIKE '%runtime.volumes%'` (or, more robustly, parse manifest_yaml and look for declared volumes whose host-side `_volumes/<basename>` directory doesn't yet exist). For each match, surface a non-dismissable toast: `"<slug>: docker volume migration available — run \`tools/migrate-docker-volume.sh <slug>\` to preserve your data before next restart. <Open docs>"`. The toast clears once the user acknowledges or once the volume's host dir contains data. Suppression key: `app_store.docker_volume_migration_acknowledged.<appId>` (per-app setting).
+
+2. **`tools/migrate-docker-volume.sh`** (~50 LOC). Single-purpose helper:
+   ```bash
+   ./tools/migrate-docker-volume.sh <slug>
+   #   1. Look up appId from os8.db apps table.
+   #   2. Read manifest_yaml's runtime.volumes list.
+   #   3. For each declared volume:
+   #      - docker exec <container> tar -C <container_path> -cf - . | tar -xf - -C <BLOB_DIR>/_volumes/<basename>
+   #      - Verify byte count matches.
+   #   4. Mark migration acknowledged (via SQL settings update).
+   ```
+   Requires the user's container to be running (otherwise there's nothing to copy). Documented in PR 5.D2.
+
+Future schema-bump migrations could add a fully-automatic "first-restart-after-upgrade" hook to back up the container's existing volume content; deferred to a follow-up if a second docker app surfaces this pain.
 
 ### Tests
 
@@ -1238,7 +1178,7 @@ PR 2.5 (docker adapter), PR 5.10 (schema validator update for `runtime.volumes`)
 ### Open sub-questions
 
 1. **Should we auto-detect common framework patterns?** linkding's `/etc/linkding/data` isn't discoverable from the image alone. Some images use VOLUME instructions in their Dockerfile that we could parse. **Recommendation:** ship explicit-only; auto-detect is a polish PR if the manifest-author UX gets painful.
-2. **Backup-on-upgrade hook for existing apps?** When PR 5.8 ships, existing linkding installs lose their data on container recreate (unless manually backed up). **Recommendation:** document loudly in PR 5.D2 + provide a one-shot script `tools/migrate-docker-volume.sh` that copies a still-running container's volume content to the new host path. Out of automation scope for v1.
+2. ~~Backup-on-upgrade hook for existing apps?~~ **Resolved:** ship the one-time first-boot toast + the `tools/migrate-docker-volume.sh` script (see "Migration consideration" above). Auto-backup hook deferred until a second affected docker app surfaces.
 
 ---
 
@@ -1328,7 +1268,7 @@ PR 0.8 (catalog-sync route exists), PR 3.4 (multi-channel sync). Independent of 
 
 ## PR 5.10 — Migration `0.7.0-app-store-lifecycle.js`
 
-**Goal.** Foundation for PRs 5.4 (`update_conflict_files` column), 5.5 (`orphan_restore.prompt` setting), 5.7 (`auto_update.community_enabled` setting), and 5.1 (`account.session_cookie` + `share_installed_apps` columns). Bumps `package.json` version to `0.7.0`.
+**Goal.** Foundation for PRs 5.4 (`update_conflict_files` column), 5.5 (`orphan_restore.prompt` setting), 5.1 (`account.session_cookie` + `share_installed_apps` columns), 5.8 (`docker_volume_migration_acknowledged.<appId>` per-app setting key — written ad-hoc by the toast acknowledgment, not seeded). Bumps `package.json` version to `0.7.0`.
 
 ### Files
 
@@ -1342,7 +1282,7 @@ PR 0.8 (catalog-sync route exists), PR 3.4 (multi-channel sync). Independent of 
 // src/migrations/0.7.0-app-store-lifecycle.js
 module.exports = {
   version: '0.7.0',
-  description: 'App Store v1.2: lifecycle completeness — merge conflict storage, orphan-restore preference, community auto-update opt-in, session cookie cache',
+  description: 'App Store v1.2: lifecycle completeness — merge conflict storage, orphan-restore preference, session cookie cache',
   async up({ db, logger }) {
     // 1. apps.update_conflict_files — JSON list of currently-conflicted file
     //    paths from the last failed merge. Lets the renderer surface the
@@ -1371,7 +1311,6 @@ module.exports = {
       }
     };
     seed('app_store.orphan_restore.prompt', 'true');           // PR 5.5: ON by default
-    seed('app_store.auto_update.community_enabled', 'false');  // PR 5.7: OFF by default
 
     // 4. Defensive — re-seed _internal_call_token if absent. PR 4.11 should
     //    have done this; defensive in case of a botched 0.6.0 run.
@@ -1413,8 +1352,6 @@ test('0.7.0 migration is idempotent', async () => {
 
   const orphan = db.prepare(`SELECT value FROM settings WHERE key = 'app_store.orphan_restore.prompt'`).get();
   expect(orphan.value).toBe('true');
-  const community = db.prepare(`SELECT value FROM settings WHERE key = 'app_store.auto_update.community_enabled'`).get();
-  expect(community.value).toBe('false');
 
   // Re-run.
   await migration.up({ db, logger: console });
@@ -1427,12 +1364,13 @@ test('0.7.0 migration preserves existing settings', async () => {
   db.exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);`);
   db.exec(`CREATE TABLE account (id TEXT PRIMARY KEY);`);
   db.exec(`CREATE TABLE apps (id TEXT PRIMARY KEY);`);
-  db.prepare(`INSERT INTO settings (key, value) VALUES ('app_store.auto_update.community_enabled', 'true')`).run();
+  // User had toggled orphan-restore prompt off in a prior session; don't clobber.
+  db.prepare(`INSERT INTO settings (key, value) VALUES ('app_store.orphan_restore.prompt', 'false')`).run();
 
   await migration.up({ db, logger: console });
 
-  const community = db.prepare(`SELECT value FROM settings WHERE key = 'app_store.auto_update.community_enabled'`).get();
-  expect(community.value).toBe('true');     // user choice respected
+  const orphan = db.prepare(`SELECT value FROM settings WHERE key = 'app_store.orphan_restore.prompt'`).get();
+  expect(orphan.value).toBe('false');     // user choice respected
 });
 ```
 
@@ -1441,7 +1379,7 @@ test('0.7.0 migration preserves existing settings', async () => {
 - `npm start` against an existing 0.6.x DB upgrades cleanly; re-run is a no-op.
 - Fresh installs see the new columns + seeds.
 - `_internal_call_token` is preserved across upgrades; only re-seeded if absent.
-- User-set settings (e.g. user manually flipped `app_store.auto_update.community_enabled` between releases) are not overwritten.
+- User-set settings (e.g. user manually flipped `app_store.orphan_restore.prompt` between releases) are not overwritten.
 
 ### Cross-platform notes
 
@@ -1479,11 +1417,12 @@ Phase 5 touches all five repos. Dependencies and sequencing:
 │  5.1 (session cookie plumbing)   │ ─┼── │       cookie in JSON response)  │
 │  5.2 (drift CI tighten)          │  │   │  5.9 (catalog-sync deploy hook) │
 │  5.3 (E2E strict env + specs)    │  │   │                                  │
-│  5.4 (merge conflict UI)         │  │   └──────────────────────────────────┘
+│  5.4 (merge conflict UI +        │  │   └──────────────────────────────────┘
+│       Resolve-with-Claude)       │  │
 │  5.5 (orphan restore)            │  │
 │  5.6 (Sync Now button)           │  │
-│  5.7 (community auto-update)     │  │
-│  5.8 (docker volumes adapter)    │  │
+│  5.8 (docker volumes adapter +   │  │
+│       first-boot toast)          │  │
 └──────────────────────────────────┘  │
                                        ↓ schema bump
 ┌──────────────────────────────────┐    ┌──────────────────────────────────────┐
@@ -1498,8 +1437,7 @@ Phase 5 touches all five repos. Dependencies and sequencing:
 
 | Constraint | Reason | Order |
 |---|---|---|
-| 5.10 (migration) before 5.4, 5.5, 5.7 | columns + settings need to exist | 5.10 → {5.4, 5.5, 5.7} |
-| 5.4 (merge conflict UI) before 5.7 (community auto-update) | conflict path is the recovery surface; community apps churn more | 5.4 → 5.7 |
+| 5.10 (migration) before 5.4, 5.5, 5.8 | columns + settings need to exist | 5.10 → {5.4, 5.5, 5.8} |
 | 5.1 desktop side after os8.ai-side cookie change deploys | os8.ai's finalize route must include `sessionCookie` before desktop reads it | os8.ai 5.1 → desktop 5.1 |
 | 5.2 drift-CI tighten before npm publish workflow fires | CI must accept "package not yet published" gracefully | 5.2 desktop → push v1.0.0 tag |
 | 5.8 schema land in os8 before catalog repos | desktop's appspec-v2.json is canonical; catalogs fetch | 5.8 (os8) → 5.8 (catalogs) |
@@ -1520,12 +1458,9 @@ Week 1:
   5.3 (E2E strict env + spec flesh-out)      — desktop, gates nothing else but flips dim CI surface
 
 Week 2:
-  5.4 (merge conflict UI)                    — desktop, gates 5.7
+  5.4 (merge conflict UI + Resolve-with-Claude) — desktop, no longer gates anything (5.7 cut)
   5.5 (reinstall-from-orphan)                — desktop, independent of 5.4
-  5.8 (docker volumes)                       — desktop schema first, then both catalog repos
-
-Week 3:
-  5.7 (community auto-update)                — desktop, after 5.4
+  5.8 (docker volumes + first-boot toast)    — desktop schema first, then both catalog repos
 
 Doc PRs throughout:
   5.D2 (runtime-volumes.md + sync-now.md)    — files alongside 5.6 + 5.8
@@ -1533,7 +1468,7 @@ Doc PRs throughout:
   5.D1 (spec + master-plan close-out)        — files at end of phase
 ```
 
-This order minimizes stalls (each week has independent work for parallel reviewers) and keeps the longest dependency chain (5.10 → 5.4 → 5.7) front-loaded.
+This order fits comfortably in two weeks (down from three before 5.7 was cut). Tracks A and E run entirely in Week 1 — independent of each other and of the foundation. Track B's three PRs land in Week 2 once the migration is stable; they have no inter-dependencies.
 
 ---
 
@@ -1541,7 +1476,7 @@ This order minimizes stalls (each week has independent work for parallel reviewe
 
 | Migration | Version | What it adds | Why |
 |---|---|---|---|
-| `0.7.0-app-store-lifecycle.js` (PR 5.10) | 0.7.0 | `apps.update_conflict_files` (TEXT, JSON); `account.session_cookie` (TEXT); `account.share_installed_apps` (INT, default 1); `app_store.orphan_restore.prompt` (default 'true'); `app_store.auto_update.community_enabled` (default 'false'); defensive re-seed of `_internal_call_token` | Foundation for PRs 5.4, 5.5, 5.7, 5.1 |
+| `0.7.0-app-store-lifecycle.js` (PR 5.10) | 0.7.0 | `apps.update_conflict_files` (TEXT, JSON); `account.session_cookie` (TEXT); `account.share_installed_apps` (INT, default 1); `app_store.orphan_restore.prompt` (default 'true'); defensive re-seed of `_internal_call_token` | Foundation for PRs 5.1, 5.4, 5.5 |
 
 Schema migrations on the os8.ai side:
 
@@ -1563,7 +1498,7 @@ Phase 4 inherited the principle (recorded in `MEMORY.md` as `feedback_smoke_test
 |---|---|---|---|
 | **G1** Heartbeat lights up the os8.ai detail-page badge | PR 5.1 — session cookie → InstalledApp upsert → badge visible | worldmonitor (any installed Verified app) | PR 5.D1 close-out |
 | **G2** Strict-env E2E suite passes on Linux + macOS (Windows best-effort) | PR 5.3 — fully-specced strict middleware + flesh-out specs | Suite covers worldmonitor install, dev-import, native React app, scoped-API origin matrix | PR 5.3 itself |
-| **G3** Manual three-way merge resolution works end-to-end | PR 5.4 — auto-updater hits conflict → banner surfaces → mark resolved → app updates | worldmonitor with a hand-edited file vs upstream catalog bump | PR 5.7 |
+| **G3** Manual three-way merge resolution works end-to-end | PR 5.4 — auto-updater hits conflict → banner surfaces → mark resolved → app updates | worldmonitor with a hand-edited file vs upstream catalog bump | PR 5.D1 close-out |
 | **G4** Uninstall → reinstall preserves data | PR 5.5 — orphan detection + restore checkbox + apps row revival | worldmonitor (or any external app with localStorage state) | PR 5.D1 close-out |
 | **G5** Docker volume persistence across container recreate | PR 5.8 — `runtime.volumes` honored end-to-end | linkding (post-manifest update) | PR 5.D1 close-out |
 
@@ -1572,7 +1507,7 @@ Phase 4 inherited the principle (recorded in `MEMORY.md` as `feedback_smoke_test
 ```
 5.1 ──→ G1 (heartbeat smoke) ──────────────────→ 5.D1
 5.3 ──→ G2 (strict E2E green) ──→ 5.3 itself
-5.4 ──→ G3 (merge resolution smoke) ──→ 5.7 ──→ 5.D1
+5.4 ──→ G3 (merge resolution smoke) ──────────→ 5.D1
 5.5 ──→ G4 (orphan restore smoke) ─────────────→ 5.D1
 5.8 ──→ G5 (docker volume persistence smoke) ──→ 5.D1
 ```
@@ -1583,79 +1518,83 @@ Each gate corresponds to a manual checklist (mirroring phase-3-plan §7.2's 7-st
 
 - **No gate for 5.2 (npm publish).** Drift-check CI is the gate; user-facing test is "install it, autocomplete works."
 - **No gate for 5.6 (Sync Now).** UI button + existing IPC handler — unit-tested + visually verified is sufficient.
-- **No gate for 5.7 (community auto-update).** Inherits G3 from 5.4 (conflict path). The filter-widening itself is unit-test territory.
 - **No gate for 5.9 (Vercel deploy hook).** Best-effort fix; verified by watching the deploy fire after a real catalog merge in soak time.
 - **No gate for 5.10 (migration).** Standard migration test pattern.
+- **No gate for cut PR 5.7** — see PR 5.7 stub for the cut rationale.
 
 ---
 
 ## 7. Risks and open questions
 
-### Items needing user decision before / during execution
+### Resolved during planning
 
-1. **Are 6 deferred-items.md promotions the right scope?**
+The first revision of this plan surfaced six open questions for Leo. Resolutions captured here so future agents see the explicit decisions.
 
-   The user's framing capped promotions at "5–7" with the note "If your draft has more, surface the over-scope and ask which to cut before finishing." Phase 5 promotes **six** items, all justified by spec gaps, fired triggers, or Phase 4 architectural extensions:
+1. **Promotion scope — landed on five, not six.**
+
+   First-draft promoted six items (#10, #11, #12, #32, #34, #35) — at the upper bound of the prompt's "5–7 suspicious" rule. Leo cut **#11 community auto-update** to give PR 5.4's manual-edit conflict UI soak time on Verified-only first. Final promotions:
 
    | Deferred item | Promoted as | Justification |
    |---|---|---|
    | #10 Three-way merge UI for updates with user edits | PR 5.4 | Phase 4 PR 4.2 (auto-update) created the call site. Conflicts are now silent failures — no UI exists. Spec §6.9 sketches the UI but never wired. |
-   | #11 Auto-update for Community channel | PR 5.7 | Trigger condition was "once #10 lands"; this plan ships #10 + #11 together as the natural extension of PR 4.2. |
    | #12 Tiered uninstall + data-preserve + reinstall restore | PR 5.5 | Spec §6.10 explicitly promises orphan-restore; uninstall side shipped in PR 1.24, reinstall side never wired. Audit confirms `apps.status='uninstalled'` rows are stranded. |
    | #32 Catalog freshness — no user-driven "Sync Now" | PR 5.6 | Trigger fired during Phase 3.5.5 (linkding manifest update was invisible to fresh restarts). IPC handler already exists; UI button is cheap. |
    | #34 ISR fallback 500s for slugs not in `generateStaticParams` | PR 5.9 | Trigger fired during Phase 3.5.5 (Leo had to push empty commits to force redeploys). Vercel deploy-hook is a one-line fix. |
    | #35 Docker adapter container-internal volumes | PR 5.8 | Trigger fired during Phase 3.5.5 (linkding's `/etc/linkding/data` was at risk of data loss on container recreate). |
 
-   Items I am **not** promoting (kept on the deferred list):
-   - #1 Resource limits — no user report yet; runtime kill is a multi-day lift.
-   - #2 Hard-block on MAL-* malware — explicit "deliberate decision" required (deferred-items.md note); advisory model is non-negotiable per memory and spec §6.5.
+   Five promotions matches Phase 4's discipline exactly.
+
+   Items considered and **explicitly NOT promoted**:
+   - **#11 Auto-update for Community channel** — initially scoped (PR 5.7); cut at planning to give 5.4 soak time. Trigger to revisit: PR 5.4 has shipped + ≥1 release of soak time without recurring "merge conflict UX is broken" reports. See PR 5.7 stub.
+   - **#15 App revocation flow** — Leo explicitly deferred. No real revocation event yet; `app-store-deferred-items.md` #15 retains the running entry with a Phase 5 consideration note added so future planning sees the explicit decision.
+
+   Items implicitly NOT promoted (no fired trigger or weak rationale):
+   - #1 Resource limits — no user report yet.
+   - #2 Hard-block on MAL-* malware — explicit "deliberate decision" required; advisory model non-negotiable per memory and spec §6.5.
    - #3 OAuth multi-tenant — not needed while OS8 is single-user-per-machine.
    - #4, #5 (per-origin perms, audit logging) — verify-first deferrals, no signal yet.
    - #7 Keychain encryption — depends on OS8 itself moving to keychain.
-   - #13 Catalog CI error-handling polish — happy path works; no curator complaint yet.
+   - #13 Catalog CI error-handling polish — happy path works.
    - #14 Curator pool tiering — community PR backlog data missing.
-   - #15 App revocation flow — pre-emptive value; no real revocation event yet. **Borderline; could be promoted if user wants it ahead of any incident.**
-   - #16 Install-count display on community cards — UX polish; community channel still small.
-   - #17 GitHub raw RUM — Phase 4 telemetry will surface 429s when they happen; no signal yet.
+   - #16 Install-count display on community cards — UX polish.
+   - #17 GitHub raw RUM — Phase 4 telemetry will surface 429s when they happen.
    - #19 Slack/webhook alerts for sync failures — no surprise yet.
-   - #21 Dockerfile-only Developer Imports — substantial complexity; Community channel covers the use case for now.
-   - #22, #23 (GPU device pinning, sparse checkout) — rare use cases; no signal.
-   - #24-#31 UX polish — opportunistic, not phase-scoped.
-   - #33 v2 schema `$schema` declaration drift — bundle with the next unrelated v2 schema edit (PR 5.8 is a candidate; tentatively bundled there but flagged here in case scope tight).
+   - #21 Dockerfile-only Developer Imports — substantial complexity; Community channel covers it.
+   - #22, #23 (GPU device pinning, sparse checkout) — rare use cases.
+   - #24-#31 UX polish — opportunistic.
+   - #33 v2 schema `$schema` declaration drift — bundle with PR 5.8's schema work if convenient.
    - E1–E5 V1 exclusions — intentional invariants.
 
-   The six promotions all have a fired trigger or strong architectural rationale. **If the human reviewer prefers a tighter Phase 5 scope, the natural cut points are:**
-   - Drop 5.7 (community auto-update) — defer to Phase 6 once #10 has been in soak time.
-   - Drop 5.9 (Vercel deploy hook) — the manual-empty-commit workaround works; it's just annoying.
-   - Drop 5.6 (Sync Now button) — annoyance polish, not load-bearing.
+2. **Session-cookie persistence — column (resolved).**
 
-   Or any combination. The most-load-bearing PRs are 5.1 (heartbeat live), 5.4 (merge UI), 5.5 (orphan restore), 5.8 (docker volumes) — these four close real lifecycle gaps. PRs 5.2 + 5.3 + 5.10 are operational/foundation work that doesn't compete for slot.
+   `account.session_cookie` column (not settings table). The `account` table is the right namespace for per-user state; settings is for app preferences. PR 5.10 ships the column.
 
-2. **Should we promote #15 (app revocation flow) preemptively?**
+3. **Three-way merge UI scope — manual-edit + Resolve-with-Claude (resolved).**
 
-   No real revocation event has occurred. The deferred-items entry says "Should be in place before [a real revocation] happens, ideally." Phase 5 has scope room for one more PR — promoting #15 would shift the slot allocation. **Recommendation: ask Leo.** If yes, add as PR 5.11; if no, leave for Phase 6 once curators flag a revocation candidate (or post-Phase-5 telemetry surfaces something concerning).
+   PR 5.4 ships the manual-edit flow PLUS a "Resolve with Claude" button (~30 LOC) that copies a structured resolution prompt to the clipboard for the user to paste into their existing AI agent. Sidesteps the "freeze on conflict markers" failure mode for non-git-fluent users without adding the misuse risk of per-file ours/theirs buttons. Per-file actions deferred to a polish PR if real-world friction emerges.
 
-3. **Session-cookie persistence — settings table or new column?**
+4. **Docker volumes — manual script + first-boot toast (resolved).**
 
-   PR 5.1 currently proposes a new `account.session_cookie` column. Alternative: store in the `settings` table as `account.session_cookie` key. **Recommendation:** column. The `account` table already exists for per-user state; using settings would mix concerns.
+   PR 5.8 ships:
+   - The schema field (`runtime.volumes`) as proposed.
+   - A one-time first-boot toast (~30 LOC) for installed docker apps that need migration.
+   - `tools/migrate-docker-volume.sh` (~50 LOC) for the user to run while the container is still alive.
 
-4. **Three-way merge UI scope — manual-edit only, or "use ours / use theirs" buttons too?**
+   Auto-backup hook deferred until a second affected docker app surfaces.
 
-   PR 5.4 proposes manual-edit only (user opens conflicted files, removes markers, marks resolved). The richer UI ("use ours" / "use theirs" per file) would let non-git-fluent users self-serve. **Recommendation:** ship manual-edit only; promote per-file actions to a polish PR if real-world friction emerges. Reasoning: the user's existing dev-mode setup includes a Claude Code agent that handles conflicts cleanly; the "use ours/theirs" buttons are mostly useful for users without an AI agent in the loop.
+5. **Community auto-update default — moot (5.7 cut).**
 
-5. **Docker volumes — schema design for backups?**
+   Was: "default OFF or ON?" Resolution: 5.7 itself is cut. If/when 5.7 resurrects in Phase 6, default OFF (symmetric with Verified, aligns with "scan surfaces, user decides" memory).
 
-   PR 5.8 doesn't preserve existing container-internal data when the schema lands. Users with linkding installed today will lose `/etc/linkding/data` on the post-5.8 recreate (unless they manually back up). **Recommendation:** ship as proposed + provide a one-shot migration script `tools/migrate-docker-volume.sh`; document loudly in PR 5.D2. Auto-migration is out of v1 scope but can be added later via a "first-restart-after-upgrade" hook.
+### Items remaining for execute-time judgment (non-blocking)
 
-6. **Community auto-update default — OFF (proposed) or ON?**
-
-   PR 5.7 proposes default OFF. Verified is also default OFF (per PR 4.2). Symmetry argues for the same default. **Recommendation:** default OFF; users who explicitly enable Verified auto-update can also enable Community in the same Settings panel.
+Smaller open sub-questions live with their PR specs (each PR has its own "Open sub-questions" section). The execute agent has discretion on these but should surface anything that conflicts with this plan back to Leo.
 
 ### Spec ambiguities surfaced
 
 These came up while drafting the plan; flagging for the human reviewer.
 
-7. **Spec §6.9 "auto-update opt-in for Verified channel only" needs widening.** PR 5.7 widens to Community. PR 5.D1 updates the spec to reflect the new posture + the new setting. The principle (no auto-merge against user-edited apps) stays.
+7. **Spec §6.9 "auto-update opt-in for Verified channel only"** stays accurate (PR 5.7 was cut; community widening deferred to Phase 6). PR 5.D1 doesn't need to update §6.9.
 
 8. **Spec §6.10 "Reinstall detects orphan data" doesn't specify channel-scoping.** PR 5.5 makes orphan detection channel-scoped (Verified orphan ≠ Community reinstall). Documented as a deviation; PR 5.D1 should add the rationale to spec §6.10.
 
@@ -1682,23 +1621,22 @@ These came up while drafting the plan; flagging for the human reviewer.
 | # | Decision | Resolved in |
 |---|---|---|
 | 1 | Phase 5 scope is "lifecycle completeness + telemetry-driven sharpening"; derived from Phase 4 follow-ups + deferred-items triggers (no telemetry signal yet) | This document §1 |
-| 2 | Six deferred-items.md items promoted (#10, #11, #12, #32, #34, #35) | This document §7 |
+| 2 | Five deferred-items.md items promoted (#10, #12, #32, #34, #35); #11 considered + cut to give 5.4 soak time; #15 considered + deferred (no fired trigger) | This document §7 |
 | 3 | Session cookie stored in `account.session_cookie` (column, not settings) | PR 5.1 |
 | 4 | Share-installed-apps toggle defaults ON when signed in; OFF clears the cookie | PR 5.1 |
 | 5 | NPM drift-check uses soft-fail when package is unpublished; hard-fail after 30 days post-publish | PR 5.2 |
 | 6 | E2E `OS8_4_6_STRICT=1` is the production env in the workflow; legacy permissive only via env override | PR 5.3 |
-| 7 | Three-way merge UI ships manual-edit only; per-file ours/theirs deferred | PR 5.4 |
+| 7 | Three-way merge UI ships manual-edit + "Resolve with Claude" clipboard-prompt button; per-file ours/theirs deferred | PR 5.4 |
 | 8 | `update_conflict_files` JSON column persists conflict state across restarts | PR 5.4 + PR 5.10 |
 | 9 | Orphan-restore is channel-scoped (Verified orphan ≠ Community reinstall) | PR 5.5 |
 | 10 | Per-install lazy refresh window: 5 minutes | PR 5.6 |
 | 11 | Sync Now button lives in the catalog browser modal (not Settings) | PR 5.6 |
-| 12 | Community auto-update is opt-in via a separate Settings toggle, default OFF | PR 5.7 |
-| 13 | Community auto-update inherits Verified's "no-user-edits" rule and the same conflict UI | PR 5.7 |
-| 14 | Docker volumes mounted under `${BLOB_DIR}/_volumes/${basename}` | PR 5.8 |
-| 15 | Docker volume schema field is `runtime.volumes`, with `container_path` and reserved `persist` | PR 5.8 |
-| 16 | Vercel deploy hook fires only on `added > 0` (not updates/removes) | PR 5.9 |
-| 17 | Migration `0.7.0-app-store-lifecycle.js` is the only desktop schema change in Phase 5 | PR 5.10 |
-| 18 | Migration preserves user-set `app_store.auto_update.community_enabled` (won't overwrite to false) | PR 5.10 |
+| 12 | Docker volumes mounted under `${BLOB_DIR}/_volumes/${basename}` | PR 5.8 |
+| 13 | Docker volume schema field is `runtime.volumes`, with `container_path` and reserved `persist` | PR 5.8 |
+| 14 | Docker volume migration ships one-time first-boot toast + `tools/migrate-docker-volume.sh`; auto-backup hook deferred | PR 5.8 |
+| 15 | Vercel deploy hook fires only on `added > 0` (not updates/removes) | PR 5.9 |
+| 16 | Migration `0.7.0-app-store-lifecycle.js` is the only desktop schema change in Phase 5 | PR 5.10 |
+| 17 | Migration preserves user-set `app_store.orphan_restore.prompt` (won't overwrite to true) | PR 5.10 |
 
 ---
 
@@ -1712,14 +1650,13 @@ Phase 5 ships when ALL of:
 4. **Auto-update conflicts surface a usable resolution UI.** worldmonitor with hand-edited `App.tsx` + upstream `App.tsx` change → toast + home-screen dot + merge-conflict banner → user resolves → app updates.
 5. **Uninstall → reinstall preserves data.** worldmonitor uninstalled with default tier → reinstalled → install plan modal shows "Previous data found" with non-zero blob bytes → restore checkbox ON → app revives at same appId with data intact.
 6. **Catalog Sync Now button works.** Catalog browser surfaces a Sync button; clicking triggers an immediate sync + grid refresh. Per-install lazy refresh picks up manifests changed within last 5 minutes.
-7. **Community-channel apps support auto-update opt-in.** Settings has new "Allow auto-update for Community-channel apps" toggle; per-app flyout enables when ON; auto-updater processes Community apps in the eligible list.
-8. **Docker apps with `runtime.volumes` persist data across container recreate.** linkding's bookmarks survive uninstall → reinstall (with restore on) and stop → start cycles.
-9. **New catalog slugs become 200-resolvable on os8.ai within ~3 minutes** (vs ~30 minutes today). Vercel deploy hook fires on `added > 0` from catalog sync.
-10. **Migration `0.7.0` upgrades cleanly from `0.6.x`.** Idempotent; preserves prior settings.
+7. **Docker apps with `runtime.volumes` persist data across container recreate.** linkding's bookmarks survive uninstall → reinstall (with restore on) and stop → start cycles. Pre-existing linkding installs see a one-time first-boot toast pointing at `tools/migrate-docker-volume.sh`.
+8. **New catalog slugs become 200-resolvable on os8.ai within ~3 minutes** (vs ~30 minutes today). Vercel deploy hook fires on `added > 0` from catalog sync.
+9. **Migration `0.7.0` upgrades cleanly from `0.6.x`.** Idempotent; preserves prior settings.
 
 ### What flows out of Phase 5
 
-- **The auto-update story is complete.** Verified + Community both supported, conflicts have a recovery path, the os8.ai-side badge tells signed-in users what they have installed and whether it's current.
+- **The auto-update conflict story is complete (Verified).** Conflicts now have a recovery path (manual-edit + Resolve-with-Claude); the os8.ai-side badge tells signed-in users what they have installed and whether it's current. Community-channel widening waits for Phase 6 (PR 5.7 cut to give 5.4 soak time).
 - **Lifecycle gaps closed.** Uninstall → reinstall preserves work; docker apps stop losing data; catalog freshness is no longer a 24h black hole.
 - **Phase 4 instrumentation is fully live.** Telemetry was opt-in at Phase 4; Phase 5 doesn't change that, but the heartbeat-and-badge feature now actually does its job (Phase 4 shipped it dim).
 - **External-IDE workflow is friendlier.** `@os8/sdk-types` on npm closes the loop on PR 4.9.
@@ -1727,8 +1664,9 @@ Phase 5 ships when ALL of:
 
 ### What does **not** carry forward (Phase 6+ candidates)
 
+- **Community-channel auto-update widening** — deferred-items #11; was scoped as PR 5.7 then cut at planning to give PR 5.4's manual-edit conflict UI soak time. Promote in Phase 6 once 5.4 has shipped a release without recurring "merge UX is broken" reports.
 - **Hard-block on MAL-* malware findings** — deferred-items #2; advisory model per spec §6.5 stays unless telemetry shows users routinely overriding MAL-* warnings.
-- **App revocation flow** — deferred-items #15; should land before any real revocation event, but no event has occurred. Promote when curators flag it.
+- **App revocation flow** — deferred-items #15; explicitly considered + deferred during Phase 5 planning (Leo decision). No real revocation event has occurred. Promote when curators flag a candidate.
 - **Resource limits with runtime kill** — deferred-items #1; promote on first user report.
 - **OAuth-gated capabilities (multi-tenant)** — deferred-items #3; only matters for multi-user deployments.
 - **GitHub raw asset rate-limit monitoring (RUM)** — deferred-items #17; promotes if Phase 4 telemetry shows 429s.
@@ -1748,7 +1686,7 @@ Captured here as a one-line index so reviewers can find where each lives. Mirror
 | # | Decision | Resolved in |
 |---|---|---|
 | 1 | Phase 5 theme: lifecycle completeness + telemetry-driven sharpening | This doc §1 |
-| 2 | Six deferred-items promoted (#10, #11, #12, #32, #34, #35) with justification | This doc §7.1 |
+| 2 | Five deferred-items promoted (#10, #12, #32, #34, #35); #11 cut at planning, #15 deferred per Leo | This doc §7 |
 | 3 | Phase 4 follow-ups close in Track A (PRs 5.1, 5.2, 5.3) | This doc §1 |
 | 4 | Session cookie stored on `account` row (column, not settings) | PR 5.1 |
 | 5 | Cookie passed via JSON response body from os8.ai finalize route, not Set-Cookie | PR 5.1 |
@@ -1758,7 +1696,7 @@ Captured here as a one-line index so reviewers can find where each lives. Mirror
 | 9 | E2E workflow env: `OS8_4_6_STRICT=1` (production behavior); legacy via `OS8_REQUIRE_APP_CONTEXT_PERMISSIVE=1` env override | PR 5.3 |
 | 10 | Windows joins E2E matrix as `continue-on-error: true`; gating after one stable green run | PR 5.3 |
 | 11 | Three-way merge UI: banner in app source sidebar + home-screen dot + toast | PR 5.4 |
-| 12 | Merge resolution: manual-edit only; per-file ours/theirs deferred | PR 5.4 |
+| 12 | Merge resolution: manual-edit + "Resolve with Claude" clipboard-prompt button; per-file ours/theirs deferred | PR 5.4 |
 | 13 | `apps.update_conflict_files` JSON column persists conflict state across restarts | PR 5.4 + PR 5.10 |
 | 14 | New telemetry kinds `update_conflict` and `update_conflict_resolved` (allowlist additions) | PR 5.4 + PR 4.4 follow-up |
 | 15 | Orphan detection: most recent `(external_slug, channel, status='uninstalled')` row | PR 5.5 |
@@ -1766,17 +1704,18 @@ Captured here as a one-line index so reviewers can find where each lives. Mirror
 | 17 | Skipped orphans marked `status='archived'` for future cleanup UI | PR 5.5 |
 | 18 | Per-install lazy refresh window: 5 minutes | PR 5.6 |
 | 19 | Sync Now button placement: catalog browser modal, next to channel pills | PR 5.6 |
-| 20 | Community auto-update: opt-in via Settings toggle, default OFF | PR 5.7 |
-| 21 | Community auto-update inherits Verified's no-user-edits rule | PR 5.7 |
+| 20 | Community auto-update (PR 5.7) cut from Phase 5; revisit in Phase 6 after 5.4 soak time | This doc §1 + PR 5.7 stub |
+| 21 | App revocation flow (deferred-items #15) deferred per Leo; revisit when curators flag a candidate | This doc §7 + deferred-items #15 |
 | 22 | Docker `runtime.volumes` schema: `container_path` (required) + `persist` (reserved) | PR 5.8 |
 | 23 | Docker volume host path: `${BLOB_DIR}/_volumes/${basename}` (basename, not full path) | PR 5.8 |
 | 24 | Schema validator caps `runtime.volumes` at 10 entries; rejects `..` paths and duplicates | PR 5.8 |
-| 25 | Vercel deploy hook fires only on `added > 0` (not updates/removes) | PR 5.9 |
-| 26 | Pre-render-everything Vercel workaround stays in tree as defense-in-depth | PR 5.9 |
-| 27 | Migration `0.7.0` adds `update_conflict_files` + cookie cache + 2 settings keys | PR 5.10 |
-| 28 | Migration preserves user-set settings (won't overwrite community_enabled to false) | PR 5.10 |
-| 29 | Migration defensively re-seeds `_internal_call_token` if absent | PR 5.10 |
-| 30 | Phase 5 introduces no new os8.ai-side Prisma models | This doc §5 |
+| 25 | Docker volume migration: one-time first-boot toast + `tools/migrate-docker-volume.sh`; auto-backup hook deferred | PR 5.8 |
+| 26 | Vercel deploy hook fires only on `added > 0` (not updates/removes) | PR 5.9 |
+| 27 | Pre-render-everything Vercel workaround stays in tree as defense-in-depth | PR 5.9 |
+| 28 | Migration `0.7.0` adds `update_conflict_files` + cookie cache + 1 settings key | PR 5.10 |
+| 29 | Migration preserves user-set settings (won't overwrite `orphan_restore.prompt`) | PR 5.10 |
+| 30 | Migration defensively re-seeds `_internal_call_token` if absent | PR 5.10 |
+| 31 | Phase 5 introduces no new os8.ai-side Prisma models | This doc §5 |
 
 ---
 
@@ -1787,10 +1726,9 @@ When the relevant PRs land, the project memory should be updated:
 - **After PR 5.1 deploys:** update `project_app_store_phases.md` to remove the "Phase 4 deferred to follow-ups: os8.ai session token for desktop heartbeat" entry; add a `reference_installed_apps_badge.md` entry pointing at `https://os8.ai/apps/<slug>` describing the badge UX.
 - **After PR 5.2 publishes:** update `project_app_store_phases.md` to remove the "NPM publish for @os8/sdk-types" follow-up; add a one-liner pointing at `https://www.npmjs.com/package/@os8/sdk-types`.
 - **After PR 5.3 lands:** update `reference_e2e_harness.md` to note that `OS8_4_6_STRICT=1` is now the production CI env + that install + dev-import + native-app specs are no longer skipped.
-- **After PR 5.4 lands:** add a `project_merge_conflict_ux.md` entry describing the merge-conflict banner location + the "manual-edit + mark resolved" workflow so future agents don't re-spec the resolution flow.
+- **After PR 5.4 lands:** add a `project_merge_conflict_ux.md` entry describing the merge-conflict banner location, the "manual-edit + Resolve-with-Claude" workflow, and the clipboard-prompt format so future agents don't re-spec the resolution flow.
 - **After PR 5.5 lands:** update `project_app_store_phases.md` to remove the "deferred-items #12 reinstall side" gap; add a `feedback_channel_scoped_orphans.md` entry with the rationale for not cross-channel-restoring.
-- **After PR 5.7 lands:** add a `project_community_auto_update.md` entry describing the per-channel toggle + the symmetry with Verified.
-- **After PR 5.8 lands:** update `feedback_smoke_test_real_apps.md` "go-to smoke targets" entry for linkding to note the post-volumes manifest + the persistence-smoke checklist.
+- **After PR 5.8 lands:** update `feedback_smoke_test_real_apps.md` "go-to smoke targets" entry for linkding to note the post-volumes manifest + the persistence-smoke checklist; add a `reference_docker_volume_migration.md` entry pointing at `tools/migrate-docker-volume.sh` so users with pre-5.8 docker installs find the script.
 - **After PR 5.9 lands:** add a `reference_vercel_deploy_hook.md` entry pointing at `os8dotai/src/lib/catalog-sync.ts` so future PRs editing catalog-sync know about the side-effect.
 
 ---

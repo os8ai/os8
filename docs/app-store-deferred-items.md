@@ -131,6 +131,13 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Why:** Daily cadence was sufficient before realistic-fixture iteration. Surfaced sharply only when authoring + iterating manifests in real time.
 - **Trigger:** Recurring user reports of "I just installed and the install plan looks stale", OR before opening the catalog to a wider author pool. Cheap fix candidates: (a) add a "Sync now" button to the catalog browser that calls the existing `app-store:sync-channel-now` IPC, (b) sync the relevant channel when the user clicks an install button, (c) compare `manifest_sha` against upstream in `get()` when the local row is older than N minutes.
 
+### 36. Auto-update widening to Community channel
+- **Status:** Deferred *(considered for Phase 5 as PR 5.7, 2026-05-03; cut to give PR 5.4 soak time)*
+- **Source:** Phase 5 plan §1 + PR 5.7 stub. Distinct from #11 (which was about Verified-channel auto-update; closed by Phase 4 PR 4.2 — note that #11's status above is documentation drift and should be marked Done in a Phase 5 close-out).
+- **Gap:** `AppAutoUpdater.processAutoUpdates` filters on `channel = 'verified'` (`src/services/app-auto-updater.js:55`). Community-channel apps with `auto_update=1` are silently ignored.
+- **Why:** Phase 5 originally scoped this as PR 5.7 (filter widening + per-channel Settings toggle, default OFF). Cut at planning to give PR 5.4's manual-edit conflict UI soak time on the lower-churn Verified channel first. Community apps churn more; surprise-update + conflict failures would erode trust faster than on Verified.
+- **Trigger:** PR 5.4 has shipped + ≥1 release of soak time has passed without recurring "merge conflict UX is broken" reports. Implementation cost estimated ~150 LOC (filter widening, per-channel settings toggle, flyout hint logic). Default OFF (symmetric with Verified, aligns with "scan surfaces, user decides" memory).
+
 ---
 
 ## Catalog & moderation
@@ -143,11 +150,12 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** Community-channel PR backlog grows past curator bandwidth.
 
 ### 15. App revocation flow
-- **Status:** Deferred
+- **Status:** Deferred *(considered for Phase 5, 2026-05-03; explicitly deferred per Leo)*
 - **Source:** spec §4.3 (implicit)
 - **Gap:** Soft-delete (`App.deletedAt`) works server-side, but no user-facing notification or force-uninstall when curator yanks an app. Malicious/compromised apps remain installed silently.
 - **Why:** Preventive review is v1 priority; reactive revocation deferred until needed.
 - **Trigger:** First app revoked from a catalog. Should be in place before that happens, ideally.
+- **Phase 5 note (2026-05-03):** Considered for Phase 5 (Leo asked the question explicitly during planning) and deferred — no real revocation event has occurred + no curator has flagged a candidate. Promote when (a) curators identify a revocation candidate, OR (b) Phase 4 telemetry surfaces a previously-curated app raising new red flags. The cost of waiting is asymmetric: we can ship fast when needed, and designing reactively against a real incident produces better UX than designing speculatively.
 
 ### 33. v2 schema `$schema` declaration drift across consumers
 - **Status:** Deferred *(small cleanup, ship anytime)*
