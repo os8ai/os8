@@ -59,7 +59,21 @@ function registerAppStoreHandlers({ db, mainWindow }) {
       const validation = entry.manifest
         ? validateManifest(entry.manifest, { upstreamResolvedCommit: entry.upstreamResolvedCommit })
         : { ok: false, errors: [{ kind: 'invariant', path: '/', message: 'manifest YAML missing' }] };
-      return { ok: true, entry, validation };
+
+      // Phase 5 PR 5.5 — orphan detection. If the user previously installed
+      // this slug+channel and uninstalled with the default-preserve tier,
+      // the install plan modal renders a "Previous data found" section
+      // with size info + a default-on restore checkbox. Channel-scoped to
+      // avoid cross-channel trust elevation.
+      let orphan = null;
+      try {
+        const { AppService } = require('../services/app');
+        orphan = AppService.getOrphan(db, slug, channel);
+      } catch (e) {
+        console.warn('[app-store:render-plan] getOrphan failed:', e.message);
+      }
+
+      return { ok: true, entry, validation, orphan };
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -74,9 +88,18 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
-  ipcMain.handle('app-store:approve', async (_e, jobId, secrets = {}) => {
+  ipcMain.handle('app-store:approve', async (_e, jobId, secrets = {}, opts = {}) => {
     try {
-      const job = await AppInstaller.approve(db, jobId, { secrets });
+      // Phase 5 PR 5.5 — opts.restoreOrphan is the user's choice from the
+      // "Previous data found" section in the install plan modal. When
+      // true, the installer reuses the orphan's appId + blob/db dirs +
+      // saved secrets (so blob storage and per-app SQLite survive the
+      // uninstall→reinstall cycle). When false, the orphan row is
+      // archived and a fresh install proceeds.
+      const job = await AppInstaller.approve(db, jobId, {
+        secrets,
+        restoreOrphan: !!opts?.restoreOrphan,
+      });
       return { ok: true, jobId: job.id, status: job.status };
     } catch (err) {
       return { ok: false, error: err.message };

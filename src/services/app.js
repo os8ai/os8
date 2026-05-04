@@ -9,6 +9,27 @@ const {
 } = require('../claude-md');
 const { CapabilityService } = require('./capability');
 
+/**
+ * Recursive directory size in bytes. Best-effort: stat failures on
+ * individual entries are skipped silently so a permission glitch on
+ * one file doesn't tank the whole walk. Used by getOrphan (PR 5.5)
+ * to inform the "Previous data found" prompt without an extra IPC.
+ */
+function _dirSize(dir) {
+  let total = 0;
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+  catch (_) { return 0; }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    try {
+      if (entry.isDirectory()) total += _dirSize(full);
+      else if (entry.isFile()) total += fs.statSync(full).size;
+    } catch (_) { /* skip unreadable entries */ }
+  }
+  return total;
+}
+
 // Scaffold a new app from templates
 function scaffoldApp(appPath, id, name, slug = '', color = '#6366f1', textColor = '#ffffff') {
   scaffoldFromTemplate(appPath, 'standard', {
@@ -216,6 +237,130 @@ const AppService = {
   getAutoUpdate(db, appId) {
     const row = db.prepare('SELECT auto_update FROM apps WHERE id = ?').get(appId);
     return row?.auto_update === 1;
+  },
+
+  /**
+   * Phase 5 PR 5.5 — find the most recent uninstalled-but-preserved app
+   * matching `(external_slug, channel)`. Returns null if none.
+   *
+   * Channel-scoped (Verified orphan ≠ Community reinstall) because trust
+   * grants differ across channels — cross-channel restoration would
+   * silently elevate trust. Plan §1 deviation: documented in PR 5.D1.
+   *
+   * Returns size info too so the install plan modal can render an
+   * informative "Previous data found" prompt without an extra IPC call.
+   * Sizes are best-effort: errors return 0 rather than throw.
+   */
+  getOrphan(db, externalSlug, channel) {
+    if (!externalSlug || !channel) return null;
+    const row = db.prepare(`
+      SELECT id, external_slug, channel, updated_at
+        FROM apps
+       WHERE app_type = 'external'
+         AND status = 'uninstalled'
+         AND external_slug = ?
+         AND channel = ?
+       ORDER BY updated_at DESC
+       LIMIT 1
+    `).get(externalSlug, channel);
+    if (!row) return null;
+
+    const appId = row.id;
+    const blobDir = path.join(BLOB_DIR, appId);
+    const dbPath = path.join(CONFIG_DIR, 'app_db', `${appId}.db`);
+
+    let blobSize = 0;
+    try { blobSize = _dirSize(blobDir); } catch (_) { /* missing dir → 0 */ }
+
+    let dbSize = 0;
+    try {
+      if (fs.existsSync(dbPath)) dbSize = fs.statSync(dbPath).size;
+    } catch (_) { /* permission / race → 0 */ }
+
+    let secretCount = 0;
+    try {
+      secretCount = db.prepare(
+        `SELECT COUNT(*) AS n FROM app_env_variables WHERE app_id = ?`
+      ).get(appId)?.n ?? 0;
+    } catch (_) { /* table missing → 0 */ }
+
+    return {
+      appId,
+      blobDir, blobSize,
+      dbPath, dbSize,
+      secretCount,
+      uninstalledAt: row.updated_at,
+    };
+  },
+
+  /**
+   * Phase 5 PR 5.5 — revive a previously-uninstalled apps row in place.
+   * Caller must have verified `getOrphan(db, externalSlug, channel) ===
+   * { appId, ... }` first; this method assumes the row exists and is in
+   * `status='uninstalled'`.
+   *
+   * Refreshes the catalog/install metadata to the new install's manifest
+   * (so the user sees the new commit, etc.) but preserves the appId,
+   * slug, blob/db dirs, and per-app secrets. Returns the same shape as
+   * createExternal so the installer's caller-side code is identical.
+   */
+  reviveOrphan(db, orphanAppId, {
+    name, externalSlug, channel, framework,
+    manifestYaml, manifestSha, catalogCommitSha,
+    upstreamDeclaredRef, upstreamResolvedCommit,
+    statusOverride = 'installing',
+  }) {
+    const existing = this.getById(db, orphanAppId);
+    if (!existing) throw new Error(`orphan app ${orphanAppId} not found`);
+    if (existing.status !== 'uninstalled') {
+      throw new Error(`app ${orphanAppId} is not uninstalled (status=${existing.status})`);
+    }
+
+    db.prepare(`
+      UPDATE apps SET
+        name = ?,
+        status = ?,
+        external_slug = ?,
+        channel = ?,
+        framework = ?,
+        manifest_yaml = ?,
+        manifest_sha = ?,
+        catalog_commit_sha = ?,
+        upstream_declared_ref = ?,
+        upstream_resolved_commit = ?,
+        archived_at = NULL,
+        update_status = NULL,
+        updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+    `).run(
+      name, statusOverride, externalSlug, channel,
+      framework || null, manifestYaml || null, manifestSha || null,
+      catalogCommitSha || null, upstreamDeclaredRef || null,
+      upstreamResolvedCommit || null, orphanAppId
+    );
+
+    return {
+      id: orphanAppId,
+      name, slug: existing.slug,
+      channel, externalSlug,
+      path: path.join(APPS_DIR, orphanAppId),
+      blobPath: path.join(BLOB_DIR, orphanAppId),
+    };
+  },
+
+  /**
+   * Phase 5 PR 5.5 — mark an uninstalled row archived. Used when the
+   * user reinstalls but DECLINES to restore (we keep the data on disk
+   * but stop proposing it as a restore candidate). Also stops the
+   * archived row from masking a fresh install (`getOrphan` filters on
+   * `status='uninstalled'` only).
+   */
+  archiveOrphan(db, orphanAppId) {
+    db.prepare(`
+      UPDATE apps SET status = 'archived', archived_at = CURRENT_TIMESTAMP,
+                       updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND status = 'uninstalled'
+    `).run(orphanAppId);
   },
 
   // PR 1.24 — uninstall an external app.

@@ -559,6 +559,60 @@ function gateEvaluation(manifest, state, hostArch) {
   return { ok: true };
 }
 
+/**
+ * Phase 5 PR 5.5 — "Previous data found" section. Renders only when
+ * the renderPlan IPC found a matching uninstalled-but-preserved row
+ * for this slug+channel. Default-on checkbox; on uncheck the install
+ * proceeds fresh and the orphan row is archived. Hides when the
+ * orphan was deleted (deleteData uninstall) — orphan is null in that
+ * case from the IPC.
+ */
+function renderOrphanSection(state) {
+  const o = state.orphan;
+  if (!o) return '';
+  const fmtBytes = (n) => {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+  };
+  const fmtDate = (iso) => {
+    if (!iso) return 'an unknown time ago';
+    try {
+      const d = new Date(iso);
+      const days = Math.max(0, Math.round((Date.now() - d.getTime()) / 86_400_000));
+      if (days === 0) return 'earlier today';
+      if (days === 1) return 'yesterday';
+      if (days < 30) return `${days} days ago`;
+      return d.toLocaleDateString();
+    } catch (_) { return 'an unknown time ago'; }
+  };
+  const totalBytes = (o.blobSize || 0) + (o.dbSize || 0);
+  return `
+    <div class="install-plan-modal__section install-plan-modal__orphan">
+      <h3>Previous data found</h3>
+      <p>
+        You previously installed <strong>${escapeHtml(state.entry.name)}</strong> and uninstalled it ${escapeHtml(fmtDate(o.uninstalledAt))}.
+        OS8 preserved your data on disk.
+      </p>
+      <ul class="install-plan-modal__orphan-list">
+        <li><strong>${escapeHtml(fmtBytes(o.blobSize || 0))}</strong> in blob storage</li>
+        <li><strong>${escapeHtml(fmtBytes(o.dbSize || 0))}</strong> in the per-app database</li>
+        <li><strong>${o.secretCount || 0}</strong> saved secret${o.secretCount === 1 ? '' : 's'}${o.secretCount > 0 ? ' — values preserved; will not re-prompt' : ''}</li>
+      </ul>
+      <label class="install-plan-modal__orphan-toggle" style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-top:12px;">
+        <input type="checkbox" data-action="restore-orphan-toggle" ${state.restoreOrphan ? 'checked' : ''} />
+        <span>Restore my previous data</span>
+      </label>
+      <p class="install-plan-modal__hint" style="font-size:12px; margin-top:8px; color: var(--color-text-secondary, #94a3b8);">
+        ${state.restoreOrphan
+          ? `OS8 will reuse your previous app slot (<code>${escapeHtml(o.appId)}</code>) and keep ${escapeHtml(fmtBytes(totalBytes))} of preserved data.`
+          : `OS8 will install fresh. Your previous data stays on disk under <code>${escapeHtml(o.blobDir)}</code> until you manually delete it.`}
+      </p>
+    </div>
+  `;
+}
+
 function renderEntry(state) {
   const entry = state.entry;
   const m = entry.manifest || {};
@@ -582,6 +636,12 @@ function renderEntry(state) {
   const sections = [];
 
   if (state.devImportMode) sections.push(renderDevImportWarnings());
+
+  // PR 5.5 — surface "Previous data found" up top so the user sees the
+  // restore prompt before they scroll through the install plan. No-op
+  // when the renderPlan IPC didn't find an orphan.
+  const orphanHtml = renderOrphanSection(state);
+  if (orphanHtml) sections.push(orphanHtml);
 
   sections.push(`
     <div class="install-plan-modal__section">
@@ -817,7 +877,14 @@ function wireEvents(state) {
     }
 
     if (state.lastStatus === 'awaiting_approval') {
-      const r = await window.os8.appStore.approve(state.jobId, state.secrets || {});
+      // Phase 5 PR 5.5 — pass restoreOrphan choice through to the installer
+      // so it can revive the orphan apps row (preserving blob/db/secrets)
+      // instead of creating a fresh row.
+      const r = await window.os8.appStore.approve(
+        state.jobId,
+        state.secrets || {},
+        { restoreOrphan: !!state.restoreOrphan }
+      );
       if (!r?.ok) {
         state.error = r?.error || 'approve failed';
         patchModal(state);
@@ -969,6 +1036,17 @@ function wireEvents(state) {
     });
   }
 
+  // PR 5.5 — restore-orphan checkbox. patchModal re-renders the hint
+  // text below the checkbox to reflect the new choice (preserved data
+  // path vs fresh install path).
+  const restoreOrphanCb = root.querySelector('[data-action="restore-orphan-toggle"]');
+  if (restoreOrphanCb) {
+    restoreOrphanCb.addEventListener('change', () => {
+      state.restoreOrphan = restoreOrphanCb.checked;
+      patchModal(state);
+    });
+  }
+
   // PR 4.1 — auto-scroll the log panel only while the user is at-or-near
   // the bottom. Scrolling up pauses auto-scroll; scrolling back to bottom
   // resumes it. State persists across renders via state.logsAutoScroll.
@@ -1068,7 +1146,7 @@ function applyJobUpdate(state, payload) {
   patchModal(state);
 }
 
-function startState(entry, validation) {
+function startState(entry, validation, opts = {}) {
   return {
     entry,
     validation,
@@ -1081,6 +1159,13 @@ function startState(entry, validation) {
     secondConfirmed: false,
     jobId: null,
     appId: null,
+    // PR 5.5 — orphan = { appId, blobDir, blobSize, dbPath, dbSize,
+    // secretCount, uninstalledAt } when the renderPlan IPC found a
+    // matching uninstalled-but-preserved row, else null. restoreOrphan
+    // tracks the user's checkbox state — defaults true when the orphan
+    // section renders (matches the column default in user_account).
+    orphan: opts.orphan || null,
+    restoreOrphan: opts.orphan ? true : false,
     // PR 3.1: dev-import mode toggles strict modal styling + per-capability
     // opt-in toggles (PR 3.2). Off for verified/community installs.
     devImportMode: false,
@@ -1138,7 +1223,7 @@ export async function openInstallPlanModalBySlug(slug, channel = 'verified', opt
     alert(`Could not load install plan: ${result?.error || 'unknown error'}`);
     return;
   }
-  const state = startState(result.entry, result.validation);
+  const state = startState(result.entry, result.validation, { orphan: result.orphan });
   if (opts.jobId) state.jobId = opts.jobId;
   await maybeShowFirstInstallConsent(state);
   showModal(state);

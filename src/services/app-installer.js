@@ -366,11 +366,15 @@ const AppInstaller = {
    *
    * @param {object} db
    * @param {string} jobId
-   * @param {{ secrets?: Object, getOS8Port?: () => number }} opts
+   * @param {{ secrets?: Object, restoreOrphan?: boolean, getOS8Port?: () => number }} opts
    *        getOS8Port lets callers (tests, the route) inject the port
    *        used to compose OS8_API_BASE; defaults to 8888 when missing.
+   *        restoreOrphan (PR 5.5) — when true, _runApprove revives the
+   *        most recent uninstalled apps row matching (slug, channel)
+   *        instead of creating a fresh row, preserving the blob/db
+   *        dirs and saved secrets.
    */
-  async approve(db, jobId, { secrets = {}, getOS8Port } = {}) {
+  async approve(db, jobId, { secrets = {}, restoreOrphan = false, getOS8Port } = {}) {
     const current = InstallJobs.get(db, jobId);
     if (!current) throw new Error('job not found');
     if (current.status !== 'awaiting_approval') {
@@ -400,7 +404,7 @@ const AppInstaller = {
       });
     } catch (_) { /* telemetry failures never disrupt the install */ }
 
-    setImmediate(() => AppInstaller._runApprove(db, jobId, secrets, { getOS8Port })
+    setImmediate(() => AppInstaller._runApprove(db, jobId, secrets, { getOS8Port, restoreOrphan })
       .then(() => {
         // install_succeeded is emitted from _runApprove when the row is
         // activated (kind:'status', status:'installed'). Doing it there
@@ -444,7 +448,7 @@ const AppInstaller = {
    * staging→apps, sets up git for fork-on-first-edit, fires
    * track-install. Failures rollback via _rollbackInstall.
    */
-  async _runApprove(db, jobId, secrets, { getOS8Port } = {}) {
+  async _runApprove(db, jobId, secrets, { getOS8Port, restoreOrphan = false } = {}) {
     const job = InstallJobs.get(db, jobId);
     if (!job?.staging_dir) throw new Error('job missing staging_dir');
 
@@ -454,23 +458,73 @@ const AppInstaller = {
     }
     const manifest = entry.manifest;
 
-    // 1. Mint the apps row UPFRONT with status='installing'. We need its UUID
-    //    to scope per-app secrets (and OS8_APP_ID in sanitized env).
+    // 1. Mint or revive the apps row UPFRONT with status='installing'. We
+    //    need its UUID to scope per-app secrets (and OS8_APP_ID in
+    //    sanitized env).
+    //
+    // Phase 5 PR 5.5 — restore-from-orphan branch. When the user opted
+    // in, look up the most-recent (slug, channel) uninstalled row and
+    // revive it in place. This preserves the appId (so the user's
+    // bookmarks / browser-side state still resolve), the blob dir, the
+    // per-app SQLite, and any saved secrets. When the user opted out,
+    // archive any matching orphan so it stops masking future fresh
+    // installs from getOrphan, then proceed with createExternal.
     const { AppService } = require('./app');
-    const localSlug = AppService.uniqueSlug(db, manifest.slug);
-    const app = AppService.createExternal(db, {
-      name: manifest.name,
-      slug: localSlug,
-      externalSlug: manifest.slug,
-      channel: entry.channel,
-      framework: manifest.framework || null,
-      manifestYaml: entry.manifestYaml,
-      manifestSha: entry.manifestSha,
-      catalogCommitSha: entry.catalogCommitSha,
-      upstreamDeclaredRef: entry.upstreamDeclaredRef,
-      upstreamResolvedCommit: entry.upstreamResolvedCommit,
-      statusOverride: 'installing',
-    });
+    let app;
+    let localSlug;
+    let revived = false;
+    if (restoreOrphan) {
+      const orphan = AppService.getOrphan(db, job.external_slug, job.channel);
+      if (!orphan) {
+        // Race: orphan disappeared between renderPlan + approve (e.g. user
+        // archived it elsewhere). Fall through to createExternal so the
+        // install still succeeds; surface the deviation in the log.
+        publish(jobId, { kind: 'log',
+          message: `restoreOrphan requested but no orphan found for (${job.external_slug}, ${job.channel}); falling back to fresh install` });
+      } else {
+        app = AppService.reviveOrphan(db, orphan.appId, {
+          name: manifest.name,
+          externalSlug: manifest.slug,
+          channel: entry.channel,
+          framework: manifest.framework || null,
+          manifestYaml: entry.manifestYaml,
+          manifestSha: entry.manifestSha,
+          catalogCommitSha: entry.catalogCommitSha,
+          upstreamDeclaredRef: entry.upstreamDeclaredRef,
+          upstreamResolvedCommit: entry.upstreamResolvedCommit,
+          statusOverride: 'installing',
+        });
+        localSlug = app.slug;
+        revived = true;
+        publish(jobId, { kind: 'log',
+          message: `revived orphan (id=${app.id}, slug=${localSlug}) — preserved blob + db + secrets` });
+      }
+    } else {
+      // Even in fresh-install mode, archive any matching orphan so it
+      // stops appearing as a restore candidate next time. The user's
+      // data dirs stay on disk (they uninstalled with default-preserve)
+      // — only the row state changes.
+      try {
+        const orphan = AppService.getOrphan(db, job.external_slug, job.channel);
+        if (orphan) AppService.archiveOrphan(db, orphan.appId);
+      } catch (_) { /* best-effort */ }
+    }
+    if (!app) {
+      localSlug = AppService.uniqueSlug(db, manifest.slug);
+      app = AppService.createExternal(db, {
+        name: manifest.name,
+        slug: localSlug,
+        externalSlug: manifest.slug,
+        channel: entry.channel,
+        framework: manifest.framework || null,
+        manifestYaml: entry.manifestYaml,
+        manifestSha: entry.manifestSha,
+        catalogCommitSha: entry.catalogCommitSha,
+        upstreamDeclaredRef: entry.upstreamDeclaredRef,
+        upstreamResolvedCommit: entry.upstreamResolvedCommit,
+        statusOverride: 'installing',
+      });
+    }
     db.prepare('UPDATE app_install_jobs SET app_id = ?, updated_at = ? WHERE id = ?')
       .run(app.id, new Date().toISOString(), jobId);
     publish(jobId, { kind: 'log', message: `apps row created (id=${app.id}, slug=${localSlug})` });
@@ -610,12 +664,43 @@ const AppInstaller = {
     if (!job) return;
 
     // Drop the apps row if we created it (it'll be in 'installing' status).
+    //
+    // Phase 5 PR 5.5 — distinguish freshly-created vs revived rows. A
+    // revived orphan was 'uninstalled' before this install attempt and
+    // got re-flipped to 'installing' by reviveOrphan. Detect it via the
+    // apps row's created_at being older than the install job's: a fresh
+    // createExternal stamps created_at = now-ish, a revived row has the
+    // original install's stamp. On revival rollback, restore to
+    // 'uninstalled' and preserve the user's secrets so the next reinstall
+    // attempt can offer to restore again.
     if (job.app_id) {
       try {
-        db.prepare(`DELETE FROM apps WHERE id = ? AND status = 'installing'`).run(job.app_id);
-        // Also drop any per-app secrets we wrote — keep the credential
-        // surface narrow on rollback.
-        db.prepare(`DELETE FROM app_env_variables WHERE app_id = ?`).run(job.app_id);
+        const row = db.prepare(
+          'SELECT created_at FROM apps WHERE id = ? AND status = ?'
+        ).get(job.app_id, 'installing');
+        if (row) {
+          // SQLite's CURRENT_TIMESTAMP returns UTC ('YYYY-MM-DD HH:MM:SS');
+          // install_jobs.created_at is JS toISOString (UTC, with T+Z).
+          // A 5-minute buffer absorbs any timezone-parse drift on the
+          // SQLite stamp while still catching real revivals (orphan rows
+          // are typically days/weeks old). If apps.created_at is far older
+          // than install_jobs.created_at, this row was revived.
+          const REVIVAL_BUFFER_MS = 5 * 60_000;
+          const appCreated = row.created_at ? Date.parse(row.created_at) : NaN;
+          const jobCreated = job.created_at ? Date.parse(job.created_at) : NaN;
+          const wasRevived = Number.isFinite(appCreated) && Number.isFinite(jobCreated)
+            && (jobCreated - appCreated) > REVIVAL_BUFFER_MS;
+          if (wasRevived) {
+            db.prepare(`
+              UPDATE apps SET status = 'uninstalled', updated_at = CURRENT_TIMESTAMP
+               WHERE id = ? AND status = 'installing'
+            `).run(job.app_id);
+            // Preserve secrets — they belong to the still-recoverable orphan.
+          } else {
+            db.prepare(`DELETE FROM apps WHERE id = ? AND status = 'installing'`).run(job.app_id);
+            db.prepare(`DELETE FROM app_env_variables WHERE app_id = ?`).run(job.app_id);
+          }
+        }
       } catch (_) { /* best-effort */ }
     }
 
