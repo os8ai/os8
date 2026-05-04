@@ -97,25 +97,51 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   follow-up flesh-out; documented in `tests/e2e/playwright/README.md`.
 
 ### 10. Three-way merge UI for updates with user edits
-- **Status:** Deferred *(verify first — Phase 1 squash may have included partial work)*
-- **Source:** spec §6.9; phase-1-plan.md §6.9 / PR 1.25
-- **Gap:** Spec sketches `git status`-style merge surface in the source sidebar when user edits and upstream both change. Wiring into the dev-mode panel is incomplete.
-- **Why:** Lower-priority lifecycle path; users rarely edit installed apps and rarely upgrade those they edit.
-- **Trigger:** First user report of "I edited my app and now I can't update it."
+- **Status:** Done — Phase 5 PR 5.4 (#63).
+- **Resolution:** Auto-update conflict surfaces as: bottom-right toast
+  with "Resolve" action button, red dot overlay on the home-screen
+  icon, and a merge-conflict banner inside the app listing each
+  conflicted file with three actions — "I've resolved all conflicts —
+  commit", "Resolve with Claude" (copies a structured prompt to the
+  clipboard for Claude Code or any AI agent), and "Abort the update"
+  (clean revert via `git merge --abort`). New service
+  `AppMergeResolver` reconciles persisted DB state against live
+  `git status --porcelain`; `markAllResolved` content-scans for raw
+  `<<<<<<<` markers BEFORE `git add -u` to prevent committing a
+  half-resolved file (silent footgun: `git add` of a conflicted file
+  marks it resolved unconditionally). Conflict file list persists to
+  the new `apps.update_conflict_files` JSON column (PR 5.10) so the
+  banner survives restarts. New telemetry kinds `update_conflict` +
+  `update_conflict_resolved` (with sanitizer field `conflictFileCount`)
+  feed the curator dashboard.
 
 ### 11. Auto-update opt-in for Verified channel
-- **Status:** Deferred *(verify first; depends on #10)*
-- **Source:** spec §6.9; phase-1-plan.md §6.9
-- **Gap:** Auto-update toggle (default OFF) for Verified-channel apps when no user edits exist. Currently every update is manual.
-- **Why:** Depends on update flow with merge handling (#10) being solid.
-- **Trigger:** Once #10 lands.
+- **Status:** Done — Phase 4 PR 4.2 (#48).
+- **Resolution:** `AppAutoUpdater.processAutoUpdates` walks every
+  Verified-channel external app with `auto_update=1`, `update_available=1`,
+  and no `user_branch` (i.e. no local edits). Apply path is the
+  fast-forward branch of `AppCatalogService.update` (PR 1.25). Per-app
+  toggle in the app settings flyout. Toast subscriber on apply/fail.
+  Mark missed in Phase 4 PR 4.D3 close-out — corrected here in PR 5.D3.
 
 ### 12. Tiered uninstall + data-preserve + reinstall restore
-- **Status:** Deferred *(verify first — Phase 1 squash may have included this)*
-- **Source:** spec §6.10; phase-1-plan.md PR 1.24
-- **Gap:** Spec describes default-preserve uninstall, optional total-delete, and a reinstall path that detects orphan data and offers restore. Not all wired.
-- **Why:** Lower-priority; users uninstall rarely.
-- **Trigger:** First user data-loss complaint. Worth verifying before Phase 4 since support cost of "I uninstalled and lost my work" is high.
+- **Status:** Done — Phase 5 PR 5.5 (#62).
+- **Resolution:** Uninstall side shipped in Phase 1 PR 1.24 (default-
+  preserve sets `apps.status='uninstalled'`; optional total-delete
+  flag wipes blob/db/secrets). Reinstall side shipped in Phase 5 PR 5.5:
+  `AppService.getOrphan(slug, channel)` finds the most-recent
+  uninstalled row + reports byte sizes for the install-plan modal's
+  "Previous data found" section. Default-on checkbox; on approve the
+  installer reuses the orphan's `appId` (preserving slug, blob dir,
+  per-app SQLite, and saved secrets) via new `AppService.reviveOrphan`.
+  Skipped orphans are flipped to `status='archived'` so they stop
+  proposing themselves on future installs. Channel-scoped: a Verified
+  orphan does NOT match a Community reinstall (cross-channel restore
+  would silently elevate trust grants). Rollback handles revival via
+  a 5-min `created_at` buffer — a revive-then-fail rolls the row
+  back to `'uninstalled'` instead of deleting it (preserves user's
+  data + secrets so the next reinstall attempt can offer to restore
+  again).
 
 ### 13. Catalog CI error-handling polish
 - **Status:** Deferred *(verify first)*
@@ -125,18 +151,33 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** First curator-PR that fails CI and the author can't tell why.
 
 ### 32. Catalog freshness — no user-driven "Sync Now"
-- **Status:** Deferred
-- **Source:** Phase 3.5.5 — linkding manifest update (`os8ai/os8-catalog-community#9` adding `LD_SUPERUSER_*` secrets) was invisible to a freshly-restarted desktop because the local `app_catalog` table only refreshes daily at 4am local OR on community-channel toggle in Settings. Restarting OS8 doesn't trigger a sync; `AppCatalogService.get()` returns the cached `manifest_yaml` without re-checking `manifest_sha` upstream.
-- **Gap:** Newly-updated catalog manifests can be invisible to a desktop user for up to 24h with no obvious recovery path. The cache-invalidation logic from PR #41 only fires from a sync, not from a per-install fetch. There's no UI button to force a sync.
-- **Why:** Daily cadence was sufficient before realistic-fixture iteration. Surfaced sharply only when authoring + iterating manifests in real time.
-- **Trigger:** Recurring user reports of "I just installed and the install plan looks stale", OR before opening the catalog to a wider author pool. Cheap fix candidates: (a) add a "Sync now" button to the catalog browser that calls the existing `app-store:sync-channel-now` IPC, (b) sync the relevant channel when the user clicks an install button, (c) compare `manifest_sha` against upstream in `get()` when the local row is older than N minutes.
+- **Status:** Done — Phase 5 PR 5.6 (#60).
+- **Resolution:** Two complementary fixes shipped:
+  (a) **Sync Now button** in Settings → App Store, between the channel
+  toggles and the idle-reaper section. Calls `appStore.syncChannelNow`
+  for every enabled remote channel (Verified + Community); developer-
+  import is skipped (no remote catalog). Per-channel result reported
+  inline as `+added / updated / -removed`.
+  (b) **Per-install lazy refresh** in `AppCatalogService.get` —
+  new `{ refreshIfOlderThan: ms }` option, wired with a 5-minute
+  threshold at two call sites: `app-store:render-plan` IPC (when the
+  user opens the install plan modal) and `_runApprove` start (defense-
+  in-depth before clone). Network failure / 404 falls back to the
+  cached row so installs still proceed.
+  **Plan deviation:** plan §1 sketched the Sync Now button living in a
+  "catalog browser modal next to channel filter pills." Reality: there
+  is no in-OS8 catalog browser modal — catalog browsing happens on
+  os8.ai (web), users return to OS8 via `os8://install` deeplinks.
+  The button instead lives in the App Store settings panel which
+  already has the channel enable toggles (the conceptually-adjacent
+  surface).
 
 ### 36. Auto-update widening to Community channel
 - **Status:** Deferred *(considered for Phase 5 as PR 5.7, 2026-05-03; cut to give PR 5.4 soak time)*
-- **Source:** Phase 5 plan §1 + PR 5.7 stub. Distinct from #11 (which was about Verified-channel auto-update; closed by Phase 4 PR 4.2 — note that #11's status above is documentation drift and should be marked Done in a Phase 5 close-out).
+- **Source:** Phase 5 plan §1 + PR 5.7 stub. Distinct from #11 (Verified-channel auto-update; Done — Phase 4 PR 4.2 #48).
 - **Gap:** `AppAutoUpdater.processAutoUpdates` filters on `channel = 'verified'` (`src/services/app-auto-updater.js:55`). Community-channel apps with `auto_update=1` are silently ignored.
 - **Why:** Phase 5 originally scoped this as PR 5.7 (filter widening + per-channel Settings toggle, default OFF). Cut at planning to give PR 5.4's manual-edit conflict UI soak time on the lower-churn Verified channel first. Community apps churn more; surprise-update + conflict failures would erode trust faster than on Verified.
-- **Trigger:** PR 5.4 has shipped + ≥1 release of soak time has passed without recurring "merge conflict UX is broken" reports. Implementation cost estimated ~150 LOC (filter widening, per-channel settings toggle, flyout hint logic). Default OFF (symmetric with Verified, aligns with "scan surfaces, user decides" memory).
+- **Trigger:** PR 5.4 has now shipped (Phase 5, #63, 2026-05-04). Promote when ≥1 release of soak time has passed without recurring "merge conflict UX is broken" reports. Implementation cost estimated ~150 LOC (filter widening, per-channel settings toggle, flyout hint logic). Default OFF (symmetric with Verified, aligns with "scan surfaces, user decides" memory).
 
 ---
 
@@ -165,11 +206,26 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** Any new consumer compiling v2 with a strict-draft AJV; or any time the v2 schema needs editing for an unrelated reason (bundle the alignment with that PR).
 
 ### 34. ISR fallback 500s for slugs not in `generateStaticParams`
-- **Status:** Deferred *(documented upstream limitation)*
-- **Source:** Phase 3.5.5 — linkding's `/apps/linkding` returned 500 for ~30 minutes after sync completed, until an empty commit forced a Vercel rebuild. Existing comment in `os8dotai/src/app/apps/[slug]/page.tsx:13-22` describes the bug: Next.js's ISR fallback for slugs absent from `generateStaticParams`'s build-time output crashes upstream of user code on Vercel. The current mitigation pre-renders every known slug at build time.
-- **Gap:** Newly-synced apps remain 500 on `os8.ai/apps/<slug>` until a Vercel redeploy regenerates the static-params list. No automatic redeploy is wired; we pushed an empty commit by hand.
-- **Why:** Root cause is upstream (Next.js or Vercel runtime). Workaround is in place; the pain point is the manual nudge.
-- **Trigger:** Catalog churn that makes the manual nudge annoying, OR Vercel ships a fix and we can drop the pre-render-everything workaround. Cheap candidates: (a) trigger a Vercel deploy hook from the catalog-sync route after a successful add, (b) catch the not-found case in the page handler and render a "syncing, refresh in a moment" placeholder + ISR-revalidate.
+- **Status:** Done — Phase 5 PR 5.9 (os8dotai #18).
+- **Resolution:** `syncCatalog` calls `fireVercelDeployHook({ added,
+  channel })` right before returning, **only when `added > 0`**.
+  Updates and removes don't trigger it because `revalidatePath`
+  (already in place) handles those — only NEW slugs need a build to
+  regenerate `generateStaticParams()`. Helper is best-effort: 10s
+  timeout via AbortSignal, no-op when `VERCEL_DEPLOY_HOOK_URL` env
+  is unset, never throws on failure (5xx / network reject logs warn).
+  The pre-render-everything fallback in `apps/[slug]/page.tsx`
+  stays in tree as defense-in-depth — covers the brief ~1-3min
+  window between sync and rebuild completing.
+  **Operational follow-up (Leo):** create a Vercel deploy hook in
+  project settings → Git → Deploy Hooks (target `main`), set the URL
+  as `VERCEL_DEPLOY_HOOK_URL` in Production env vars. Until that's
+  set the hook is a strict no-op (returns
+  `{ ok: false, reason: "not set" }`).
+  **Adjacent fix during the same merge wave:** os8dotai hotfix #19
+  added `prisma generate` to the `vercel-build` script — six builds
+  failed in a row before that landed because the cached client didn't
+  have the InstalledApp model from PR 4.3.
 
 ### 16. Install-count display on community cards
 - **Status:** Deferred
@@ -245,11 +301,34 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** First catalog manifest pointing at a path within a known monorepo.
 
 ### 35. Docker adapter: container-internal volumes not bind-mounted
-- **Status:** Deferred
-- **Source:** Phase 3.5.5 — `runtime-adapters/docker.js` bind-mounts `~/os8/apps/<id>` → `/app` and `~/os8/blob/<id>` → `/data` only. Linkding writes its SQLite DB + bookmark archives to `/etc/linkding/data` inside the container; that path is ephemeral. After `docker rm` (uninstall, or any container recreation) the user's bookmarks are gone.
-- **Gap:** Manifests have no way to declare additional bind mounts for container-internal paths the app actually persists to. Every docker app silently has this footgun unless its image happens to write only to `/app` or `/data` (rare).
-- **Why:** Adds a new manifest field (`runtime.volumes` or similar), schema change across catalogs, adapter wiring. Out of scope for the Phase 3.5.5 adapter validation.
-- **Trigger:** First user data-loss complaint, OR before any docker app graduates from community to verified. Likely shape: `runtime.volumes: [{ container_path: "/etc/linkding/data", persist: true }]` → adapter mounts under `~/os8/blob/<id>/<container_path_basename>`.
+- **Status:** Done — Phase 5 PR 5.8 (#64 + os8-catalog #14 + os8-catalog-community #11).
+- **Resolution:** Three-repo cross-coordination shipped together.
+  **Schema** (`runtime.volumes`) added to `appspec-v2.json` in all
+  three places (os8 + both catalog repos): array of
+  `{ container_path: string, persist?: boolean }`, max 10, regex
+  `^/[a-zA-Z0-9_/-]+$` rejects `..` + non-absolute paths,
+  validator invariant rejects duplicate `container_path`.
+  **Docker adapter** reads the field; for each entry it mkdir's
+  `${BLOB_DIR}/<id>/_volumes/<basename>/` on the host and passes
+  `--mount type=bind,source=...,target=<container_path>` to
+  `docker run`. Persistent across container recreate, OS8 restart,
+  and (with PR 5.5's restore flow) uninstall→reinstall.
+  **First-boot migration toast** (new service
+  `DockerVolumeMigration.scan/acknowledge`): scans installed docker
+  apps with declared volumes whose host-side `_volumes/<basename>/`
+  is missing or empty + not yet acknowledged, broadcasts to the
+  renderer, toast surfaces with an "Acknowledge" action button.
+  Suppression key per-app:
+  `app_store.docker_volume_migration_acknowledged.<appId>`.
+  **Helper script** `tools/migrate-docker-volume.sh <slug>` runs
+  `docker exec tar | tar -xf` to copy the in-container data out into
+  the host bind-mount path while the container is still running, then
+  marks the migration acknowledged. Idempotent. Requires sqlite3 +
+  docker on the host.
+  **First fixture:** linkding's `/etc/linkding/data` declared in
+  `os8ai/os8-catalog-community/apps/linkding/manifest.yaml` (G5
+  smoke target — bookmarks persist across container recreate).
+  User-facing reference: `docs/runtime-volumes.md` (PR 5.D2 #65).
 
 ---
 
