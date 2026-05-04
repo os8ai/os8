@@ -94,10 +94,17 @@ export function renderApps() {
     const isSystem = app.app_type === 'system';
     const systemClass = isSystem ? ' system-app' : '';
     const draggable = isSystem ? 'false' : 'true'; // System apps can't be reordered
+    // Phase 5 PR 5.4 — small red dot when an auto-update hit a merge
+    // conflict for this app. Stays until the user resolves via the
+    // merge-conflict banner inside the app.
+    const conflictDot = app.update_status === 'conflict'
+      ? `<span class="app-icon__conflict-dot" title="Merge conflict needs resolution"></span>`
+      : '';
     return `
       <div class="app-icon${systemClass}" data-id="${app.id}" data-index="${index}" data-system="${isSystem}" draggable="${draggable}" style="position: relative;">
         ${renderIconHtml(app, 64)}
         ${renderChannelBadge(app)}
+        ${conflictDot}
         <div class="app-icon-name">${app.name}</div>
       </div>
     `;

@@ -173,10 +173,13 @@ describe('AppInstaller — clone + state machine', () => {
       channel: 'verified',
     });
 
-    for (let i = 0; i < 30; i++) {
+    // Wait widened — PR 5.4 added enough test load that the original
+    // 30×50ms = 1.5s window flaked under full-suite parallelism.
+    // Still well under the test runner's per-test budget.
+    for (let i = 0; i < 60; i++) {
       const cur = InstallJobs.get(db, job.id);
       if (cur.status === 'failed') break;
-      await new Promise(r => setTimeout(r, 50));
+      await new Promise(r => setTimeout(r, 100));
     }
     const final = InstallJobs.get(db, job.id);
     expect(final.status).toBe('failed');

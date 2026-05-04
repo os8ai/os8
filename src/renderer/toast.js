@@ -69,9 +69,14 @@ export function showToast({ title, message = '', kind = 'info', action, duration
 }
 
 /**
- * Auto-update event toast. Routes apply/fail to the right styling.
+ * Auto-update event toast. Routes apply/fail/conflict to the right
+ * styling. Phase 5 PR 5.4 added the `conflict` kind — fires when an
+ * auto-update hits a merge conflict and the user needs to resolve it
+ * manually via the merge-conflict banner.
  *
- * @param {{ kind: 'applied'|'failed', appId, slug, newCommit?, error? }} event
+ * @param {{ kind: 'applied'|'failed'|'conflict', appId, slug,
+ *           newCommit?, error?, conflictFileCount?,
+ *           onResolve?: () => void }} event
  */
 export function showAutoUpdateToast(event) {
   if (event.kind === 'applied') {
@@ -82,6 +87,18 @@ export function showAutoUpdateToast(event) {
         ? `Now on ${String(event.newCommit).slice(0, 7)}.`
         : 'Auto-update applied.',
       durationMs: TOAST_DEFAULT_MS,
+    });
+  }
+  if (event.kind === 'conflict') {
+    const n = event.conflictFileCount || 0;
+    return showToast({
+      kind: 'warning',
+      title: `${event.slug} needs your help`,
+      message: n > 0
+        ? `Auto-update hit a merge conflict in ${n} file${n === 1 ? '' : 's'}. Open the app to review.`
+        : 'Auto-update hit a merge conflict. Open the app to review.',
+      action: event.onResolve ? { label: 'Resolve', onClick: event.onResolve } : undefined,
+      durationMs: TOAST_FAIL_MS,
     });
   }
   if (event.kind === 'failed') {

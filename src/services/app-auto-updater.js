@@ -70,10 +70,10 @@ function listEligible(db) {
  * @returns {Promise<{ attempted, updated, skipped, failed }>}
  */
 async function processAutoUpdates(db, callbacks = {}) {
-  const { onUpdated, onSkipped, onFailed } = callbacks;
+  const { onUpdated, onSkipped, onFailed, onConflict } = callbacks;
   const eligible = listEligible(db);
 
-  let attempted = 0, updated = 0, skipped = 0, failed = 0;
+  let attempted = 0, updated = 0, skipped = 0, failed = 0, conflicts = 0;
 
   for (const app of eligible) {
     attempted += 1;
@@ -108,8 +108,29 @@ async function processAutoUpdates(db, callbacks = {}) {
           });
         } catch (_) { /* telemetry is best-effort */ }
       } else if (result?.kind === 'conflict') {
+        // Phase 5 PR 5.4 — conflict gets its own callback so the server
+        // can broadcast a renderer event + the merge-conflict banner
+        // surfaces in the user's app. Still counts as 'skipped' for the
+        // legacy summary.
         skipped += 1;
+        conflicts += 1;
+        const files = Array.isArray(result.files) ? result.files : [];
+        onConflict?.(app, { files });
         onSkipped?.(app, `merge conflict requires manual resolution`);
+        try {
+          const yaml = require('js-yaml');
+          const manifest = app.manifest_yaml ? yaml.load(app.manifest_yaml) : null;
+          getTelemetry().enqueue(db, {
+            kind: 'update_conflict',
+            adapter: manifest?.runtime?.kind || null,
+            framework: manifest?.framework || null,
+            channel: app.channel,
+            slug: app.external_slug,
+            commit: targetCommit,
+            failurePhase: 'merge',
+            conflictFileCount: files.length,
+          });
+        } catch (_) { /* telemetry is best-effort */ }
       } else {
         skipped += 1;
         onSkipped?.(app, `unexpected update result kind: ${result?.kind}`);
@@ -130,7 +151,7 @@ async function processAutoUpdates(db, callbacks = {}) {
     }
   }
 
-  return { attempted, updated, skipped, failed };
+  return { attempted, updated, skipped, failed, conflicts };
 }
 
 module.exports = {
