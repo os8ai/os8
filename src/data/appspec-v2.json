@@ -83,6 +83,28 @@
           "type": "boolean",
           "description": "When true, --gpus all is passed to docker run. Requires nvidia-container-toolkit on Linux.",
           "default": false
+        },
+        "volumes": {
+          "type": "array",
+          "description": "Phase 5 PR 5.8 — additional container-internal paths to bind-mount into per-app blob storage. Used for docker apps whose persistent data lives outside the default /app + /data mounts (e.g. linkding's /etc/linkding/data). Each entry is host-mounted under ${BLOB_DIR}/_volumes/${basename}.",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["container_path"],
+            "properties": {
+              "container_path": {
+                "type": "string",
+                "description": "Absolute path inside the container, e.g. /etc/linkding/data. Must start with / and contain only [a-zA-Z0-9_/-].",
+                "pattern": "^/[a-zA-Z0-9_/-]+$"
+              },
+              "persist": {
+                "type": "boolean",
+                "description": "Reserved — volumes always persist in v1. Forward-compat for tmpfs-style volumes if a use case emerges.",
+                "default": true
+              }
+            }
+          }
         }
       },
       "if": { "properties": { "kind": { "const": "docker" } }, "required": ["kind"] },

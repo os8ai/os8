@@ -274,6 +274,97 @@ describe('DockerRuntimeAdapter — stop is a no-op for non-docker info', () => {
   });
 });
 
+describe('DockerRuntimeAdapter — runtime.volumes (PR 5.8)', () => {
+  let DockerAdapter;
+  let calls;
+  let prevHome;
+  let parent;
+
+  beforeEach(async () => {
+    const fs = require('fs');
+    const os = require('os');
+    parent = fs.mkdtempSync(path.join(os.tmpdir(), 'os8-docker-vol-'));
+    prevHome = process.env.OS8_HOME;
+    process.env.OS8_HOME = parent;
+    delete require.cache[require.resolve('../src/config')];
+    delete require.cache[require.resolve('../src/services/runtime-adapters/docker')];
+    DockerAdapter = require('../src/services/runtime-adapters/docker');
+    calls = [];
+    DockerAdapter._internal._setSpawn(async (argv) => {
+      calls.push(argv);
+      if (argv[0] === 'docker' && argv[1] === 'run') return { stdout: 'fake-id\n', stderr: '' };
+      return { stdout: '', stderr: '' };
+    });
+  });
+  afterEach(() => {
+    DockerAdapter._internal._resetSpawn();
+    if (prevHome === undefined) delete process.env.OS8_HOME;
+    else process.env.OS8_HOME = prevHome;
+    const fs = require('fs');
+    try { fs.rmSync(parent, { recursive: true, force: true }); } catch (_) {}
+  });
+
+  it('argv unchanged when manifest declares no runtime.volumes', async () => {
+    await Promise.race([
+      DockerAdapter.start(BASE_MANIFEST, '/ignored', { OS8_APP_ID: 'a-novol', PORT: '40000' }, () => {}),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('t')), 3000)),
+    ]).catch(() => null);
+    const runCall = calls.find(c => c[1] === 'run');
+    // No volume mounts beyond the default /app + /data.
+    const mountFlags = runCall.filter((s, i) => runCall[i - 1] === '--mount');
+    expect(mountFlags).toHaveLength(2);
+    expect(mountFlags.some(s => s.endsWith('target=/app'))).toBe(true);
+    expect(mountFlags.some(s => s.endsWith('target=/data'))).toBe(true);
+  });
+
+  it('mounts each declared volume under BLOB_DIR/<id>/_volumes/<basename>', async () => {
+    const fs = require('fs');
+    const m = clone(BASE_MANIFEST);
+    m.runtime.volumes = [
+      { container_path: '/etc/linkding/data' },
+      { container_path: '/var/lib/foo' },
+    ];
+    await Promise.race([
+      DockerAdapter.start(m, '/ignored', { OS8_APP_ID: 'a-vol', PORT: '40001' }, () => {}),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('t')), 3000)),
+    ]).catch(() => null);
+
+    const { BLOB_DIR } = require('../src/config');
+    const expectedDataHost = path.join(BLOB_DIR, 'a-vol', '_volumes', 'data');
+    const expectedFooHost = path.join(BLOB_DIR, 'a-vol', '_volumes', 'foo');
+
+    // The host dirs are created at start so the bind mount lands on
+    // a real path (otherwise docker creates a root-owned empty dir).
+    expect(fs.existsSync(expectedDataHost)).toBe(true);
+    expect(fs.existsSync(expectedFooHost)).toBe(true);
+
+    const runCall = calls.find(c => c[1] === 'run');
+    const mountFlags = runCall.filter((s, i) => runCall[i - 1] === '--mount');
+    // Defaults still present.
+    expect(mountFlags.some(s => s.endsWith('target=/app'))).toBe(true);
+    expect(mountFlags.some(s => s.endsWith('target=/data'))).toBe(true);
+    // Plus the two declared volumes.
+    expect(mountFlags).toContain(`type=bind,source=${expectedDataHost},target=/etc/linkding/data`);
+    expect(mountFlags).toContain(`type=bind,source=${expectedFooHost},target=/var/lib/foo`);
+  });
+
+  it('skips an empty container_path defensively', async () => {
+    const m = clone(BASE_MANIFEST);
+    // The schema regex would normally reject this; we test the adapter's
+    // own defensive skip in case a malformed manifest reaches start().
+    m.runtime.volumes = [{ container_path: '/' }];
+    await Promise.race([
+      DockerAdapter.start(m, '/ignored', { OS8_APP_ID: 'a-empty', PORT: '40002' }, () => {}),
+      new Promise((_r, rej) => setTimeout(() => rej(new Error('t')), 3000)),
+    ]).catch(() => null);
+
+    const runCall = calls.find(c => c[1] === 'run');
+    const mountFlags = runCall.filter((s, i) => runCall[i - 1] === '--mount');
+    // Only the two default mounts; the basename-empty entry was dropped.
+    expect(mountFlags).toHaveLength(2);
+  });
+});
+
 // Live coverage of pull/run/stop is exercised via PR 2.4's OpenWebUI
 // catalog manifest installing end-to-end against a real Docker daemon.
 // No standalone live test here — running `docker pull` in Vitest CI

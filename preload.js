@@ -416,6 +416,18 @@ contextBridge.exposeInMainWorld('os8', {
     resetTelemetryClientId: () =>
       ipcRenderer.invoke('app-store:reset-telemetry-client-id'),
 
+    // PR 5.8 — docker-volume migration toast subscriber + ack.
+    // Server fires 'app-store:docker-volume-migration' once at boot for
+    // each installed docker app whose host-side _volumes/<basename>/
+    // dirs are still empty.
+    onDockerVolumeMigration: (callback) => {
+      const listener = (_e, payload) => callback(payload);
+      ipcRenderer.on('app-store:docker-volume-migration', listener);
+      return () => ipcRenderer.removeListener('app-store:docker-volume-migration', listener);
+    },
+    ackDockerVolumeMigration: (appId) =>
+      ipcRenderer.invoke('app-store:ack-docker-volume-migration', appId),
+
     // PR 4.2 — auto-update toast subscription. Renderers wire a single
     // callback that fires for apply / fail / conflict events; payload.kind
     // distinguishes them. PR 5.4 added the `conflict` kind so the toast

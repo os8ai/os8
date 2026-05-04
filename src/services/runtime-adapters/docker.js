@@ -21,6 +21,7 @@
  */
 
 const { spawn } = require('node:child_process');
+const fs = require('fs');
 const path = require('path');
 
 const { APPS_DIR, BLOB_DIR } = require('../../config');
@@ -193,14 +194,33 @@ const DockerRuntimeAdapter = {
     const hostPort = parseInt(sanitizedEnv.PORT, 10);
     if (!Number.isFinite(hostPort)) throw new Error('docker adapter: invalid PORT');
 
+    const blobDir = path.join(BLOB_DIR, appId);
     const args = [
       'run', '-d',
       '--name', containerName,
       '-p', `127.0.0.1:${hostPort}:${spec.runtime.internal_port}`,
       '--mount', `type=bind,source=${path.join(APPS_DIR, appId)},target=/app`,
-      '--mount', `type=bind,source=${path.join(BLOB_DIR, appId)},target=/data`,
+      '--mount', `type=bind,source=${blobDir},target=/data`,
       '--restart', 'no',
     ];
+
+    // Phase 5 PR 5.8 — additional declared volumes (e.g. linkding's
+    // /etc/linkding/data). Each mounts under
+    // ${BLOB_DIR}/<appId>/_volumes/<basename>; basename collisions are
+    // caught by the manifest validator's duplicate-container_path
+    // check, but we defensively skip empty basenames (e.g. a
+    // container_path of "/").
+    const declaredVolumes = Array.isArray(spec.runtime?.volumes) ? spec.runtime.volumes : [];
+    for (const vol of declaredVolumes) {
+      const containerPath = vol?.container_path;
+      if (typeof containerPath !== 'string' || !containerPath.startsWith('/')) continue;
+      const basename = path.posix.basename(containerPath);
+      if (!basename) continue;
+      const hostDir = path.join(blobDir, '_volumes', basename);
+      try { fs.mkdirSync(hostDir, { recursive: true }); }
+      catch (_) { /* best-effort; docker will surface a clearer error */ }
+      args.push('--mount', `type=bind,source=${hostDir},target=${containerPath}`);
+    }
     if (spec.runtime.gpu_passthrough) args.push('--gpus', 'all');
 
     // Container env: strip the host-OS whitelist (PATH/HOME/USER/...) that

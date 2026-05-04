@@ -84,6 +84,28 @@ function validateManifest(manifest, { upstreamResolvedCommit } = {}) {
   if (manifest?.runtime?.kind === 'docker' && manifest?.schemaVersion !== 2) {
     errors.push({ kind: 'invariant', path: '/runtime/kind', message: 'docker runtime requires schemaVersion: 2' });
   }
+
+  // Phase 5 PR 5.8 — runtime.volumes invariants beyond what JSON Schema
+  // can express. The schema's regex on container_path already rejects
+  // `..` and any non-`/[a-zA-Z0-9_/-]` chars; the additional checks here
+  // catch duplicate container_path entries (two items with the same
+  // mount target — either a typo or a sneaky aliasing attempt).
+  const volumes = manifest?.runtime?.volumes;
+  if (Array.isArray(volumes)) {
+    const seen = new Set();
+    volumes.forEach((vol, i) => {
+      const cp = vol?.container_path;
+      if (typeof cp !== 'string') return;   // schema catches it
+      if (seen.has(cp)) {
+        errors.push({
+          kind: 'invariant',
+          path: `/runtime/volumes/${i}/container_path`,
+          message: `duplicate container_path: ${cp}`,
+        });
+      }
+      seen.add(cp);
+    });
+  }
   if (manifest?.surface && manifest.surface.kind !== 'web') {
     errors.push({ kind: 'invariant', path: '/surface/kind', message: 'only surface.kind=web supported in v1' });
   }

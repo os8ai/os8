@@ -154,6 +154,23 @@ function registerAppStoreHandlers({ db, mainWindow }) {
     }
   });
 
+  // Phase 5 PR 5.8 — acknowledge the docker-volume-migration toast for an
+  // app. Once acknowledged the first-boot scanner stops surfacing it.
+  // Setting per-app key avoids a global "all-apps acknowledged" semantics
+  // that would mask a future docker app's migration prompt.
+  ipcMain.handle('app-store:ack-docker-volume-migration', (_e, appId) => {
+    try {
+      if (typeof appId !== 'string' || !appId) {
+        return { ok: false, error: 'appId required' };
+      }
+      const DockerVolumeMigration = require('../services/docker-volume-migration');
+      DockerVolumeMigration.acknowledge(db, appId);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
   // PR 4.4 — Reset the anonymous telemetry client ID. Generates a fresh
   // UUID, severing the link between past and future events.
   ipcMain.handle('app-store:reset-telemetry-client-id', () => {
