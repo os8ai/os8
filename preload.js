@@ -382,8 +382,11 @@ contextBridge.exposeInMainWorld('os8', {
     // PR 1.17 — install pipeline driving the modal.
     install: (slug, commit, channel, source) =>
       ipcRenderer.invoke('app-store:install', { slug, commit, channel, source }),
-    approve: (jobId, secrets) =>
-      ipcRenderer.invoke('app-store:approve', jobId, secrets),
+    // PR 5.5 — opts.restoreOrphan tells the installer to revive the
+    // previously-uninstalled apps row instead of creating a fresh one,
+    // preserving blob storage, the per-app SQLite, and saved secrets.
+    approve: (jobId, secrets, opts) =>
+      ipcRenderer.invoke('app-store:approve', jobId, secrets, opts),
     cancel: (jobId) =>
       ipcRenderer.invoke('app-store:cancel', jobId),
     getJob: (jobId) =>
