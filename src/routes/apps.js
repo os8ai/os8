@@ -262,6 +262,77 @@ function createAppsRouter(db, deps) {
     }
   });
 
+  // -------------------------------------------------------------------
+  // Phase 5 PR 5.4 — three-way merge UI for auto-update conflicts.
+  //
+  // GET    /api/apps/:id/merge-state                — read live state
+  // POST   /api/apps/:id/merge-state/mark-resolved  — git add -u + commit
+  // POST   /api/apps/:id/merge-state/abort          — git merge --abort
+  //
+  // The renderer's merge-conflict banner subscribes via the GET endpoint
+  // and drives the two POST actions. Lazy-required to avoid pulling git
+  // primitives into the apps router on every cold start.
+  // -------------------------------------------------------------------
+  router.get('/:id/merge-state', async (req, res) => {
+    try {
+      const AppMergeResolver = require('../services/app-merge-resolver');
+      const state = await AppMergeResolver.getConflictState(db, req.params.id);
+      res.json({ ok: true, ...state });
+    } catch (err) {
+      console.error('[Apps API] merge-state read:', err.message);
+      const status = /not found/.test(err.message) ? 404 : 500;
+      res.status(status).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/:id/merge-state/mark-resolved', async (req, res) => {
+    try {
+      const AppMergeResolver = require('../services/app-merge-resolver');
+      const { resolvedBy } = req.body || {};
+      const r = await AppMergeResolver.markAllResolved(db, req.params.id, {
+        resolvedBy: resolvedBy === 'ai' ? 'ai' : 'user',
+      });
+      // PR 5.4 — emit update_conflict_resolved telemetry on success.
+      try {
+        const { AppService } = require('../services/app');
+        const AppTelemetry = require('../services/app-telemetry');
+        const yaml = require('js-yaml');
+        const app = AppService.getById(db, req.params.id);
+        const manifest = app?.manifest_yaml ? yaml.load(app.manifest_yaml) : null;
+        AppTelemetry.enqueue(db, {
+          kind: 'update_conflict_resolved',
+          adapter: manifest?.runtime?.kind || null,
+          framework: manifest?.framework || null,
+          channel: app?.channel,
+          slug: app?.external_slug,
+          commit: r.commit,
+        });
+      } catch (_) { /* telemetry is best-effort */ }
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      console.error('[Apps API] merge-state mark-resolved:', err.message);
+      if (err.code === 'STILL_CONFLICTED') {
+        return res.status(409).json({
+          ok: false, code: 'STILL_CONFLICTED', error: err.message, files: err.files,
+        });
+      }
+      const status = /not found/.test(err.message) ? 404 : 500;
+      res.status(status).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/:id/merge-state/abort', async (req, res) => {
+    try {
+      const AppMergeResolver = require('../services/app-merge-resolver');
+      const r = await AppMergeResolver.abortMerge(db, req.params.id);
+      res.json({ ok: true, ...r });
+    } catch (err) {
+      console.error('[Apps API] merge-state abort:', err.message);
+      const status = /not found/.test(err.message) ? 404 : 500;
+      res.status(status).json({ ok: false, error: err.message });
+    }
+  });
+
   // PATCH /api/apps/:id/auto-update — Toggle Verified-channel auto-update.
   // PR 4.2. Body: { enabled: boolean }. Returns the updated app row.
   // Refuses for community / dev-import apps via AppService.setAutoUpdate.

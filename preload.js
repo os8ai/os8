@@ -417,16 +417,20 @@ contextBridge.exposeInMainWorld('os8', {
       ipcRenderer.invoke('app-store:reset-telemetry-client-id'),
 
     // PR 4.2 — auto-update toast subscription. Renderers wire a single
-    // callback that fires for both apply + fail events; payload.kind
-    // distinguishes them.
+    // callback that fires for apply / fail / conflict events; payload.kind
+    // distinguishes them. PR 5.4 added the `conflict` kind so the toast
+    // can route to the merge-conflict banner.
     onAutoUpdateEvent: (callback) => {
-      const onApplied = (_e, payload) => callback({ kind: 'applied', ...payload });
-      const onFailed  = (_e, payload) => callback({ kind: 'failed',  ...payload });
-      ipcRenderer.on('app-store:auto-update-applied', onApplied);
-      ipcRenderer.on('app-store:auto-update-failed',  onFailed);
+      const onApplied  = (_e, payload) => callback({ kind: 'applied',  ...payload });
+      const onFailed   = (_e, payload) => callback({ kind: 'failed',   ...payload });
+      const onConflict = (_e, payload) => callback({ kind: 'conflict', ...payload });
+      ipcRenderer.on('app-store:auto-update-applied',  onApplied);
+      ipcRenderer.on('app-store:auto-update-failed',   onFailed);
+      ipcRenderer.on('app-store:auto-update-conflict', onConflict);
       return () => {
-        ipcRenderer.removeListener('app-store:auto-update-applied', onApplied);
-        ipcRenderer.removeListener('app-store:auto-update-failed',  onFailed);
+        ipcRenderer.removeListener('app-store:auto-update-applied',  onApplied);
+        ipcRenderer.removeListener('app-store:auto-update-failed',   onFailed);
+        ipcRenderer.removeListener('app-store:auto-update-conflict', onConflict);
       };
     },
 

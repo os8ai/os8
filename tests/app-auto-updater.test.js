@@ -119,7 +119,7 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
 
     expect(updateSpy).toHaveBeenCalledTimes(1);
     expect(updateSpy).toHaveBeenCalledWith(db, 'a-yes', 'b'.repeat(40));
-    expect(result).toEqual({ attempted: 1, updated: 1, skipped: 0, failed: 0 });
+    expect(result).toEqual({ attempted: 1, updated: 1, skipped: 0, failed: 0, conflicts: 0 });
     expect(onUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: 'a-yes' }), 'b'.repeat(40));
   });
 
@@ -131,7 +131,9 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     const onSkipped = vi.fn();
     const result = await AppAutoUpdater.processAutoUpdates(db, { onSkipped });
 
-    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 1, failed: 0 });
+    // PR 5.4 — conflicts now also count in the dedicated `conflicts` field;
+    // skipped still increments for back-compat with the existing summary.
+    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 1, failed: 0, conflicts: 1 });
     expect(onSkipped).toHaveBeenCalledWith(expect.objectContaining({ id: 'a-yes' }), expect.stringContaining('conflict'));
   });
 
@@ -143,7 +145,7 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     const onFailed = vi.fn();
     const result = await AppAutoUpdater.processAutoUpdates(db, { onFailed });
 
-    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 0, failed: 1 });
+    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 0, failed: 1, conflicts: 0 });
     expect(onFailed).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'a-yes' }),
       expect.objectContaining({ message: 'boom' })
@@ -158,7 +160,7 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     const result = await AppAutoUpdater.processAutoUpdates(db, { onSkipped });
 
     expect(updateSpy).not.toHaveBeenCalled();
-    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 1, failed: 0 });
+    expect(result).toEqual({ attempted: 1, updated: 0, skipped: 1, failed: 0, conflicts: 0 });
     expect(onSkipped).toHaveBeenCalledWith(expect.objectContaining({ id: 'a-bad' }), expect.stringContaining('invalid update_to_commit'));
   });
 
@@ -173,7 +175,7 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     });
 
     const result = await AppAutoUpdater.processAutoUpdates(db);
-    expect(result).toEqual({ attempted: 3, updated: 1, skipped: 1, failed: 1 });
+    expect(result).toEqual({ attempted: 3, updated: 1, skipped: 1, failed: 1, conflicts: 0 });
     // updateSpy never sees 'badsha' (skipped before dispatch).
     expect(updateSpy.mock.calls.map(c => c[1])).toEqual(['good', 'fail']);
   });
@@ -182,7 +184,7 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     row({ id: 'a-off', slug: 'a-off', channel: 'verified', autoUpdate: 0, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
     const updateSpy = vi.spyOn(AppCatalogService, 'update');
     const result = await AppAutoUpdater.processAutoUpdates(db);
-    expect(result).toEqual({ attempted: 0, updated: 0, skipped: 0, failed: 0 });
+    expect(result).toEqual({ attempted: 0, updated: 0, skipped: 0, failed: 0, conflicts: 0 });
     expect(updateSpy).not.toHaveBeenCalled();
   });
 });

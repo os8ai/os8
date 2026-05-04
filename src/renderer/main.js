@@ -319,9 +319,9 @@ async function init() {
     window.os8.appStore.onAutoUpdateEvent(async (event) => {
       try {
         showAutoUpdateToast(event);
-        if (event.kind === 'applied') {
-          // Refresh the home grid so the updated app's icon (which may
-          // have new metadata after the SHA bump) re-renders.
+        if (event.kind === 'applied' || event.kind === 'conflict') {
+          // PR 5.4 — refresh on conflict too so the home-screen icon's
+          // red dot shows up without the user having to reload.
           await loadApps();
         }
       } catch (e) {

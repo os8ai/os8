@@ -574,23 +574,50 @@ const AppCatalogService = {
         const files = stdout.split('\n')
           .filter(line => /^(UU|AA|DD|UA|AU|DU|UD) /.test(line))
           .map(line => line.slice(3));
-        db.prepare(
-          `UPDATE apps SET update_status = 'conflict', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-        ).run(appId);
+        // Phase 5 PR 5.4 — persist the conflict file list so the
+        // renderer's merge-conflict banner can render without re-running
+        // git status on every load. Defensive try/catch in case a
+        // pre-0.7.0 schema doesn't have the column.
+        try {
+          db.prepare(`
+            UPDATE apps SET update_status = 'conflict',
+                             update_conflict_files = ?,
+                             updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+          `).run(JSON.stringify(files), appId);
+        } catch (_) {
+          db.prepare(
+            `UPDATE apps SET update_status = 'conflict', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+          ).run(appId);
+        }
         return { kind: 'conflict', files, error: e.message };
       }
     }
 
-    // 3. Bump the apps row.
-    db.prepare(`
-      UPDATE apps
-        SET upstream_resolved_commit = ?,
-            update_available = 0,
-            update_to_commit = NULL,
-            update_status = NULL,
-            updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(targetCommit, appId);
+    // 3. Bump the apps row. Phase 5 PR 5.4 — also clear the conflict
+    //    file list (no-op if the column doesn't exist).
+    try {
+      db.prepare(`
+        UPDATE apps
+          SET upstream_resolved_commit = ?,
+              update_available = 0,
+              update_to_commit = NULL,
+              update_status = NULL,
+              update_conflict_files = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(targetCommit, appId);
+    } catch (_) {
+      db.prepare(`
+        UPDATE apps
+          SET upstream_resolved_commit = ?,
+              update_available = 0,
+              update_to_commit = NULL,
+              update_status = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(targetCommit, appId);
+    }
 
     return { kind: 'updated', commit: targetCommit, hadUserEdits: !!app.user_branch };
   },

@@ -297,6 +297,22 @@ function scheduleAppCatalogSync() {
           onSkipped: (app, reason) => {
             console.log(`[AutoUpdate] ${app.external_slug} skipped: ${reason}`);
           },
+          // Phase 5 PR 5.4 — conflict needs a separate broadcast so the
+          // renderer toast subscriber can route to the merge-conflict
+          // banner instead of the generic "auto-update failed" toast.
+          onConflict: (app, { files }) => {
+            console.warn(`[AutoUpdate] ${app.external_slug} merge conflict (${files.length} file(s))`);
+            if (notifyEnabled) {
+              broadcastToRenderers({
+                channel: 'app-store:auto-update-conflict',
+                payload: {
+                  appId: app.id,
+                  slug: app.external_slug,
+                  conflictFileCount: files.length,
+                },
+              });
+            }
+          },
           onFailed: (app, err) => {
             console.warn(`[AutoUpdate] ${app.external_slug} failed: ${err.message}`);
             if (notifyEnabled) {

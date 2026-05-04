@@ -36,10 +36,16 @@ const TELEMETRY_OPT_IN_KEY = 'app_store.telemetry.opt_in';
 
 // Hard allowlist for sanitization. Any key not in this set is dropped
 // at write time so an over-zealous future contributor can't leak.
+//
+// Phase 5 PR 5.4 added `conflictFileCount` for the new
+// `update_conflict` and `update_conflict_resolved` kinds — a small
+// numeric so the curator dashboard can surface "what % of auto-updates
+// conflict" without exposing per-file paths.
 const ALLOWED_FIELDS = new Set([
   'kind', 'adapter', 'framework', 'channel', 'slug', 'commit',
   'failurePhase', 'failureFingerprint', 'durationMs',
   'os', 'arch', 'overrideReason',
+  'conflictFileCount',
 ]);
 
 let _flushTimer = null;
