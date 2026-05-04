@@ -373,11 +373,11 @@ const AppCatalogService = {
    * or a yaml-less entry (case 2) — same semantics as before, just no
    * longer requires a prior sync to discover the slug.
    */
-  async get(db, slug, { channel = 'verified', apiBase = DEFAULT_API_BASE } = {}) {
+  async get(db, slug, { channel = 'verified', apiBase = DEFAULT_API_BASE, refreshIfOlderThan = null } = {}) {
     const selectStmt = db.prepare(
       `SELECT * FROM app_catalog WHERE slug = ? AND channel = ? AND deleted_at IS NULL`
     );
-    const row = selectStmt.get(slug, channel);
+    let row = selectStmt.get(slug, channel);
 
     if (!row) {
       // Don't lazy-fetch if a soft-deleted row exists — soft-delete records
@@ -412,6 +412,35 @@ const AppCatalogService = {
       }
       const newRow = selectStmt.get(slug, channel);
       return rowToEntry(newRow);
+    }
+
+    // Phase 5 PR 5.6 — per-install lazy refresh. When the caller asks (e.g.
+    // the install pipeline at install start), and the row's synced_at is
+    // older than the threshold, re-fetch the manifest from os8.ai. This
+    // catches the Phase 3.5.5 incident's scenario: a manifest tweak in
+    // the catalog landed minutes before an install attempt, and the daily
+    // sync hadn't picked it up. Best-effort: a network failure leaves the
+    // cached row intact and the install proceeds with the stale manifest.
+    if (refreshIfOlderThan != null && row.synced_at) {
+      const ageMs = Date.now() - new Date(row.synced_at).getTime();
+      if (Number.isFinite(ageMs) && ageMs > refreshIfOlderThan) {
+        try {
+          const fresh = await AppCatalogService.fetchManifest(slug, channel, { apiBase });
+          if (fresh && fresh.slug) {
+            const cols = listingToColumns({ ...fresh, channel });
+            try {
+              db.prepare(UPSERT_SQL).run(cols);
+              // Re-read so the entry reflects the upserted row (including
+              // the conditional manifest_yaml CASE in UPSERT_SQL).
+              row = selectStmt.get(slug, channel) || row;
+            } catch (_) {
+              // Upsert failure — fall through with the cached row.
+            }
+          }
+        } catch (_) {
+          // Network/timeout — keep the cached row. Best-effort.
+        }
+      }
     }
 
     if (!row.manifest_yaml) {

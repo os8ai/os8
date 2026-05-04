@@ -1144,6 +1144,27 @@
               </div>
             </div>
 
+            <!-- PR 5.6 — manual sync trigger. Daily catalog sync runs at
+                 4am local; this button forces an immediate sync of every
+                 enabled remote channel (verified + community). Useful when
+                 a manifest just landed in the catalog and you don't want
+                 to wait. Per-install lazy refresh (also in PR 5.6) covers
+                 the same case automatically when the cached row is older
+                 than 5 minutes. -->
+            <div class="setting-group" style="margin-top: 8px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                <div>
+                  <label class="setting-label">Sync catalog now</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    Forces an immediate sync of every enabled remote channel.
+                    Otherwise OS8 syncs daily at 4am local.
+                  </p>
+                </div>
+                <button id="appStoreSyncNowBtn" class="action-button" type="button">Sync Now</button>
+              </div>
+              <span id="appStoreSyncNowStatus" class="setting-description" style="font-size: 12px; display: block; margin-top: 6px;" hidden></span>
+            </div>
+
             <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">External app idle reaper</h4>
 
             <div class="setting-group">

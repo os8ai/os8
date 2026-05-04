@@ -46,7 +46,14 @@ function registerAppStoreHandlers({ db, mainWindow }) {
 
   ipcMain.handle('app-store:render-plan', async (_e, slug, channel = 'verified') => {
     try {
-      const entry = await AppCatalogService.get(db, slug, { channel });
+      // Phase 5 PR 5.6 — lazy-refresh the catalog row when older than 5
+      // minutes. Closes the Phase 3.5.5 gap where a manifest just changed
+      // in the catalog but the daily sync hadn't picked it up; the user
+      // would otherwise install against a stale manifest.
+      const entry = await AppCatalogService.get(db, slug, {
+        channel,
+        refreshIfOlderThan: 5 * 60_000,
+      });
       if (!entry) return { ok: false, error: 'not in local catalog' };
       // Validate at render time — refuse to render a plan whose manifest doesn't pass v1.
       const validation = entry.manifest

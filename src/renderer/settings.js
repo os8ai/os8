@@ -421,6 +421,74 @@ async function saveAppStoreSettings() {
 }
 
 /**
+ * PR 5.6 — Sync Now handler. Reads the live channel-toggle state (so
+ * un-saved-but-checked channels still sync) and calls
+ * appStore.syncChannelNow once per enabled remote channel. Reports per-
+ * channel result and a combined +added / updated / -removed summary.
+ *
+ * Skips developer-import: that channel has no remote catalog to sync —
+ * imports happen on demand via the home-screen "Import from GitHub" button.
+ */
+async function syncCatalogNow(btn) {
+  const status = document.getElementById('appStoreSyncNowStatus');
+  const setStatus = (text, isError = false) => {
+    if (!status) return;
+    status.textContent = text;
+    status.style.color = isError
+      ? 'var(--color-error-text, #ef4444)'
+      : 'var(--color-text-secondary, #94a3b8)';
+    status.hidden = false;
+  };
+
+  const channels = ['verified', 'community'].filter((ch) => {
+    const id = ch === 'verified' ? 'appStoreChannelVerified' : 'appStoreChannelCommunity';
+    return !!document.getElementById(id)?.checked;
+  });
+
+  if (channels.length === 0) {
+    setStatus('No remote channels enabled — nothing to sync.', true);
+    return;
+  }
+
+  const wasDisabled = btn.disabled;
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Syncing…';
+  setStatus(`Syncing ${channels.join(' + ')}…`);
+
+  try {
+    const totals = { added: 0, updated: 0, removed: 0 };
+    const errors = [];
+    for (const ch of channels) {
+      try {
+        const r = await window.os8.appStore.syncChannelNow(ch);
+        if (r?.ok) {
+          totals.added += r.added || 0;
+          totals.updated += r.updated || 0;
+          totals.removed += r.removed || 0;
+        } else {
+          errors.push(`${ch}: ${r?.error || 'unknown error'}`);
+        }
+      } catch (err) {
+        errors.push(`${ch}: ${err?.message || String(err)}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      setStatus(`Sync warnings — ${errors.join('; ')}`, true);
+    } else {
+      setStatus(
+        `Synced ${channels.join(' + ')}: +${totals.added} added, ${totals.updated} updated, -${totals.removed} removed.`
+      );
+      setTimeout(() => { if (status) status.hidden = true; }, 6000);
+    }
+  } finally {
+    btn.disabled = wasDisabled;
+    btn.textContent = originalLabel;
+  }
+}
+
+/**
  * Load AI Models (backend auth) settings
  */
 export async function loadAIModelsSettings() {
@@ -1236,6 +1304,14 @@ export function initSettingsListeners() {
   const appStoreSaveBtn = document.getElementById('appStoreSaveBtn');
   if (appStoreSaveBtn) {
     appStoreSaveBtn.addEventListener('click', saveAppStoreSettings);
+  }
+
+  // PR 5.6 — Sync Now button. Forces an immediate sync of every enabled
+  // remote channel, bypassing the daily 4am scheduler. Reads channel
+  // toggles live so an unsaved-but-checked channel still syncs.
+  const appStoreSyncNowBtn = document.getElementById('appStoreSyncNowBtn');
+  if (appStoreSyncNowBtn) {
+    appStoreSyncNowBtn.addEventListener('click', () => syncCatalogNow(appStoreSyncNowBtn));
   }
 
   // PR 4.4 — Reset anonymous telemetry client ID. Generates a fresh UUID
