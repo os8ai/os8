@@ -785,7 +785,18 @@ function createSchema(db) {
     );
   `);
 
-  // User account table — single-row design for local user identity
+  // User account table — single-row design for local user identity.
+  //
+  // Phase 5 PR 5.1 columns:
+  //   session_cookie         — cached os8.ai NextAuth Cookie-header string
+  //                            (e.g. "next-auth.session-token=..."); used by
+  //                            the installed-apps heartbeat. Cleared on
+  //                            sign-out and on share-toggle off.
+  //   share_installed_apps   — opt-out toggle. Default 1 (ON). When 0, the
+  //                            heartbeat short-circuits with no network call.
+  //
+  // Migration 0.7.0 idempotently ALTERs an upgraded DB to add the same
+  // columns; this CREATE is the fresh-install path.
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_account (
       id TEXT PRIMARY KEY DEFAULT 'local',
@@ -794,6 +805,8 @@ function createSchema(db) {
       display_name TEXT,
       avatar_url TEXT,
       email TEXT,
+      session_cookie TEXT,
+      share_installed_apps INTEGER DEFAULT 1,
       updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
   `);

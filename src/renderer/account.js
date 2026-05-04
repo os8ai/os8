@@ -69,6 +69,14 @@ function renderSignedIn(container, account) {
     ? `<div class="account-username">@${escapeHtml(account.username)}</div>`
     : `<a href="https://os8.ai/claim-username" target="_blank" class="account-claim-link">Claim your username on os8.ai</a>`;
 
+  // Phase 5 PR 5.1 — render the toggle as default-on (matches the
+  // server-side default and the column's INTEGER DEFAULT 1). `account.share_installed_apps`
+  // is undefined on databases that haven't applied the 0.7.0 migration yet — treat
+  // as enabled.
+  const shareEnabled = account.share_installed_apps == null
+    ? true
+    : account.share_installed_apps !== 0;
+
   container.innerHTML = `
     <div class="setting-group">
       <label class="setting-label">OS8 Account</label>
@@ -82,6 +90,17 @@ function renderSignedIn(container, account) {
       </div>
     </div>
     <div class="setting-group">
+      <label class="setting-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+        <input type="checkbox" id="accountShareInstalledApps" ${shareEnabled ? 'checked' : ''} />
+        <span>Share installed apps with os8.ai</span>
+      </label>
+      <p class="setting-description">
+        Lets os8.ai detail pages show "Update available" badges on the apps you have installed.
+        Turning this off clears the cached session and stops the heartbeat —
+        sign in again to re-enable.
+      </p>
+    </div>
+    <div class="setting-group">
       <button id="accountSignOutBtn" class="account-signout-btn">Sign Out</button>
     </div>
   `;
@@ -90,6 +109,15 @@ function renderSignedIn(container, account) {
   signOutBtn.addEventListener('click', async () => {
     await window.os8.account.signOut();
     loadAccountSection();
+  });
+
+  const shareToggle = document.getElementById('accountShareInstalledApps');
+  shareToggle.addEventListener('change', async () => {
+    try {
+      await window.os8.account.setShareInstalledApps(shareToggle.checked);
+    } catch (err) {
+      console.error('[Account] setShareInstalledApps failed:', err);
+    }
   });
 }
 
