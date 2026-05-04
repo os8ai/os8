@@ -1090,6 +1090,31 @@ async function startServer(port = null, database = null) {
             } catch (e) {
               console.warn('[AppCatalog] Init error:', e.message);
             }
+
+            // Phase 5 PR 5.8 — first-boot scan for installed docker apps
+            // whose host-side _volumes/<basename>/ dirs are empty. Surfaces
+            // a one-time toast pointing the user at tools/migrate-docker-
+            // volume.sh so they can copy data out of the container before
+            // the next restart re-mounts an empty dir over it. Best-effort;
+            // skipped per-app once acknowledged.
+            try {
+              const DockerVolumeMigration = require('./services/docker-volume-migration');
+              const needsMigration = DockerVolumeMigration.scan(db);
+              for (const entry of needsMigration) {
+                console.warn(`[DockerVolumes] ${entry.slug}: declared volumes have empty host dirs; toast surfaced for migration`);
+                broadcastToRenderers({
+                  channel: 'app-store:docker-volume-migration',
+                  payload: {
+                    appId: entry.appId,
+                    slug: entry.slug,
+                    name: entry.name,
+                    volumes: entry.volumes,
+                  },
+                });
+              }
+            } catch (e) {
+              console.warn('[DockerVolumes] scan error:', e.message);
+            }
           } catch (e) {
             console.warn('[Startup] Skills sync error:', e.message);
           }

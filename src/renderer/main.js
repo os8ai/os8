@@ -330,6 +330,34 @@ async function init() {
     });
   }
 
+  // PR 5.8 — docker-volume migration toast. Server fires once per boot
+  // for any installed docker app whose host-side _volumes/<basename>/
+  // dirs are empty. Action button acknowledges so future boots stay quiet.
+  if (window.os8.appStore?.onDockerVolumeMigration) {
+    const { showToast } = await import('./toast.js');
+    window.os8.appStore.onDockerVolumeMigration((event) => {
+      try {
+        const slug = event?.slug || event?.name || event?.appId || '';
+        const cmd = `tools/migrate-docker-volume.sh ${slug}`;
+        showToast({
+          kind: 'warning',
+          title: `${slug}: docker volume migration available`,
+          message: `Run \`${cmd}\` to preserve container-internal data before next restart.`,
+          action: {
+            label: 'Acknowledge',
+            onClick: () => {
+              try { window.os8.appStore.ackDockerVolumeMigration(event.appId); }
+              catch (_) { /* best-effort */ }
+            },
+          },
+          durationMs: 30_000,
+        });
+      } catch (e) {
+        console.warn('[docker-volume-migration toast] handler error:', e?.message);
+      }
+    });
+  }
+
   // Initialize view mode (applies saved mode and attaches listeners)
   initViewMode();
 
