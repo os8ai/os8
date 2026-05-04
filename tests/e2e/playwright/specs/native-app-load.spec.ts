@@ -1,20 +1,17 @@
 // Phase 4 PR 4.10 — native React app load smoke.
+// Phase 5 PR 5.3 — un-skipped now that PR 4.6 (strict middleware) is
+// production. This spec is the regression-class guard: if the strict
+// allowlist accidentally rejects the bare-localhost origin for some
+// reason, the native app's index returns 403 and this spec catches it.
 //
 // Verifies that with a fresh OS8_HOME, OS8 can scaffold a native React
 // app via the existing `/api/apps` endpoint, and the resulting app
-// loads at `localhost:<port>/<id>/`. This is the "native app still
-// works after the strict-mode flip" piece of PR 4.6's gate (G3 in the
-// plan §6).
-//
-// Skipped today; native-app scaffold path is exercised by unit tests
-// elsewhere. Re-enable when PR 4.6 lands so we have a regression-class
-// guard: if the strict middleware rejects the bare-localhost origin
-// for some reason, this spec catches it.
+// loads at `localhost:<port>/<id>/`.
 
 import { test, expect } from '@playwright/test';
 import { bootOs8, closeOs8, getOs8Port, type BootedOs8 } from '../setup';
 
-test.describe.skip('native app loads under strict middleware', () => {
+test.describe('native app loads under strict middleware', () => {
   let booted: BootedOs8 | null = null;
 
   test.afterEach(async () => {
@@ -27,12 +24,14 @@ test.describe.skip('native app loads under strict middleware', () => {
     const port = await getOs8Port(booted.window);
 
     // Create a minimal native app via the existing IPC bridge.
-    // window.os8.apps.create() is the renderer-side helper.
+    // window.os8.apps.create(name, color, icon, textColor) per preload.js:15.
     const appId = await booted.window.evaluate(async () => {
       const w = globalThis as unknown as {
-        os8: { apps: { create: (opts: { name: string; slug?: string }) => Promise<{ id: string }> } };
+        os8: { apps: { create: (
+          name: string, color?: string, icon?: string, textColor?: string
+        ) => Promise<{ id: string }> } };
       };
-      const r = await w.os8.apps.create({ name: 'E2E Test App' });
+      const r = await w.os8.apps.create('E2E Test App');
       return r.id;
     });
     expect(appId).toMatch(/^\d{13}-/);

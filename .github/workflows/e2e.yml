@@ -1,9 +1,11 @@
 name: E2E (Playwright + Electron)
 
 # Phase 4 PR 4.10 — gates `requireAppContext` strict-mode flip in PR 4.6.
-# Linux + macOS only initially per phase-4-plan §10 #6; Windows joins
-# the matrix once PR 4.8 lands and the existing hosts-file / DNS / NSIS
-# surface is validated there.
+# Phase 5 PR 5.3 — flips OS8_4_6_STRICT=1 at the workflow level so the
+# strict-mode assertions in scoped-api.spec.ts run unconditionally
+# (PR 4.6 has shipped; strict middleware is the production behavior).
+# Windows joins the matrix as best-effort here; gating after one stable
+# green run.
 #
 # Runs after the unit-test job passes so we don't burn 5+ minutes per OS
 # launching Electron when a 30-second vitest catches the regression.
@@ -16,15 +18,31 @@ on:
 
 jobs:
   e2e:
+    name: e2e (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Phase 5 PR 5.3 — Windows joins as best-effort. continue-on-error
+    # is set per-matrix-entry via the `experimental` flag below so a
+    # Windows-only failure doesn't fail the workflow. Promote to gating
+    # after one stable green run on main.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
       fail-fast: false
       matrix:
-        # Pinned per phase-4-plan §1. Windows joins once 4.8 stabilizes
-        # the Playwright-Electron path (xvfb-equivalent on Windows is
-        # native-window-server; no extra runner setup required).
+        # Pinned per phase-4-plan §1 + phase-5-plan §1 (Windows added as
+        # best-effort).
         os: [ubuntu-22.04, macos-14]
-    timeout-minutes: 20
+        experimental: [false]
+        include:
+          - os: windows-2022
+            experimental: true
+    timeout-minutes: 25
+
+    env:
+      # Phase 5 PR 5.3 — strict-mode is the production behavior post
+      # PR 4.6. specs that test the post-flip origin allowlist run
+      # unconditionally; the legacy permissive path is exercised only
+      # when callers explicitly set OS8_REQUIRE_APP_CONTEXT_PERMISSIVE.
+      OS8_4_6_STRICT: '1'
 
     steps:
       - uses: actions/checkout@v4
@@ -52,6 +70,14 @@ jobs:
 
       - name: Run E2E suite (macOS native window server)
         if: runner.os == 'macOS'
+        run: npm run test:e2e
+
+      - name: Run E2E suite (Windows native window server)
+        if: runner.os == 'Windows'
+        # Playwright-Electron on Windows occasionally needs --no-sandbox
+        # in CI containers; bootOs8 already passes it. If the suite hangs
+        # at boot, file a follow-up issue rather than chase Windows-only
+        # flake here.
         run: npm run test:e2e
 
       - name: Upload Playwright report on failure

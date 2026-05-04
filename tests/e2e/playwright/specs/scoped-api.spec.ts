@@ -1,4 +1,9 @@
 // Phase 4 PR 4.10 — scoped-API origin allowlist smoke.
+// Phase 5 PR 5.3 — strict middleware (PR 4.6) is now the production
+// behavior. The previously-tagged `@strict` assertion now runs
+// unconditionally; the only env-gated path is the rollback escape
+// hatch (OS8_REQUIRE_APP_CONTEXT_PERMISSIVE=1) where the legacy
+// permissive behavior re-engages.
 //
 // Exercises the origin-based allowlist that PR 4.6's strict
 // `requireAppContext` flip relies on. The harness probes
@@ -6,18 +11,8 @@
 // asserts the expected accept/reject outcomes:
 //
 //   - Origin: http://localhost:8888  (shell + native React origin) → 200
-//   - Origin: http://attacker.example                              → 403 (post 4.6)
+//   - Origin: http://attacker.example                              → 403
 //   - X-OS8-App-Id: <id>                                           → 200 (header path)
-//
-// Today (pre-4.6) the middleware is permissive — bare unknown origins
-// pass. The expectations below are written for the post-4.6 behavior;
-// runs against pre-4.6 builds will see the "403" assertions fail. PR 4.6
-// flips the constant and these specs become the gate that confirms the
-// flip didn't break native consumers.
-//
-// To keep the harness landing before 4.6, the strict-mode assertions
-// are tagged @strict; the runner can skip them with PWTEST_GREP_INVERT
-// until 4.6 ships.
 
 import { test, expect } from '@playwright/test';
 import { bootOs8, closeOs8, getOs8Port, type BootedOs8 } from '../setup';
@@ -46,9 +41,10 @@ test.describe('scoped-API origin allowlist', () => {
     expect(status).toBe(200);
   });
 
-  test('@strict subdomain origin (external app) is rejected', async () => {
-    // Until PR 4.6 ships, this assertion is informational; gate via
-    // env or @strict tag so the suite can pre-stage.
+  test('untrusted origin (external app) is rejected', async () => {
+    // PR 5.3 — strict middleware is now production; this assertion no
+    // longer needs the OS8_4_6_STRICT env gate. Only skipped when the
+    // operator has explicitly enabled the rollback escape hatch.
     test.skip(
       process.env.OS8_REQUIRE_APP_CONTEXT_PERMISSIVE === '1',
       'permissive rollback escape hatch enabled — strict-mode assertions skipped'
@@ -64,17 +60,9 @@ test.describe('scoped-API origin allowlist', () => {
       return r.status;
     }, port);
 
-    // Note: browsers strip the Origin header on same-origin requests.
-    // The renderer's fetch DOES send it when explicitly set, but the
-    // server-side `requireAppContext` middleware reads `req.headers.origin`
-    // verbatim. Pre-4.6: 200 (permissive). Post-4.6: 403.
-    if (process.env.OS8_4_6_STRICT === '1') {
-      expect(status).toBe(403);
-    } else {
-      // Pre-4.6: permissive, expects 200. The test still RUNS to detect
-      // changes; future failure here will signal that 4.6 has flipped.
-      expect([200, 403]).toContain(status);
-    }
+    // Server-side `requireAppContext` middleware reads `req.headers.origin`
+    // verbatim. Strict-mode (PR 4.6, production): 403.
+    expect(status).toBe(403);
   });
 
   test('explicit X-OS8-App-Id header is accepted', async () => {
