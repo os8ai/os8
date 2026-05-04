@@ -266,6 +266,8 @@ Exception: a manifest may declare `shell: true` on a single command if absolutel
 - `category` — one of: `productivity | intelligence | media | dev-tools | data | ai-experiments | utilities`.
 - `framework` — drives adapter defaults. When set, the adapter chooses HMR strategy, base-path flag pattern, readiness probe, and `package_manager: auto` resolution. Manifest can override.
 - `runtime.kind` — drives which adapter handles the app. v1: `node | python | static`. v2: `docker`.
+- `runtime.image`, `runtime.image_digest`, `runtime.internal_port`, `runtime.gpu_passthrough` — docker-only (schema v2). See §6.2.2.
+- `runtime.volumes` — docker-only (schema v2; **Phase 5 PR 5.8**). Array of `{ container_path: string, persist?: boolean }` declaring additional container-internal paths the app persists data to. Each entry is bind-mounted under `~/os8/blob/<id>/_volumes/<basename>/` on the host, so data survives container recreate, OS8 restart, and uninstall→reinstall (when the user opts to restore — §6.10). Without this, paths outside the default `/app` and `/data` mounts live in the container's writable layer and disappear on `docker rm`. `persist` is reserved for forward-compat (always persists in v1).
 - `runtime.version` — major version. Adapter ensures availability (auto-installs uv for python; checks node version).
 - `runtime.arch` — supported host architectures. Default `[arm64, x86_64]`. UI marks unsupported on user's host.
 - `runtime.package_manager` — `auto` detects from lockfile presence (`package-lock.json` → npm, `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, `bun.lockb` → bun, `uv.lock` → uv, `poetry.lock` → poetry, `requirements.txt` → pip).
@@ -289,7 +291,8 @@ Exception: a manifest may declare `shell: true` on a single command if absolutel
 
 - `upstream.ref` MUST match a 40-char SHA OR a tag `v\d+\.\d+\.\d+(-.+)?`. Branch names rejected.
 - `slug` regex: `^[a-z][a-z0-9-]{1,39}$`.
-- `runtime.kind: docker` rejected in v1.
+- `runtime.kind: docker` rejected in v1; allowed in v2.
+- `runtime.volumes[].container_path` MUST match `^/[a-zA-Z0-9_/-]+$` (rejects `..` and non-absolute paths). `runtime.volumes` capped at 10 items per manifest. Duplicate `container_path` entries within one manifest are rejected by the validator's invariant pass (Phase 5 PR 5.8).
 - `surface.kind` MUST equal `web` in v1.
 - `surface.base_path_strategy` is NOT a v1 field. v1 serves every external app at `<slug>.localhost:8888`. The schema does not accept the field; manifests that include it are rejected. (Reserved for a future schema version if a path-mode use case ever surfaces.)
 - `permissions.filesystem` MUST equal `app-private` in v1.
@@ -445,15 +448,19 @@ model InstalledApp {
 model InstallEvent {
   id                 String   @id @default(cuid())
   clientId           String   // server-rehashed; never plaintext
-  kind               String   // install_started | install_succeeded | install_failed | install_cancelled | install_overridden | update_succeeded | update_failed
+  // Phase 5 PR 5.4 added update_conflict + update_conflict_resolved
+  // for the auto-update three-way-merge UI. failurePhase='merge' on
+  // update_conflict; conflictFileCount carries the file count (0-N).
+  kind               String   // install_started | install_succeeded | install_failed | install_cancelled | install_overridden | update_succeeded | update_failed | update_conflict | update_conflict_resolved
   adapter            String?  // node | python | static | docker
   framework          String?  // vite | nextjs | streamlit | gradio | hugo | jekyll | none
   channel            String?  // verified | community | developer-import
   slug               String?
   commit             String?  // 40-char SHA
-  failurePhase       String?  // install | postInstall | preStart | start
+  failurePhase       String?  // install | postInstall | preStart | start | merge
   failureFingerprint String?  // 8-32 hex prefix
   durationMs         Int?
+  conflictFileCount  Int?     // Phase 5 PR 5.4 — count of conflicted files in the failed merge
   os                 String?  // darwin | linux | win32
   arch               String?
   overrideReason     String?
@@ -1262,6 +1269,29 @@ On confirm:
 
 Reinstall detects orphan data (rows with `status='uninstalled'` and matching `external_slug`) and prompts to restore.
 
+**Channel-scoped orphan matching** (Phase 5 PR 5.5). The orphan
+lookup matches on `(external_slug, channel)`, not just `external_slug`
+— a Verified-channel orphan does NOT propose itself as a restore
+candidate when the user reinstalls from Community (or vice versa).
+Trust grants differ across channels; cross-channel restore would
+silently elevate a previously Verified app to whatever permissions
+its newer Community manifest declares, and vice versa. Reinstall in
+the cross-channel case proceeds fresh; the orphan row stays
+`uninstalled` and the user's data on disk is left in place.
+
+When the user opts NOT to restore, the orphan row is flipped to
+`status='archived'` so it stops proposing itself on future installs.
+The data dirs (blob storage, per-app SQLite) stay on disk — explicit
+delete is required (the "Also delete data" checkbox at uninstall
+time, or manual cleanup).
+
+When the user opts TO restore, the orphan row is **revived in place**
+(same `appId`, same slug, same blob dir, same per-app SQLite,
+preserved `app_env_variables`). Manifest fields refresh to the new
+install's commit + sha. Rollback on revive-then-fail restores the
+row to `'uninstalled'` (preserves data + secrets) instead of deleting
+it, so the next reinstall attempt can offer to restore again.
+
 ### 6.11 Secrets management
 
 Reuses the existing `app_env_variables` table ([schema.js:36-41](file:///home/leo/Claude/os8/src/db/schema.js#L36)). Install plan UI prompts for each `permissions.secrets[]`; on submit, written via an extended `EnvService` with optional `appId` parameter:
@@ -1477,17 +1507,40 @@ Genuinely open:
 
 **Phase 4 added open items (Phase 5 candidates):**
 
-- **os8.ai session token for desktop heartbeat.** PR 4.3 ships the
-  installed-apps heartbeat method (`AppCatalogService.reportInstalledApps`)
-  and the os8.ai endpoint (`POST /api/account/installed-apps`), but the
-  middle is gated on `getSessionCookie()` returning a real cookie.
-  AccountService caches profile data only — no token storage. A future
-  PR plumbs the session cookie from sign-in into AccountService so the
-  heartbeat goes live. Until then: badges only show for users who
-  manually self-report (no path).
+- ~~**os8.ai session token for desktop heartbeat.**~~ **Done in
+  Phase 5 PR 5.1** (os8 #59 + os8dotai #17). NextAuth session cookie
+  flows through `/api/auth/desktop/finalize` → callback page composes
+  redirectUrl with `os8_session` query param → desktop's localhost
+  callback persists into `user_account.session_cookie`. AccountService
+  exposes `getSessionCookie(db)` (gated by `share_installed_apps = 1`)
+  so `AppCatalogService.reportInstalledApps` posts a real Cookie
+  header. Renderer adds a default-on **"Share installed apps with
+  os8.ai"** toggle in the account settings panel — toggling off
+  clears the cached cookie + suppresses the heartbeat.
 - **Telemetry hash salt rotation cadence.** Annual default per
   `os8dotai/SECURITY.md` (added in PR 4.5). Revisit if signal of
   compromise.
+
+**Phase 5 added open items (Phase 6+ candidates):**
+
+- **Auto-update widening to Community channel.** Originally scoped
+  as Phase 5 PR 5.7; cut to give PR 5.4's manual-edit conflict UI
+  soak time on Verified-only first. Trigger to revisit: PR 5.4 has
+  shipped (Phase 5, #63) + ≥1 release of soak time without
+  recurring "merge conflict UX is broken" reports.
+- **App revocation flow** (deferred-items #15). Considered for
+  Phase 5 + explicitly deferred per Leo. No real revocation event
+  has occurred; no curator has flagged a candidate. Promote when
+  curators identify one OR Phase 4 telemetry surfaces a previously-
+  curated app raising new red flags.
+- **Backup-on-upgrade hook for Docker volumes.** Phase 5 PR 5.8
+  ships explicit-only declarations + a one-time first-boot toast +
+  `tools/migrate-docker-volume.sh`. Auto-backup hook deferred until
+  a second affected docker app surfaces.
+- **Per-file ours/theirs buttons in the merge-conflict banner.**
+  PR 5.4 ships manual-edit + "Resolve with Claude" clipboard prompt.
+  Per-file ours/theirs deferred until soak time surfaces friction
+  for users without an AI agent in the loop.
 
 ---
 

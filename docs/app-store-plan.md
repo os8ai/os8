@@ -708,6 +708,41 @@ what's failing in the wild, hands-free Verified updates, hardened
 trust boundary, cross-platform footing, friendlier external-IDE
 workflow.
 
+### Phase 5 — Lifecycle completeness + telemetry-driven sharpening (≤200 words)
+
+Phase 5 closes Phase 4's deferred follow-ups and promotes five
+deferred-items entries with fired triggers. 12 logical PRs across
+five repos (Phase 5.7 cut at planning). Five tracks:
+
+- **A — Phase 4 close-out.** PR 5.1 plumbs the os8.ai session cookie
+  end-to-end so the installed-apps heartbeat lights up the
+  "Update available" badge for signed-in users; PR 5.2 publishes
+  `@os8/sdk-types@1.0.0` to npm + tightens drift CI; PR 5.3 flips
+  `OS8_4_6_STRICT=1` in the E2E workflow + fleshes out the
+  install / dev-import / native-app specs.
+- **B — Lifecycle completeness.** PR 5.4 ships the three-way merge
+  conflict UI (banner + "Resolve with Claude" clipboard prompt);
+  PR 5.5 wires reinstall-from-orphan with channel-scoped detection;
+  PR 5.6 adds Sync Now + per-install lazy refresh.
+- **D — Docker hardening.** PR 5.8 adds `runtime.volumes` to
+  appspec-v2 (3-repo coordination) + first-boot migration toast +
+  `tools/migrate-docker-volume.sh` helper.
+- **E — Web-side polish.** PR 5.9 fires a Vercel deploy hook on
+  catalog-sync `added > 0` so new slugs become 200-resolvable in
+  ~3 min (was ~30 min). Hotfix #19 added `prisma generate` to
+  `vercel-build` mid-merge-wave.
+- **F — Foundation.** PR 5.10 migration 0.7.0 adds
+  `apps.update_conflict_files` + `user_account.session_cookie` +
+  `share_installed_apps` + `app_store.orphan_restore.prompt` seed.
+
+Plus three doc PRs (5.D1 spec close-out, 5.D2 user references for
+runtime-volumes + sync-now, 5.D3 deferred-items decisions log).
+Full plan in `phase-5-plan.md`. Outcome: heartbeat lights up the
+badge, auto-update conflicts have a usable resolution path,
+uninstall→reinstall preserves work, Docker apps stop losing data,
+catalog freshness is no longer a 24h black hole, npm publish closes
+the external-IDE loop, E2E suite is no longer decorative.
+
 ---
 
 ## 7. Open Implementation Details — resolution pass
