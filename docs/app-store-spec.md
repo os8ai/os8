@@ -289,6 +289,7 @@ Exception: a manifest may declare `shell: true` on a single command if absolutel
 
 ### 3.5 JSON Schema validation (CI invariants)
 
+- `appspec-v2.json` declares `$schema: https://json-schema.org/draft/2020-12/schema` across all canonical repos as of Phase 6 PR 6.2 (os8 + os8-catalog + os8-catalog-community + os8dotai). v1 stays draft-07 (not actively curated against new manifests). Validators load `ajv/dist/2020` + register the draft-07 metaschema explicitly so v2's `allOf: [{ $ref: appspec-v1 }]` continues to dereference cleanly.
 - `upstream.ref` MUST match a 40-char SHA OR a tag `v\d+\.\d+\.\d+(-.+)?`. Branch names rejected.
 - `slug` regex: `^[a-z][a-z0-9-]{1,39}$`.
 - `runtime.kind: docker` rejected in v1; allowed in v2.
@@ -1223,7 +1224,35 @@ When os8.ai publishes a new resolved commit:
    - `git fetch` upstream.
    - If `apps.user_branch` is null (no user edits): fast-forward, run install via runtime adapter, restart.
    - If `user_branch` exists: three-way merge `user/main` onto `<targetCommit>`. Clean → prompt accept. Conflict → surface in app's source sidebar with `git status` summary; user resolves manually.
-6. Verified-channel apps with `auto_update = 1` (default OFF): only auto-applies if `user_branch` is null. With user edits, never auto-updates.
+6. Catalog-channel apps with `auto_update = 1` only auto-apply if `user_branch` is null. With user edits, never auto-updates — the merge-conflict banner (PR 5.4, item 7 below) surfaces instead.
+
+   **Per-channel install-time defaults (Phase 6 PR 6.1).** New Verified
+   installs default `auto_update = 0` (opt-in via the per-app flyout —
+   preserves PR 4.2 posture for curated, low-churn apps). New Community
+   installs default `auto_update = 1` (opt-out — community apps churn
+   faster, "forget about it" UX matters more there). Developer-Import
+   apps remain manual-update-only (no upstream catalog to sync from).
+   Existing app rows are NOT touched by the migration. The two
+   per-channel defaults are exposed as toggles in Settings → App Store
+   so users can flip the default before a future install. The decision
+   is asymmetric by design — see `project_app_store_advisory_gating.md`
+   for the underlying "scan surfaces, user decides" principle, and
+   Phase 6 plan §7 for the trade-off rationale.
+
+7. **Three-way merge banner (PR 5.4 = `os8ai/os8#63`).** When
+   `user_branch` is set and a catalog update arrives, the auto-updater
+   stops short of merging. A bottom-right toast surfaces with a
+   "Resolve" action button; a red dot overlay appears on the home-
+   screen icon; inside the app, a merge-conflict banner enumerates
+   the conflicted files and offers three actions:
+   "I've resolved all conflicts — commit",
+   "Resolve with Claude" (copies a structured prompt to the clipboard
+   for any AI coding agent), and
+   "Abort the update" (clean revert via `git merge --abort`).
+   The conflict file list persists to `apps.update_conflict_files`
+   (PR 5.10 migration 0.7.0) so the banner survives restarts. Same
+   path applies to Verified and Community apps — see
+   `docs/auto-update.md` for the user-facing reference.
 
 **Phase 4 close-out (PR 4.2 = `os8ai/os8#48`).** The auto-update path
 ships with two operational decisions:
@@ -1484,28 +1513,48 @@ Genuinely open:
    Phase 4 PR 4.6 (`os8ai/os8#53`).** Strict origin allowlist + in-process
    token escape hatch + permissive rollback env. v1 trust-by-default
    gap closed.
-2. **`/apps` page caching.** Spec says ISR (60s); confirm on first deploy that this matches sync cadence acceptably.
-3. **Idle timeout default value.** 30 min suggested; surface as Settings slider (5 min – 4h, plus "never").
+2. ~~**`/apps` page caching.**~~ **Done — confirmed in Phase 6 PR 6.D1.**
+   `os8dotai/src/app/apps/[slug]/page.tsx` declares `export const
+   revalidate = 60;` (Phase 0 PR 0.10). The new-slug ISR-fallback
+   case is covered by Phase 5 PR 5.9's Vercel deploy hook (fires on
+   `added > 0` from catalog sync). No further action needed.
+3. ~~**Idle timeout default value.**~~ **Done in Phase 1 PR 1.22.**
+   Default 30 min (`src/services/app-process-registry.js:10`).
+   Settings → App Store slider exposes 5 min / 15 min / 30 min /
+   1 h / 2 h / 4 h / Never via `app_store.idle_timeout_ms`.
 4. ~~**Capability granularity for `mcp.*`.**~~ **Done in Phase 4 PR 4.7
    (`os8ai/os8#46`).** `mcp.<server>.*` accepted; `mcp.*.*` / `mcp.*` /
    nested wildcards rejected at JSON schema. Wildcard semantics:
    "all current AND future tools registered by the server".
-5. **Lockfile recognition for `bun.lockb`.** Bun's binary lockfile needs a different verification path from text lockfiles. Confirm CI behavior in PR 0.4.
+5. ~~**Lockfile recognition for `bun.lockb`.**~~ **Done in Phase 1 PR 1.11.**
+   Node adapter's lockfile detection map declares `['bun.lockb', 'bun']`
+   (`src/services/runtime-adapters/node.js:31`). Presence-only check
+   per master plan §7 #6.
 6. ~~**`window.os8` SDK in TypeScript.**~~ **Done in Phase 4 PR 4.9
    (`os8ai/os8#50`).** Both surfaces ship: in-folder `os8-sdk.d.ts`
    per PR 1.21 + `@os8/sdk-types` npm package at `os8ai/os8-sdk-types`.
    Drift-check CI guards alignment between preload + .d.ts.
-7. **Asset CDN migration.** Catalog assets via raw GitHub URLs may bump rate limits; if so, migrate to Vercel Blob in v2.
-8. **`requireAppContext` on which APIs exactly.** Inventory all `/api/*` routes and decide which require app context for external-app callers. Some are obvious (`/api/connections/*` for OAuth tokens); others (`/api/system/*`) need a call.
-9. **`runtime.package_manager: auto` resolution conflicts.** Multiple lockfiles in the same repo (rare but real). Define precedence: `pnpm-lock.yaml > yarn.lock > bun.lockb > package-lock.json`.
-10. **Auto-update merge UX for non-trivial conflicts.** Spec says surface in app sidebar; spec out the actual UI in PR 1.25.
+7. **Asset CDN migration.** Catalog assets via raw GitHub URLs may bump rate limits; if so, migrate to Vercel Blob in v2. (Tracked in deferred-items #27 with explicit trigger; pulls together with #17 GitHub raw RUM.)
+8. ~~**`requireAppContext` on which APIs exactly.**~~ **Done in
+   Phase 1 PR 1.8 + master plan §7 #9.** Applied to 9 routes:
+   app-blob, app-db, imagegen, speak, youtube, x, telegram, google,
+   mcp. Shell-only routes (system, apps CRUD, agents, assistant,
+   voice, tts-stream, transcribe, connections OAuth flow, oauth,
+   journal, images, inspect, plans, vault, tasks, jobs) intentionally
+   not gated.
+9. **`runtime.package_manager: auto` resolution conflicts.** Multiple lockfiles in the same repo (rare but real). Define precedence: `pnpm-lock.yaml > yarn.lock > bun.lockb > package-lock.json`. *(Resolved in master plan §7 #10; documented in PR 1.11.)*
+10. ~~**Auto-update merge UX for non-trivial conflicts.**~~ **Done in
+    Phase 5 PR 5.4 (`os8ai/os8#63`).** Three-way merge banner with
+    file-list + "I've resolved — commit" + "Resolve with Claude"
+    (clipboard prompt) + "Abort the update" actions. See §6.9 above
+    + `docs/auto-update.md` for the user-facing reference.
 11. ~~**Cross-platform smoke matrix.**~~ **Done in Phase 4 PR 4.8
     (`os8ai/os8#52` + catalog repos).** `windows-2022` promoted to gating
     across all four repos (os8 desktop + 2× catalog + os8dotai). Manual
     Windows install smoke (G4) pending Leo's pass.
 12. ~~**(Combined with #11)**~~ Cross-platform: closed in PR 4.8.
 
-**Phase 4 added open items (Phase 5 candidates):**
+**Phase 4 added open items (close-out for Phase 5/6):**
 
 - ~~**os8.ai session token for desktop heartbeat.**~~ **Done in
   Phase 5 PR 5.1** (os8 #59 + os8dotai #17). NextAuth session cookie
@@ -1517,30 +1566,49 @@ Genuinely open:
   header. Renderer adds a default-on **"Share installed apps with
   os8.ai"** toggle in the account settings panel — toggling off
   clears the cached cookie + suppresses the heartbeat.
-- **Telemetry hash salt rotation cadence.** Annual default per
-  `os8dotai/SECURITY.md` (added in PR 4.5). Revisit if signal of
-  compromise.
+- **Telemetry hash salt rotation cadence.** Demoted to "Phase 6 added
+  open items" below in PR 6.D1 — annual default per
+  `os8dotai/SECURITY.md` (added in PR 4.5) is sufficient until a
+  signal of compromise. Operator action, not code.
 
-**Phase 5 added open items (Phase 6+ candidates):**
+**Phase 5 added open items (close-out for Phase 6):**
 
-- **Auto-update widening to Community channel.** Originally scoped
-  as Phase 5 PR 5.7; cut to give PR 5.4's manual-edit conflict UI
-  soak time on Verified-only first. Trigger to revisit: PR 5.4 has
-  shipped (Phase 5, #63) + ≥1 release of soak time without
-  recurring "merge conflict UX is broken" reports.
-- **App revocation flow** (deferred-items #15). Considered for
-  Phase 5 + explicitly deferred per Leo. No real revocation event
-  has occurred; no curator has flagged a candidate. Promote when
-  curators identify one OR Phase 4 telemetry surfaces a previously-
-  curated app raising new red flags.
-- **Backup-on-upgrade hook for Docker volumes.** Phase 5 PR 5.8
-  ships explicit-only declarations + a one-time first-boot toast +
-  `tools/migrate-docker-volume.sh`. Auto-backup hook deferred until
-  a second affected docker app surfaces.
+- ~~**Auto-update widening to Community channel.**~~ **Done in
+  Phase 6 PR 6.1 (`os8ai/os8#70`).** Filter widened to
+  `channel IN ('verified', 'community')`; asymmetric per-channel
+  defaults seeded by migration 0.8.0 (Verified opt-in, Community
+  opt-out per Leo's call 2026-05-04). Both channels share PR 5.4's
+  three-way merge banner — see §6.9 item 7. `AppService.setAutoUpdate`
+  rejects only Developer-Import; per-app flyout toggle interactive
+  for both catalog channels.
+- **App revocation flow** (deferred-items #15). Tracked in deferred-
+  items.md with explicit trigger: first app revoked from a catalog
+  OR Phase 4 telemetry surfaces a previously-curated app raising
+  new red flags. No real revocation event has occurred; no curator
+  has flagged a candidate.
+- **Backup-on-upgrade hook for Docker volumes.** Tracked in deferred-
+  items.md with explicit trigger: second affected docker app surfaces,
+  OR a docker image upgrade corrupts volume contents under a real
+  install. Phase 5 PR 5.8 ships the explicit-only declaration model
+  + `tools/migrate-docker-volume.sh` + first-boot toast as the v1
+  contract.
 - **Per-file ours/theirs buttons in the merge-conflict banner.**
-  PR 5.4 ships manual-edit + "Resolve with Claude" clipboard prompt.
-  Per-file ours/theirs deferred until soak time surfaces friction
-  for users without an AI agent in the loop.
+  Tracked in deferred-items.md with explicit trigger: soak surfaces
+  friction reports for users without an AI agent in the loop. PR 5.4
+  ships manual-edit + "Resolve with Claude" clipboard prompt as the
+  v1 surface.
+
+**Phase 6 added open items (Phase 7+ candidates):**
+
+- **Telemetry hash salt rotation cadence.** Annual default per
+  `os8dotai/SECURITY.md` (added in PR 4.5). Demoted from Phase 4
+  added items in PR 6.D1 — operator action, not code; only Phase 4
+  added item still open after Phase 6 close-out.
+
+After Phase 6, every other "Phase N added open item" is either Done
+(with a merging-PR cite above) or migrated to `app-store-deferred-items.md`
+with an explicit `Trigger:` line. The deferred-items doc reached
+steady-state in PR 6.D3 — see that file for the canonical list.
 
 ---
 
