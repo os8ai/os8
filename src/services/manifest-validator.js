@@ -17,7 +17,14 @@
  * When that ships, replace this copy verbatim.
  */
 
-const Ajv = require('ajv');
+// PR 6.2 — load `ajv/dist/2020` so the v2 schema's `$schema:
+// draft/2020-12` declaration validates. Mirror of the catalog repos'
+// validate-manifests.js pattern: register the draft-07 metaschema
+// explicitly so v1 (and v2's `allOf: [{ $ref: appspec-v1 }]`) keep
+// dereferencing under the same Ajv instance. The os8dotai consumer
+// switched to Ajv2020 in PR #14 (Phase 3.5.5 hotfix); PR 6.2 closes
+// the drift across the remaining canonical repos.
+const Ajv = require('ajv/dist/2020');
 const addFormats = require('ajv-formats');
 const yaml = require('js-yaml');
 const path = require('path');
@@ -32,6 +39,7 @@ const SCHEMA_V2 = JSON.parse(
 
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
+ajv.addMetaSchema(require('ajv/dist/refs/json-schema-draft-07.json'));
 const validateSchemaV1 = ajv.compile(SCHEMA_V1);
 const validateSchemaV2 = ajv.compile(SCHEMA_V2);
 
