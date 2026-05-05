@@ -743,6 +743,37 @@ uninstall→reinstall preserves work, Docker apps stop losing data,
 catalog freshness is no longer a 24h black hole, npm publish closes
 the external-IDE loop, E2E suite is no longer decorative.
 
+### Phase 6 — Close-out + categorization sweep (≤200 words)
+
+Phase 6 is the **close-out phase**. An end-to-end audit of
+`app-store-deferred-items.md` produced a 3 / 7 / 19 / 6 (A/B/C/D)
+split — 87% of remaining items are category C (premature without
+signal) or D (V1 exclusion by design). Phase 6's headline message:
+*the project is essentially done; this phase ships the small
+finishing batch + locks the decision history.* Five PRs across the
+canonical repos:
+
+- **A — Triggered finishers.** PR 6.1 (`os8ai/os8#70`) widens
+  auto-update to the Community channel with asymmetric per-channel
+  defaults (Verified opt-in / Community opt-out per Leo, 2026-05-04);
+  PR 6.2 (`os8ai/os8#71` + os8-catalog #15 + os8-catalog-community
+  #12) aligns `appspec-v2.json`'s `$schema` declaration to draft
+  2020-12 across the three canonical repos.
+- **G — Docs.** PR 6.D1 (this PR) closes spec §11 + adds the Phase 6
+  master-plan paragraph; PR 6.D2 (`os8ai/os8#72`) updates
+  `docs/auto-update.md` for both catalog channels and
+  cross-references PR 5.4's three-way merge banner; PR 6.D3
+  (`os8ai/os8#73`) sweeps every entry in
+  `app-store-deferred-items.md` to canonical
+  `Status` + `Source` + `Gap` + `Why` + `Trigger` form so no
+  `Deferred` entry lacks a revisit condition.
+
+Foundation: migration `0.8.0-app-store-community-auto-update.js`
+(seed-only). Full plan in `phase-6-plan.md`. Outcome: the project
+reaches steady-state — the deferred-items doc has zero un-rationalized
+deferrals; spec §11 has no category-A or category-B opens; the
+auto-update story is complete across both catalog channels.
+
 ---
 
 ## 7. Open Implementation Details — resolution pass
