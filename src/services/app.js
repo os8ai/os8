@@ -10,6 +10,37 @@ const {
 const { CapabilityService } = require('./capability');
 
 /**
+ * PR 6.1 — per-channel auto-update default for new external apps.
+ *
+ * Reads `app_store.auto_update.<channel>_default` from settings.
+ * Falls back to hard-coded per-channel defaults if the migration
+ * (0.8.0) hasn't run, so test fixtures and partially-migrated
+ * databases still produce sane behavior:
+ *   - verified  → false (opt-in, preserves PR 4.2 posture)
+ *   - community → true  (opt-out, per Leo 2026-05-04)
+ *   - other     → false (Developer-Import etc. — no upstream sync)
+ *
+ * Returns a boolean that the caller converts to 0/1 for the SQL column.
+ */
+function resolveAutoUpdateDefault(db, channel) {
+  const fallbacks = {
+    verified:  false,
+    community: true,
+  };
+  const fallback = fallbacks[channel] ?? false;
+  try {
+    const row = db.prepare(
+      'SELECT value FROM settings WHERE key = ?'
+    ).get(`app_store.auto_update.${channel}_default`);
+    if (!row) return fallback;
+    return row.value === 'true' || row.value === true;
+  } catch (_) {
+    // settings table may not exist in test fixtures; fall back to channel default
+    return fallback;
+  }
+}
+
+/**
  * Recursive directory size in bytes. Best-effort: stat failures on
  * individual entries are skipped silently so a permission glitch on
  * one file doesn't tank the whole walk. Used by getOrphan (PR 5.5)
@@ -212,20 +243,22 @@ const AppService = {
     return this.getById(db, id);
   },
 
-  // PR 4.2 — auto-update opt-in for Verified-channel external apps.
-  // The schema column lands in migration 0.5.0; this is a thin convenience
-  // around the toggle so callers don't have to spell out the column name
-  // (and so we can later add validation / channel checks centrally).
+  // PR 4.2 (introduced) + PR 6.1 (widened) — auto-update opt-in for
+  // catalog-channel external apps. The schema column lands in migration
+  // 0.5.0; per-channel defaults are seeded in migration 0.8.0 (PR 6.1).
+  // Verified + Community are interactive; Developer-Import is rejected
+  // because there is no upstream catalog to sync from.
   setAutoUpdate(db, appId, enabled) {
     const app = this.getById(db, appId);
     if (!app) throw new Error(`app ${appId} not found`);
     if (app.app_type !== 'external') {
       throw new Error('auto-update only applies to external apps');
     }
-    if (enabled && app.channel !== 'verified') {
-      // Spec §6.9 — auto-update is Verified-channel only. Refuse to enable
-      // on community/dev-import apps so a misconfigured UI can't slip past.
-      throw new Error('auto-update is Verified-channel only');
+    if (enabled && app.channel !== 'verified' && app.channel !== 'community') {
+      // Spec §6.9 (PR 6.1) — auto-update applies to catalog channels.
+      // Developer-Import has no upstream catalog; refuse so a misconfigured
+      // UI can't slip past.
+      throw new Error('auto-update requires a catalog channel (verified or community)');
     }
     const value = enabled ? 1 : 0;
     db.prepare(
@@ -463,16 +496,24 @@ const AppService = {
       .get('active');
     const order = (maxOrder?.n ?? -1) + 1;
 
+    // PR 6.1 — per-channel auto-update default. Migration 0.8.0 seeds
+    // Verified=false / Community=true. Hard-coded fallbacks if the
+    // migration hasn't run yet. Developer-Import never auto-updates
+    // (no upstream catalog to sync from), regardless of any settings key.
+    const autoUpdate = resolveAutoUpdateDefault(db, channel) ? 1 : 0;
+
     db.prepare(`
       INSERT INTO apps (
         id, name, slug, status, display_order, color, icon, text_color, app_type,
         external_slug, channel, framework, manifest_yaml, manifest_sha,
-        catalog_commit_sha, upstream_declared_ref, upstream_resolved_commit
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, ?, ?, ?)
+        catalog_commit_sha, upstream_declared_ref, upstream_resolved_commit,
+        auto_update
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'external', ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id, name, slug, statusOverride, order, color, icon, textColor,
       externalSlug, channel, framework || null, manifestYaml || null, manifestSha || null,
-      catalogCommitSha || null, upstreamDeclaredRef || null, upstreamResolvedCommit || null
+      catalogCommitSha || null, upstreamDeclaredRef || null, upstreamResolvedCommit || null,
+      autoUpdate
     );
 
     return {

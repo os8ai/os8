@@ -29,14 +29,37 @@ function ensureFlyoutEl() {
 }
 
 function renderFlyout(app) {
-  const isVerified = app.channel === 'verified';
-  const channelLabel = app.channel || 'unknown';
+  // PR 6.1 — auto-update toggle is now interactive for both Verified
+  // and Community channels. Developer-Import remains disabled (no
+  // upstream catalog to sync from). Hint text is channel-specific.
+  const channel = app.channel || 'unknown';
+  const isVerified = channel === 'verified';
+  const isCommunity = channel === 'community';
+  const isCatalogChannel = isVerified || isCommunity;
   const autoUpdateChecked = !!app.auto_update;
+  let autoUpdateHint;
+  if (isVerified) {
+    autoUpdateHint = `When the Verified catalog publishes a new version, OS8
+      fetches and applies it automatically — but
+      <strong>only</strong> if you haven't edited this app
+      locally. Edits surface in the home-screen banner instead
+      so you can resolve the merge by hand.`;
+  } else if (isCommunity) {
+    autoUpdateHint = `OS8 fetches and applies updates automatically when
+      this Community app's manifest publishes a new version — but
+      <strong>only</strong> if you haven't edited it locally. Edits
+      surface in the home-screen banner instead so you can resolve the
+      merge by hand. Community apps are less rigorously reviewed than
+      Verified — disable this if you'd rather review each update by hand.`;
+  } else {
+    autoUpdateHint = `Manual update only for Developer-Import apps. Use
+      the home-screen banner when an upstream change is available.`;
+  }
   return `
     <div class="app-settings-flyout__panel">
       <header>
         <strong>${escapeHtml(app.name || app.external_slug || 'App')}</strong>
-        <span class="app-settings-flyout__channel">${escapeHtml(channelLabel)}</span>
+        <span class="app-settings-flyout__channel">${escapeHtml(channel)}</span>
         <button class="close" data-action="close" aria-label="Close">×</button>
       </header>
 
@@ -46,20 +69,10 @@ function renderFlyout(app) {
           <input type="checkbox"
                  id="appSettingsAutoUpdate"
                  ${autoUpdateChecked ? 'checked' : ''}
-                 ${isVerified ? '' : 'disabled'} />
+                 ${isCatalogChannel ? '' : 'disabled'} />
           <span>Auto-update from catalog</span>
         </label>
-        <p class="app-settings-flyout__hint">
-          ${isVerified
-            ? `When the Verified catalog publishes a new version, OS8
-               fetches and applies it automatically — but
-               <strong>only</strong> if you haven't edited this app
-               locally. Edits surface in the home-screen banner instead
-               so you can resolve the merge by hand.`
-            : `Auto-update is Verified-channel only. This app installs
-               from <code>${escapeHtml(channelLabel)}</code>; manual
-               update via the home-screen banner stays available.`}
-        </p>
+        <p class="app-settings-flyout__hint">${autoUpdateHint}</p>
       </section>
 
       <section class="app-settings-flyout__section app-settings-flyout__section--danger">

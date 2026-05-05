@@ -98,15 +98,17 @@ describe('app-auto-updater — Phase 4 PR 4.2', () => {
     );
   }
 
-  it('listEligible returns only verified, opted-in, update-flagged, no-edits rows', () => {
-    row({ id: 'a-yes', slug: 'a-yes', channel: 'verified', autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
-    row({ id: 'a-off', slug: 'a-off', channel: 'verified', autoUpdate: 0, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
-    row({ id: 'a-noupd', slug: 'a-noupd', channel: 'verified', autoUpdate: 1, updateAvailable: 0 });
-    row({ id: 'a-comm', slug: 'a-comm', channel: 'community', autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
-    row({ id: 'a-edit', slug: 'a-edit', channel: 'verified', autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40), userBranch: 'user/main' });
+  it('listEligible returns verified + community opted-in update-flagged no-edits rows (PR 6.1 widened)', () => {
+    row({ id: 'a-yes',    slug: 'a-yes',    channel: 'verified',          autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
+    row({ id: 'a-off',    slug: 'a-off',    channel: 'verified',          autoUpdate: 0, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
+    row({ id: 'a-noupd',  slug: 'a-noupd',  channel: 'verified',          autoUpdate: 1, updateAvailable: 0 });
+    row({ id: 'a-comm',   slug: 'a-comm',   channel: 'community',         autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
+    row({ id: 'a-edit',   slug: 'a-edit',   channel: 'verified',          autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40), userBranch: 'user/main' });
+    row({ id: 'a-devimp', slug: 'a-devimp', channel: 'developer-import',  autoUpdate: 1, updateAvailable: 1, updateToCommit: 'b'.repeat(40) });
 
     const eligible = AppAutoUpdater.listEligible(db);
-    expect(eligible.map(r => r.id)).toEqual(['a-yes']);
+    // Verified + Community both qualify; developer-import excluded by channel filter.
+    expect(eligible.map(r => r.id).sort()).toEqual(['a-comm', 'a-yes']);
   });
 
   it('processAutoUpdates calls AppCatalogService.update for each eligible row', async () => {
@@ -238,14 +240,16 @@ describe('AppService.setAutoUpdate — channel restrictions', () => {
     expect(AppService.getAutoUpdate(db, 'a1')).toBe(false);
   });
 
-  it('refuses to enable auto_update for community apps', () => {
+  it('enables auto_update for a community external app (PR 6.1 widened)', () => {
     insert({ id: 'a2', slug: 'community-app', channel: 'community' });
-    expect(() => AppService.setAutoUpdate(db, 'a2', true)).toThrow(/Verified-channel/);
+    const r = AppService.setAutoUpdate(db, 'a2', true);
+    expect(r.auto_update).toBe(1);
+    expect(AppService.getAutoUpdate(db, 'a2')).toBe(true);
   });
 
-  it('refuses to enable auto_update for developer-import apps', () => {
+  it('refuses to enable auto_update for developer-import apps (no upstream catalog)', () => {
     insert({ id: 'a3', slug: 'devimp-app', channel: 'developer-import' });
-    expect(() => AppService.setAutoUpdate(db, 'a3', true)).toThrow(/Verified-channel/);
+    expect(() => AppService.setAutoUpdate(db, 'a3', true)).toThrow(/catalog channel/);
   });
 
   it('refuses to operate on native (non-external) apps', () => {

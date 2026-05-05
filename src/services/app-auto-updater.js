@@ -1,11 +1,18 @@
 /**
- * AppAutoUpdater — Phase 4 PR 4.2.
+ * AppAutoUpdater — Phase 4 PR 4.2; widened to Community in Phase 6 PR 6.1.
  *
- * Walks the apps table for Verified-channel external apps that have
+ * Walks the apps table for Verified or Community external apps that have
  * `auto_update=1` and an `update_available=1` flag set by
  * AppCatalogService.sync (PR 1.25). For each candidate, dispatches to
  * AppCatalogService.update which fast-forwards user/main onto the
  * target commit when no user edits exist.
+ *
+ * Per-channel defaults (PR 6.1) are asymmetric: Verified apps stay
+ * opt-in (default OFF) while new Community installs default to ON
+ * (`migration 0.8.0`). The per-app flyout toggle is interactive for
+ * both channels; PR 5.4's three-way merge UI handles the conflict path
+ * identically. Developer-Import apps are excluded — they have no
+ * upstream catalog to sync from.
  *
  * Spec §6.9 hard rule: never auto-merge against user-edited apps. The
  * `user_branch` column is set on first edit (per PR 1.23's
@@ -51,7 +58,7 @@ function listEligible(db) {
       FROM apps
      WHERE app_type = 'external'
        AND status = 'active'
-       AND channel = 'verified'
+       AND channel IN ('verified', 'community')
        AND auto_update = 1
        AND update_available = 1
        AND update_to_commit IS NOT NULL

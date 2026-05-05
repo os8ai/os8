@@ -333,9 +333,10 @@ function createAppsRouter(db, deps) {
     }
   });
 
-  // PATCH /api/apps/:id/auto-update — Toggle Verified-channel auto-update.
-  // PR 4.2. Body: { enabled: boolean }. Returns the updated app row.
-  // Refuses for community / dev-import apps via AppService.setAutoUpdate.
+  // PATCH /api/apps/:id/auto-update — Toggle catalog-channel auto-update.
+  // PR 4.2 (verified) + PR 6.1 (widened to community). Body: { enabled:
+  // boolean }. Returns the updated app row. Refuses for developer-import
+  // apps via AppService.setAutoUpdate (no upstream catalog to sync from).
   router.patch('/:id/auto-update', (req, res) => {
     try {
       const { enabled } = req.body || {};
@@ -350,7 +351,7 @@ function createAppsRouter(db, deps) {
       console.error('[Apps API] auto-update toggle:', err.message);
       // Spec violations (channel restriction) come back as 400; other
       // failures stay 500.
-      const status = /Verified-channel|external/.test(err.message) ? 400 : 500;
+      const status = /catalog channel|external/.test(err.message) ? 400 : 500;
       res.status(status).json({ error: err.message });
     }
   });
