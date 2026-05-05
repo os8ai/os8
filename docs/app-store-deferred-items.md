@@ -1,8 +1,10 @@
 # App Store — deferred items
 
-Running list of items intentionally **deferred during App Store work** so we don't lose track of them. Captured during Phase 3 wrap-up after a sweep of the spec, master plan, and phase 0–3 plans.
+Running list of items intentionally **deferred during App Store work** so we don't lose track of them. Captured during Phase 3 wrap-up after a sweep of the spec, master plan, and phase 0–3 plans, then refreshed at each phase close-out.
 
-This is **not** a Phase 4 plan. Phase scope is set by the master plan + spec. Before each new phase starts, review this list and decide which items (if any) should be promoted into that phase's scope.
+This is **not** a Phase plan. Phase scope is set by the master plan + spec. Before each new phase starts, review this list and decide which items (if any) should be promoted into that phase's scope.
+
+**State of the doc as of Phase 6 close-out (2026-05-05).** PR 6.D3 swept every entry into a canonical shape: `Status` + `Source` + `Gap` + `Why` + `Trigger`. After this PR no entry has `Status: Deferred` without an explicit `Trigger:` line — every deferral has a clear condition for revisit. Done items cite their merging PR. V1 exclusions cite the spec section that decided them.
 
 ## How to use this doc
 
@@ -10,16 +12,18 @@ This is **not** a Phase 4 plan. Phase scope is set by the master plan + spec. Be
 - **Update status** when an item is promoted into a phase, completed, or definitively dropped.
 - **Don't delete** entries — change `Status` instead. The history of why something didn't ship is useful when the question recurs.
 - **Periodic review:** before kicking off a new phase, scan this doc and decide.
+- **Trigger line is required** for every `Deferred` entry. The trigger is the condition that should make us reconsider — not "someday."
 
 ## Statuses
 
-- `Deferred` — known gap, not yet scheduled
-- `In progress` — scheduled in a current/upcoming PR
-- `Done` — completed (cite the merging PR)
-- `V1 exclusion` — intentionally out of v1 scope per spec; revisit only if a concrete signal demands it
-- `Won't fix` — explicitly dropped (cite the decision)
+- `Deferred` — known gap, not yet scheduled. Must carry a `Trigger:` line.
+- `In progress` — scheduled in a current/upcoming PR.
+- `Done` — completed (cite the merging PR).
+- `V1 exclusion` — intentionally out of v1 scope per spec; revisit only if a concrete signal demands it.
+- `V1 invariant` — a v1 design constraint, not a deferral; flipping requires a re-spec.
+- `Won't fix` — explicitly dropped (cite the decision).
 
-Each entry should be tight: title, status, source, what's missing, why deferred, and a `Trigger` line (the condition that should make us reconsider).
+Each entry: title, status, source, what's missing, why deferred, and a `Trigger:` line.
 
 ---
 
@@ -29,16 +33,15 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Status:** Deferred
 - **Source:** spec §11; phase-3-plan.md §2.2
 - **Gap:** `resources.memory_limit_mb` and `resources.gpu` surface in install plan UI but the runtime does not kill processes that exceed them.
-- **Why:** Requires per-app RSS monitoring + signal handling + graceful shutdown — a multi-day effort with its own UX surface (warning toast → kill → restart prompt).
+- **Why:** Requires per-app RSS monitoring + signal handling + graceful shutdown — a multi-day effort with its own UX surface (warning toast → kill → restart prompt). v1 advisory model treats users as the trust authority over their own machine; runtime kill is an enforcement upgrade that needs a real signal first.
 - **Trigger:** First user report of a runaway-memory app, OR before any GPU-heavy app (ComfyUI, OpenWebUI) ships in Verified channel.
 
 ### 2. Malware advisories are clickable-through
 - **Status:** Deferred *(philosophical — see note)*
 - **Source:** spec §6.5
 - **Gap:** MAL-* advisories from the supply-chain scanner show a "louder header" but the install button remains active. No hard block.
-- **Why:** v1 honors the advisory-gating posture — user is final authority across all channels (spec §6.5/§6.2.5/§2.3, updated 2026-04-30).
-- **Note:** Hard-blocking *known* malware would be a narrow exception to the advisory model and is worth a deliberate decision, not a quiet flip.
-- **Trigger:** Telemetry showing users routinely click through MAL-* warnings, OR a real malware incident.
+- **Why:** v1 honors the advisory-gating posture — user is final authority across all channels (spec §6.5/§6.2.5/§2.3, updated 2026-04-30). Hard-blocking *known* malware would be a narrow exception to the advisory model and is worth a deliberate decision, not a quiet flip. See `project_app_store_advisory_gating.md` for the rationale.
+- **Trigger:** Telemetry showing users routinely click through MAL-* warnings, OR a real malware incident with a measurable impact, OR an explicit Leo decision to flip the model.
 
 ### 3. OAuth-gated capabilities (multi-tenant)
 - **Status:** Deferred
@@ -47,18 +50,18 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Why:** Requires multi-tenant auth refactor; not needed while OS8 is single-user-per-machine.
 - **Trigger:** Multi-user/shared-machine deployments, OR a capability that is fundamentally per-identity.
 
-### 4. Per-origin browser permission grants — untested end-to-end
-- **Status:** Deferred *(verify first)*
+### 4. Per-origin browser permission grants — UI surface untested end-to-end
+- **Status:** Deferred *(code Done; UX surface pending app signal)*
 - **Source:** spec §6.4
-- **Gap:** Each app gets its own BrowserView + origin, so camera/mic/geolocation grants should isolate per app via `setPermissionRequestHandler`. Hardened config denies by default but the user-facing grant flow is implicit, never smoke-tested.
-- **Why:** Should mostly work for free; just lacks a real test.
-- **Trigger:** First app that requests camera/mic/geo, OR a security review pass.
+- **Gap:** The hardened external-app BrowserView at `src/services/preview.js:221-222` correctly default-denies via both `setPermissionRequestHandler((_wc, _permission, cb) => cb(false))` and `setPermissionCheckHandler(() => false)`. **What's still pending:** the user-facing grant flow (a UI to request permission when an app needs camera/mic/geo) does not exist because no installed app has needed it yet. Designing speculatively would produce worse UX than designing against a real ask.
+- **Why:** The browser-side isolation is architectural (each external app has its own subdomain + origin); the runtime gate is in place. The grant UI is purely a UX surface waiting for a use case.
+- **Trigger:** First app (Verified or Community) declaring a camera/mic/geolocation permission, OR a security review pass that wants to certify the isolation end-to-end.
 
 ### 5. Per-capability audit logging
-- **Status:** Deferred *(verify first — may already exist in some form)*
+- **Status:** Deferred
 - **Source:** implicit from spec §6.3.2
-- **Gap:** Server-side capability enforcement middleware exists, but no log of "app X called db.readwrite at T". No audit trail if an app misuses capabilities.
-- **Why:** Not part of the v1 review surface.
+- **Gap:** Server-side capability enforcement middleware exists (`src/middleware/scoped-api-middleware.js` per PR 1.7), but no log of "app X called db.readwrite at T". No audit trail if an app misuses capabilities.
+- **Why:** Not part of the v1 review surface; advisory-gating model covers most cases without per-call introspection.
 - **Trigger:** First incident requiring forensic capability-call history, OR introduction of any capability with material data-access scope.
 
 ### 6. Stricter `X-OS8-App-Context` header enforcement
@@ -74,7 +77,7 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Source:** spec §6.11
 - **Gap:** App secrets stored plaintext in `app_env_variables`. No OS keychain integration.
 - **Why:** Matches existing `EnvService` plaintext model for native apps; not worth special-casing apps unless OS8 itself moves to keychain.
-- **Trigger:** OS8 adopts keychain for its own secrets, then App Store follows.
+- **Trigger:** OS8 itself adopts keychain for its own secrets, then App Store follows; OR a real attacker-in-the-loop incident that proves plaintext is the load-bearing weakness.
 
 ---
 
@@ -88,13 +91,12 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   the buffer + renderer + IPC for log file save.
 
 ### 9. Playwright E2E install harness
-- **Status:** Done — Phase 4 PR 4.10 (#47).
-- **Resolution:** Scaffold landed: bootOs8 helper + shell-boot spec +
-  scoped-API origin-probe spec (with `@strict` env-gated assertions
-  for the post-4.6 path). Linux + macOS in CI; Windows joins after
-  PR 4.8's matrix promotion stabilizes. Install-end-to-end /
-  dev-import / native-app specs are scaffolded with `.skip()` for
-  follow-up flesh-out; documented in `tests/e2e/playwright/README.md`.
+- **Status:** Done — Phase 4 PR 4.10 (#47) + Phase 5 PR 5.3 (#61).
+- **Resolution:** Phase 4 scaffolded the `bootOs8` helper + shell-boot
+  spec + scoped-API origin-probe spec. Phase 5 PR 5.3 added
+  `OS8_4_6_STRICT=1` to the workflow env, fleshed out
+  install-verified.spec.ts + dev-import.spec.ts, un-skipped
+  native-app-load.spec.ts, and added Windows-2022 best-effort.
 
 ### 10. Three-way merge UI for updates with user edits
 - **Status:** Done — Phase 5 PR 5.4 (#63).
@@ -110,7 +112,7 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   `<<<<<<<` markers BEFORE `git add -u` to prevent committing a
   half-resolved file (silent footgun: `git add` of a conflicted file
   marks it resolved unconditionally). Conflict file list persists to
-  the new `apps.update_conflict_files` JSON column (PR 5.10) so the
+  `apps.update_conflict_files` JSON column (PR 5.10) so the
   banner survives restarts. New telemetry kinds `update_conflict` +
   `update_conflict_resolved` (with sanitizer field `conflictFileCount`)
   feed the curator dashboard.
@@ -122,7 +124,6 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   and no `user_branch` (i.e. no local edits). Apply path is the
   fast-forward branch of `AppCatalogService.update` (PR 1.25). Per-app
   toggle in the app settings flyout. Toast subscriber on apply/fail.
-  Mark missed in Phase 4 PR 4.D3 close-out — corrected here in PR 5.D3.
 
 ### 12. Tiered uninstall + data-preserve + reinstall restore
 - **Status:** Done — Phase 5 PR 5.5 (#62).
@@ -147,8 +148,8 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Status:** Deferred *(verify first)*
 - **Source:** spec §4.2; implicit in phase-0-plan.md
 - **Gap:** Phase 0 CI workflows assume happy paths. Tag-resolution failures, image-validation failures, and lockfile-presence failures may not produce actionable error messages for manifest authors.
-- **Why:** Happy path works; error UX is incremental.
-- **Trigger:** First curator-PR that fails CI and the author can't tell why.
+- **Why:** Happy path works; error UX is incremental. Curators have not flagged a pain point.
+- **Trigger:** First curator-PR that fails CI and the author can't tell why, OR catalog PR backlog growth makes ambiguous CI failures a recurring drag.
 
 ### 32. Catalog freshness — no user-driven "Sync Now"
 - **Status:** Done — Phase 5 PR 5.6 (#60).
@@ -164,20 +165,23 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   user opens the install plan modal) and `_runApprove` start (defense-
   in-depth before clone). Network failure / 404 falls back to the
   cached row so installs still proceed.
-  **Plan deviation:** plan §1 sketched the Sync Now button living in a
-  "catalog browser modal next to channel filter pills." Reality: there
-  is no in-OS8 catalog browser modal — catalog browsing happens on
-  os8.ai (web), users return to OS8 via `os8://install` deeplinks.
-  The button instead lives in the App Store settings panel which
-  already has the channel enable toggles (the conceptually-adjacent
-  surface).
 
 ### 36. Auto-update widening to Community channel
-- **Status:** Deferred *(considered for Phase 5 as PR 5.7, 2026-05-03; cut to give PR 5.4 soak time)*
-- **Source:** Phase 5 plan §1 + PR 5.7 stub. Distinct from #11 (Verified-channel auto-update; Done — Phase 4 PR 4.2 #48).
-- **Gap:** `AppAutoUpdater.processAutoUpdates` filters on `channel = 'verified'` (`src/services/app-auto-updater.js:55`). Community-channel apps with `auto_update=1` are silently ignored.
-- **Why:** Phase 5 originally scoped this as PR 5.7 (filter widening + per-channel Settings toggle, default OFF). Cut at planning to give PR 5.4's manual-edit conflict UI soak time on the lower-churn Verified channel first. Community apps churn more; surprise-update + conflict failures would erode trust faster than on Verified.
-- **Trigger:** PR 5.4 has now shipped (Phase 5, #63, 2026-05-04). Promote when ≥1 release of soak time has passed without recurring "merge conflict UX is broken" reports. Implementation cost estimated ~150 LOC (filter widening, per-channel settings toggle, flyout hint logic). Default OFF (symmetric with Verified, aligns with "scan surfaces, user decides" memory).
+- **Status:** Done — Phase 6 PR 6.1 (#70).
+- **Resolution:** `AppAutoUpdater.listEligible` widened from
+  `channel = 'verified'` to `channel IN ('verified', 'community')`.
+  Asymmetric per-channel install-time defaults via migration 0.8.0:
+  Verified opt-in (default OFF, preserves PR 4.2 posture), Community
+  opt-out (default ON, "forget about it" UX for higher-churn apps —
+  per Leo's call 2026-05-04). `AppService.createExternal` reads
+  `app_store.auto_update.<channel>_default` at install time;
+  existing app rows are NOT touched (no retroactive UPDATE — would
+  surprise users on next launch). Per-app flyout toggle is now
+  interactive for both channels; `AppService.setAutoUpdate`
+  rejects only Developer-Import. Both channels share PR 5.4's
+  three-way merge banner — local edits surface for manual resolution
+  on either channel. Two new Settings → App Store toggles let users
+  flip the per-channel default before a future install.
 
 ---
 
@@ -188,22 +192,28 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Source:** phase-3-plan.md §2.2
 - **Gap:** Single CODEOWNERS team for `os8ai/os8-catalog-community`. No triage tier (e.g. tier-1 fast-path vs escalation).
 - **Why:** Unknown PR volume; no triage data yet.
-- **Trigger:** Community-channel PR backlog grows past curator bandwidth.
+- **Trigger:** Community-channel PR backlog grows past curator bandwidth (review-queue depth > 1 week sustained), OR a curator escalation pattern emerges that warrants a fast-path.
 
 ### 15. App revocation flow
-- **Status:** Deferred *(considered for Phase 5, 2026-05-03; explicitly deferred per Leo)*
+- **Status:** Deferred
 - **Source:** spec §4.3 (implicit)
 - **Gap:** Soft-delete (`App.deletedAt`) works server-side, but no user-facing notification or force-uninstall when curator yanks an app. Malicious/compromised apps remain installed silently.
-- **Why:** Preventive review is v1 priority; reactive revocation deferred until needed.
-- **Trigger:** First app revoked from a catalog. Should be in place before that happens, ideally.
-- **Phase 5 note (2026-05-03):** Considered for Phase 5 (Leo asked the question explicitly during planning) and deferred — no real revocation event has occurred + no curator has flagged a candidate. Promote when (a) curators identify a revocation candidate, OR (b) Phase 4 telemetry surfaces a previously-curated app raising new red flags. The cost of waiting is asymmetric: we can ship fast when needed, and designing reactively against a real incident produces better UX than designing speculatively.
+- **Why:** Preventive review is v1 priority; reactive revocation deferred until needed. Considered for Phase 5 (Leo asked the question explicitly during planning) and explicitly deferred — no real revocation event has occurred + no curator has flagged a candidate. The cost of waiting is asymmetric: we can ship fast when needed, and designing reactively against a real incident produces better UX than designing speculatively.
+- **Trigger:** First app revoked from a catalog (curator identifies a revocation candidate), OR Phase 4 telemetry surfaces a previously-curated app raising new red flags.
 
 ### 33. v2 schema `$schema` declaration drift across consumers
-- **Status:** Deferred *(small cleanup, ship anytime)*
-- **Source:** Phase 3.5.5 — linkding sync to os8.ai's storefront DB failed with `schema_invalid: no schema with key or ref "http://json-schema.org/draft-07/schema#"`. Patched in os8dotai PR #14 by aligning the local copy's `$schema` to draft 2020-12. Canonical (`os8ai/os8-catalog/schema/appspec-v2.json`), community (`os8ai/os8-catalog-community/schema/appspec-v2.json`), and desktop (`os8ai/os8/src/data/appspec-v2.json`) still declare draft-07.
-- **Gap:** v1 schema declares `https://json-schema.org/draft/2020-12/schema`; v2 declares `http://json-schema.org/draft-07/schema#`. The desktop and the catalog CIs use plain `Ajv` (default = draft-07) so the mismatch is invisible to them; os8dotai uses `Ajv` from `ajv/dist/2020` and tripped on it. The v2 schema doesn't actually use any draft-07-only constructs.
-- **Why:** Three repos to update + schema-match CI to satisfy. Worked-around in os8dotai; no other consumer hits it today.
-- **Trigger:** Any new consumer compiling v2 with a strict-draft AJV; or any time the v2 schema needs editing for an unrelated reason (bundle the alignment with that PR).
+- **Status:** Done — Phase 6 PR 6.2 (os8 #71 + os8-catalog #15 + os8-catalog-community #12).
+- **Resolution:** All three canonical `appspec-v2.json` declarations
+  flipped from `http://json-schema.org/draft-07/schema#` to
+  `https://json-schema.org/draft/2020-12/schema`. The os8 desktop
+  validator (`src/services/manifest-validator.js`) swapped from plain
+  `Ajv` to `ajv/dist/2020` + an explicit draft-07 metaschema
+  registration so v1 still dereferences cleanly under the same
+  instance. Both catalog repos already loaded `Ajv2020` + the
+  draft-07 metaschema (their inline comment even said "v2 declares
+  2020-12" — the comment was aspirational; PR 6.2 made the
+  declaration match). os8dotai aligned its local copy in
+  Phase 3.5.5 PR #14, so all four canonical consumers now agree.
 
 ### 34. ISR fallback 500s for slugs not in `generateStaticParams`
 - **Status:** Done — Phase 5 PR 5.9 (os8dotai #18).
@@ -217,22 +227,16 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
   The pre-render-everything fallback in `apps/[slug]/page.tsx`
   stays in tree as defense-in-depth — covers the brief ~1-3min
   window between sync and rebuild completing.
-  **Operational follow-up (Leo):** create a Vercel deploy hook in
-  project settings → Git → Deploy Hooks (target `main`), set the URL
-  as `VERCEL_DEPLOY_HOOK_URL` in Production env vars. Until that's
-  set the hook is a strict no-op (returns
-  `{ ok: false, reason: "not set" }`).
-  **Adjacent fix during the same merge wave:** os8dotai hotfix #19
-  added `prisma generate` to the `vercel-build` script — six builds
-  failed in a row before that landed because the cached client didn't
-  have the InstalledApp model from PR 4.3.
+  os8dotai hotfix #19 added `prisma generate` to the `vercel-build`
+  script — six builds failed in a row before that landed because the
+  cached client didn't have the InstalledApp model from PR 4.3.
 
 ### 16. Install-count display on community cards
 - **Status:** Deferred
 - **Source:** phase-3-plan.md §2.2
 - **Gap:** `App.installCount` increments via `track-install` but the community channel browse UI doesn't surface it. Users can't tell which community apps are tested vs untested.
-- **Why:** UX polish.
-- **Trigger:** Promote whenever community channel gets meaningful curation traffic.
+- **Why:** UX polish; community channel volume is still small enough that "tested vs untested" reads from curator-attention rather than install-count.
+- **Trigger:** Community channel grows past ~25 listings OR users ask "how do I tell which Community apps are battle-tested?".
 
 ---
 
@@ -242,8 +246,8 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Status:** Deferred
 - **Source:** spec §8.4; app-store-plan.md
 - **Gap:** Asset URLs are GitHub raw, pinned to commit SHA. Spec calls for monitoring 429s; no monitoring is wired.
-- **Why:** Migration to Vercel Blob (#27) is one-line URL rewrite when needed; cheap to defer until signal arrives.
-- **Trigger:** Any 429 in browser DevTools, or a rate-limit-reduction email from GitHub org owner.
+- **Why:** Migration to Vercel Blob (#27) is one-line URL rewrite when needed; cheap to defer until signal arrives. Phase 4 telemetry will surface 429s when they happen (curator dashboard would notice).
+- **Trigger:** Any 429 visible in browser DevTools or os8.ai logs, OR a rate-limit-reduction email from GitHub org owner, OR Phase 4 telemetry surfacing 429s from a measurable user fraction.
 
 ### 18. Per-adapter install success/fail telemetry
 - **Status:** Done — Phase 4 PR 4.5 (os8dotai #15) + PR 4.4 (#49).
@@ -260,7 +264,7 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Source:** spec §11
 - **Gap:** Catalog sync errors → `console.error` only. No webhook to a curator channel.
 - **Why:** Phase 0 keeps the alert pipeline local; v1 add it.
-- **Trigger:** First curator surprise — "the manifest was broken for two days and we didn't notice."
+- **Trigger:** First curator surprise — "the manifest was broken for two days and we didn't notice" — OR catalog sync failure rate breaches a measurable threshold via Phase 4 telemetry.
 
 ---
 
@@ -283,8 +287,8 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Status:** Deferred
 - **Source:** phase-3-plan.md §3.1; phase-3-plan.md §7
 - **Gap:** Developer Import detects `Dockerfile` and points user at Community channel. Building locally with `docker build` requires orchestration + manual `internal_port` discovery.
-- **Why:** Adds substantial complexity; users can publish to Docker Hub and use Community channel.
-- **Trigger:** Frequent user requests, or when build-from-source is required for a class of apps we want to support.
+- **Why:** Adds substantial complexity; users can publish to Docker Hub and use Community channel. Community channel covers the legitimate use case for now.
+- **Trigger:** Frequent user requests (≥3 distinct asks), OR build-from-source becomes required for a class of apps the catalog wants to support.
 
 ### 22. GPU device pinning (`--gpus device=N`)
 - **Status:** Deferred
@@ -298,7 +302,7 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Source:** spec §9
 - **Gap:** Full clone only. Monorepo installs are slow.
 - **Why:** Performance optimization; v1 catalog has no monorepos.
-- **Trigger:** First catalog manifest pointing at a path within a known monorepo.
+- **Trigger:** First catalog manifest pointing at a path within a known monorepo, OR install time for a real catalog manifest exceeds 60s due to clone size.
 
 ### 35. Docker adapter: container-internal volumes not bind-mounted
 - **Status:** Done — Phase 5 PR 5.8 (#64 + os8-catalog #14 + os8-catalog-community #11).
@@ -335,18 +339,18 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 ## UX & polish
 
 ### 24. `description` column on per-app environment variables
-- **Status:** Deferred *(verify first)*
+- **Status:** Deferred
 - **Source:** phase-1-plan.md §6.3.1
-- **Gap:** Schema field for per-var help text exists in spec but may not be in DB. Env prompts use `permissions.secrets[].prompt` from manifest as the visible copy.
-- **Why:** Minor schema gap.
-- **Trigger:** When env-prompt UX gets a polish pass.
+- **Gap:** Schema field for per-var help text exists in spec but not as a separate DB column on `app_env_variables`. Visible env-prompt copy comes from manifest `permissions.secrets[].prompt` at install time, persisted into `EnvService.set`'s description path on `env_variables` (the parent table). Adding a column to `app_env_variables` would let users override the prompt copy locally.
+- **Why:** Minor schema gap; visible UI already populates a description from the manifest.
+- **Trigger:** Env-prompt UX gets a polish pass, OR a user reports needing to override the prompt copy after install.
 
 ### 25. Developer Import dupe-install UX guard
 - **Status:** Deferred
 - **Source:** phase-3-plan.md §3.1
 - **Gap:** User can re-import the same repo many times. `ON CONFLICT` blocks DB dupes but UX doesn't tell user "you already have this; uninstall first?".
 - **Why:** Rare abuse/footgun.
-- **Trigger:** First user complaint, or any time the dev-import flow gets a UX pass.
+- **Trigger:** First user complaint, OR any time the dev-import flow gets a UX pass.
 
 ### 26. `shell: true` escape hatch
 - **Status:** V1 exclusion *(but documented as a potential future field)*
@@ -359,22 +363,22 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Status:** Deferred *(contingent)*
 - **Source:** spec §8.4
 - **Gap:** Asset URLs are GitHub raw. Migration is a one-line URL rewrite in the sync core; no DB migration.
-- **Why:** Wait-and-see; only swap when GitHub raw fails us.
-- **Trigger:** See #17 (RUM monitoring). Pull together.
+- **Why:** Wait-and-see; only swap when GitHub raw fails us. Contingent on #17 (GitHub raw RUM) producing the signal.
+- **Trigger:** See #17 — pull together when 429s appear.
 
 ### 28. `assetRequestCount` instrumentation
 - **Status:** Deferred *(low priority)*
 - **Source:** spec §5.3
 - **Gap:** Per-deployment catalog-sync request counter on `CatalogState`.
 - **Why:** No urgent observability need.
-- **Trigger:** Whenever we want sync-load instrumentation.
+- **Trigger:** A specific question about sync load that the existing telemetry can't answer, OR Phase 4 telemetry growth makes overhead worth measuring.
 
 ### 29. Hard-cleanup cron for soft-deleted apps
 - **Status:** Deferred *(low priority)*
 - **Source:** app-store-plan.md
 - **Gap:** Soft-deleted catalog rows accumulate. Cron is a one-line addition.
 - **Why:** Catalog table small; no urgency.
-- **Trigger:** Catalog row count growth makes the table noticeable in queries.
+- **Trigger:** Catalog row count growth makes the table noticeable in queries (e.g. >10k soft-deleted), OR a curator asks for cleanup.
 
 ### 30. `tags[]` field on apps
 - **Status:** Deferred
@@ -384,11 +388,38 @@ Each entry should be tight: title, status, source, what's missing, why deferred,
 - **Trigger:** Catalog grows past ~100 apps OR search-relevance complaints.
 
 ### 31. Doc PR for update flow with three-way merge
+- **Status:** Done — Phase 6 PR 6.D2 (#72).
+- **Resolution:** `docs/auto-update.md` rewritten to cover both Verified
+  and Community channels (per-channel defaults table) and to walk the
+  PR 5.4 merge-conflict banner UX (toast + red dot + three-action
+  banner with the Resolve-with-Claude clipboard prompt). The
+  cross-reference the deferred entry asked for now lives in this doc
+  rather than as a stub in phase-1-plan.md.
+
+---
+
+## Phase 4/5 added open items (now resolved or rationalized)
+
+### Telemetry hash salt rotation cadence
 - **Status:** Deferred
-- **Source:** phase-2-plan.md PR 2.5 note
-- **Gap:** phase-1-plan.md missing a cross-reference section explaining how update + user edits interact.
-- **Why:** Minor doc clarity.
-- **Trigger:** Whenever #10 lands (update them together).
+- **Source:** spec §11 "Phase 4 added open items"; `os8dotai/SECURITY.md` (added in PR 4.5)
+- **Gap:** No automated rotation cadence for the per-deployment salt that anonymizes telemetry clientId.
+- **Why:** Annual default per `os8dotai/SECURITY.md` is sufficient until a signal of compromise. Operator action, not code.
+- **Trigger:** Signal of salt compromise, OR a curator decision to shorten the cadence.
+
+### Backup-on-upgrade hook for Docker volumes
+- **Status:** Deferred
+- **Source:** spec §11 "Phase 5 added open items"
+- **Gap:** Phase 5 PR 5.8 ships explicit `runtime.volumes` declarations + a one-time first-boot toast + `tools/migrate-docker-volume.sh`. No automatic snapshot of volume contents before a docker image upgrade.
+- **Why:** Adapter never recreates the host bind-mount path during an image upgrade (the dir lives under `${BLOB_DIR}/<id>/_volumes/`, not the container layer), so the ordinary upgrade path is data-preserving by design. Auto-backup is defense in depth — useful when a second affected docker app surfaces and we have a rationale for the storage cost.
+- **Trigger:** Second affected docker app surfaces, OR a docker image upgrade corrupts volume contents under a real install.
+
+### Per-file ours/theirs buttons in the merge-conflict banner
+- **Status:** Deferred
+- **Source:** spec §11 "Phase 5 added open items"
+- **Gap:** Phase 5 PR 5.4 ships manual-edit + "Resolve with Claude" clipboard prompt. No per-file "use ours" / "use theirs" shortcut buttons.
+- **Why:** Per-file ours/theirs adds a misuse risk (one-click mass-replace can wipe work) and the manual-edit + AI-agent path covers the common case. Worth adding only if soak surfaces friction for users without an AI agent in the loop.
+- **Trigger:** Soak surfaces friction reports for users without an AI agent in the loop.
 
 ---
 
@@ -445,5 +476,63 @@ When something here gets either built or definitively dropped, move it down here
 - **#20 MCP wildcard capability** → built in PR 4.7 (`os8ai/os8#46`).
   `mcp.<server>.*` accepted; `mcp.*.*` / `mcp.*` rejected.
 
+### Phase 5 (closed 2026-05-04)
+
+- **#10 Three-way merge UI for updates with user edits** → built in
+  PR 5.4 (`os8ai/os8#63`). Banner + red dot + toast + Resolve-with-Claude
+  clipboard prompt + persisted conflict-file state.
+- **#11 Auto-update opt-in for Verified** → built in PR 4.2 (`os8ai/os8#48`);
+  the deferred-items entry was reconciled to `Done` during Phase 5
+  close-out (PR 5.D3, `os8ai/os8#66`).
+- **#12 Tiered uninstall + reinstall restore** → built in PR 5.5
+  (`os8ai/os8#62`). Channel-scoped orphan detection + revival path
+  with rollback safety.
+- **#32 Catalog freshness — Sync Now** → built in PR 5.6 (`os8ai/os8#60`).
+  Settings panel button + per-install lazy refresh in `AppCatalogService.get`.
+- **#34 ISR fallback 500s** → built in PR 5.9 (`os8ai/os8dotai#18`).
+  Vercel deploy hook on `added > 0`; pre-render fallback stays as
+  defense-in-depth.
+- **#35 Docker adapter container-internal volumes** → built in PR 5.8
+  (3-repo coordination: `os8ai/os8#64` + `os8ai/os8-catalog#14` +
+  `os8ai/os8-catalog-community#11`). `runtime.volumes` schema +
+  bind-mount + first-boot toast + helper script.
+
+### Phase 6 (closed 2026-05-05)
+
+- **#36 Auto-update widening to Community channel** → built in PR 6.1
+  (`os8ai/os8#70`). Default ON for new Community installs (asymmetric
+  with Verified opt-in); migration `0.8.0` seeds the per-channel
+  default keys; `AppService.setAutoUpdate` widened to accept Community;
+  flyout toggle interactive for both catalog channels.
+- **#33 v2 schema `$schema` declaration drift** → built in PR 6.2
+  (3-repo coordination: `os8ai/os8#71` + `os8ai/os8-catalog#15` +
+  `os8ai/os8-catalog-community#12`). All canonical declarations now
+  read draft 2020-12; os8 desktop validator swapped to `ajv/dist/2020`
+  + explicit draft-07 metaschema registration.
+- **#31 Doc PR for update flow with three-way merge** → built in
+  PR 6.D2 (`os8ai/os8#72`). docs/auto-update.md now covers both
+  catalog channels + cross-references PR 5.4's merge-conflict banner.
+
+Plus four "verify-first" entries confirmed as Done in PR 6.D1's spec
+close-out:
+
+- **spec §11 #2** `/apps` page caching → audit confirmed
+  `revalidate = 60` already in place + Phase 5 PR 5.9 deploy hook
+  covers the new-slug case.
+- **spec §11 #3** Idle timeout default value → built in PR 1.22; the
+  Settings → App Store slider exposes 5 min … 4 h … Never values per
+  spec; default 30 min.
+- **spec §11 #5** `bun.lockb` recognition → built in PR 1.11. Node
+  adapter's lockfile detection map declares `['bun.lockb', 'bun']` —
+  presence-only check matches master plan §7 #6.
+- **spec §11 #8** `requireAppContext` route inventory → built in PR 1.8;
+  9 routes (app-blob, app-db, imagegen, speak, youtube, x, telegram,
+  google, mcp) per master plan §7 #9.
+
 The above items remain on the active list above with `Status: Done`
 pointers; this section is the chronological close-out index.
+
+After Phase 6 the active list has **zero un-rationalized `Deferred`
+entries** — every line is either `Done` (with PR cite), `Deferred` +
+explicit `Trigger:` line, `V1 exclusion`, `V1 invariant`, or
+`Won't fix`.
