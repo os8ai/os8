@@ -334,18 +334,27 @@ async function loadAppStoreSettings() {
     const idleMs    = await window.os8.settings.get('app_store.idle_timeout_ms');
     // PR 4.4 — telemetry opt-in (default OFF; first-install consent flips).
     const telemetryOptIn = await window.os8.settings.get('app_store.telemetry.opt_in');
+    // PR 6.1 — per-channel auto-update defaults. Migration 0.8.0 seeds
+    // verified=false / community=true; we mirror those fallbacks here so
+    // the UI shows the right initial state even on a partially-migrated DB.
+    const verifiedAutoDefault  = await window.os8.settings.get('app_store.auto_update.verified_default');
+    const communityAutoDefault = await window.os8.settings.get('app_store.auto_update.community_default');
 
     const $verified  = document.getElementById('appStoreChannelVerified');
     const $community = document.getElementById('appStoreChannelCommunity');
     const $devImport = document.getElementById('appStoreChannelDevImport');
     const $idle      = document.getElementById('appStoreIdleTimeout');
     const $telOptIn  = document.getElementById('appStoreTelemetryOptIn');
+    const $verifiedAuto  = document.getElementById('appStoreAutoUpdateVerifiedDefault');
+    const $communityAuto = document.getElementById('appStoreAutoUpdateCommunityDefault');
 
     if ($verified)  $verified.checked  = readBoolSetting(verified,  true);
     if ($community) $community.checked = readBoolSetting(community, false);
     if ($devImport) $devImport.checked = readBoolSetting(devImport, true);
     if ($idle && idleMs != null) $idle.value = String(idleMs);
     if ($telOptIn) $telOptIn.checked = readBoolSetting(telemetryOptIn, false);
+    if ($verifiedAuto)  $verifiedAuto.checked  = readBoolSetting(verifiedAutoDefault,  false);
+    if ($communityAuto) $communityAuto.checked = readBoolSetting(communityAutoDefault, true);
   } catch (err) {
     console.error('Failed to load App Store settings:', err);
   }
@@ -367,6 +376,17 @@ async function saveAppStoreSettings() {
     await window.os8.settings.set('app_store.channel.community.enabled',        String(community));
     await window.os8.settings.set('app_store.channel.developer-import.enabled', String(devImport));
     await window.os8.settings.set('app_store.idle_timeout_ms',                  String(idleMs));
+
+    // PR 6.1 — per-channel auto-update defaults. Apply only to NEW installs;
+    // existing app rows preserve their current `auto_update` value.
+    const $verifiedAuto  = document.getElementById('appStoreAutoUpdateVerifiedDefault');
+    const $communityAuto = document.getElementById('appStoreAutoUpdateCommunityDefault');
+    if ($verifiedAuto) {
+      await window.os8.settings.set('app_store.auto_update.verified_default',  String(!!$verifiedAuto.checked));
+    }
+    if ($communityAuto) {
+      await window.os8.settings.set('app_store.auto_update.community_default', String(!!$communityAuto.checked));
+    }
 
     // PR 4.4 — telemetry opt-in. Saved here so the user can re-enable
     // after declining at first-install consent.

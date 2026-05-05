@@ -1165,6 +1165,40 @@
               <span id="appStoreSyncNowStatus" class="setting-description" style="font-size: 12px; display: block; margin-top: 6px;" hidden></span>
             </div>
 
+            <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Auto-update defaults</h4>
+            <p class="setting-description" style="margin-bottom: 12px; font-size: 12px;">
+              Apply only to <strong>new</strong> installs. Existing apps keep
+              their current setting; flip per-app via right-click → Settings.
+              The merge-conflict banner catches local edits regardless of channel.
+            </p>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Auto-update new Verified apps</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    Off by default. Verified apps are curated and low-churn —
+                    opt-in keeps "user is final authority" intact.
+                  </p>
+                </div>
+                <input type="checkbox" id="appStoreAutoUpdateVerifiedDefault" />
+              </div>
+            </div>
+
+            <div class="setting-group">
+              <div style="display: flex; align-items: center; justify-content: space-between;">
+                <div>
+                  <label class="setting-label">Auto-update new Community apps</label>
+                  <p class="setting-description" style="font-size: 12px;">
+                    On by default. Community apps churn faster — "forget about
+                    it" UX matters more here. Conflicts with local edits still
+                    surface for manual resolution.
+                  </p>
+                </div>
+                <input type="checkbox" id="appStoreAutoUpdateCommunityDefault" checked />
+              </div>
+            </div>
+
             <h4 style="margin: 24px 0 12px 0; font-size: 13px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">External app idle reaper</h4>
 
             <div class="setting-group">
