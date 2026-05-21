@@ -371,9 +371,29 @@ const AgentService = {
     // Only clean up agents that were created more than 1 hour ago and never completed setup.
     // This avoids deleting agents the user is actively setting up (e.g., if OS8 restarts mid-setup).
     const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const stale = db.prepare(
+    const candidates = db.prepare(
       "SELECT id, app_id FROM agents WHERE setup_complete = 0 AND status = 'active' AND created_at < ?"
     ).all(cutoff);
+
+    // Guard: never hard-delete an agent that has any sign of established use.
+    // setup_complete can be flipped back to 0 by transient backend errors or future migrations,
+    // and losing a long-lived agent's chat history / identity docs is catastrophic.
+    const hasThread = db.prepare(
+      "SELECT 1 FROM agent_threads WHERE participants LIKE ? LIMIT 1"
+    );
+    const hasLifeEntry = db.prepare(
+      "SELECT 1 FROM agent_life_entries WHERE agent_id = ? LIMIT 1"
+    );
+    const hasMemory = db.prepare(
+      "SELECT 1 FROM memory_chunks WHERE app_id = ? LIMIT 1"
+    );
+
+    const stale = candidates.filter(agent => {
+      if (hasThread.get(`%${agent.id}%`)) return false;
+      if (hasLifeEntry.get(agent.id)) return false;
+      if (hasMemory.get(agent.id)) return false;
+      return true;
+    });
 
     for (const agent of stale) {
       this.deleteWithCleanup(db, agent.id, agent.app_id);

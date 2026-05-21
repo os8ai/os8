@@ -217,17 +217,13 @@ function App() {
     setConfig(prev => prev ? { ...prev, ...mapped } : prev)
   }, [])
 
-  // Handle backend errors by resetting setup so user can re-authenticate
+  // Handle backend errors by showing the setup screen so the user can re-authenticate.
+  // Only flip local UI state — never persist setup_complete=0 to the DB. A transient
+  // backend error (CLI not signed in, network blip) does not mean the agent was never
+  // set up, and persisting it makes cleanupIncomplete hard-delete the agent on next start.
   const handleBackendError = useCallback((errorMsg) => {
-    // Reset setupComplete locally to show setup screen
     setConfig(prev => prev ? { ...prev, setupComplete: false } : prev)
-    // Also reset in DB so it persists across reloads
-    fetch(`${baseApiUrl}/api/agents/${selectedAgentId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setupComplete: false })
-    }).catch(() => {})
-  }, [baseApiUrl, selectedAgentId])
+  }, [])
 
   // Fetch agent context for the Agent Life panel
   const fetchContext = useCallback(async () => {
