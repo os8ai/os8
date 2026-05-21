@@ -85,7 +85,6 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "publisherName": "OS8",
       "artifactName": "OS8-Setup-${version}-${arch}.${ext}"
     },
     "nsis": {
